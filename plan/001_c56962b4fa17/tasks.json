@@ -344,14 +344,14 @@
               "type": "Task",
               "id": "P1.M3.T8",
               "title": "process.env.PI_EDITOR_BRIDGE advertisement",
-              "status": "Planned",
+              "status": "Complete",
               "description": "After starting the socket server, write a single-line JSON descriptor to process.env.PI_EDITOR_BRIDGE with all fields needed by the Neovim plugin to connect.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T8.S16",
                   "title": "Write BridgeDescriptor JSON to process.env.PI_EDITOR_BRIDGE",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T3.S5"

@@ -5,7 +5,8 @@
  *
  * Transport:  Unix domain socket, strict JSONL framing (LF-delimited records).
  * Env var:    process.env.PI_EDITOR_BRIDGE  (JSON BridgeDescriptor: { transport,
- *             path, token, pid, cwd, ... }) — written in a later task (S16).
+ *             path, token, pid, cwd, fdAvailable, serverVersion }) — written in
+ *             startBridge (S16) and deleted in stopBridge.
  *
  * STATUS (P1.M2.T7.S15): domain-error wrapping for the 4 provider-dependent
  *   handlers — DONE. `getSuggestions` / `applyCompletion` /
@@ -136,6 +137,7 @@ import type {
 	ApplyCompletionResult,
 	ShouldTriggerFileCompletionParams,
 	ShouldTriggerFileCompletionResult,
+	BridgeDescriptor,
 } from "./protocol.ts";
 
 /**
@@ -240,6 +242,15 @@ export function getToken(): string | undefined {
 export const BRIDGE_VERSION = "0.1.0";
 
 /**
+ * The `process.env` key pi's spawned `$EDITOR` (Neovim) reads to discover the
+ * bridge socket path + token on startup (PRD §2.1 / §7.1). Written (as a
+ * single-line JSON {@link BridgeDescriptor}) at the end of {@link startBridge};
+ * deleted by {@link stopBridge}. Exported so tests reference the NAME (not a
+ * hardcoded string) and a future rename is one-line.
+ */
+export const BRIDGE_ENV = "PI_EDITOR_BRIDGE";
+
+/**
  * Per-`getSuggestions` server-side abort timeout (PRD §5.5 / §6.5). Aborts a runaway
  * `fd` because pi's provider has NO internal timeout (research §1.1) — the CALLER
  * owns cancellation via the `AbortSignal`. Injectable for tests via
@@ -325,11 +336,11 @@ function isExecutableFile(p: string): boolean {
  * IDEMPOTENT — safe to call when already stopped (all guards swallow no-op failures).
  *
  * STATUS (P1.M2.T3.S5): ships the server/socket/state teardown half. **P1.M2.T3.S6
- * REUSES this function (wired into session_shutdown); the env-clear is deferred to S16.**
- * S5 does NOT delete the env var because S5 writes NONE (env advertisement is S16).
- * S5 calls stopBridge() as the first line of startBridge() for idempotent re-entry; S6
- * also calls it from the `server.on("error")` handler in startBridge (double-close is a
- * safe no-op — verified).
+ * REUSES this function (wired into session_shutdown).** S5 calls stopBridge() as the
+ * first line of startBridge() for idempotent re-entry; S6 also calls it from the
+ * `server.on("error")` handler in startBridge (double-close is a safe no-op — verified).
+ * S16 added the `delete process.env[BRIDGE_ENV]` line below (the symmetric teardown of
+ * the advertisement written at the end of startBridge).
  */
 export function stopBridge(): void {
 	try {
@@ -347,8 +358,7 @@ export function stopBridge(): void {
 	server = undefined;
 	socketPath = undefined;
 	token = undefined;
-	// NOTE: `delete process.env.PI_EDITOR_BRIDGE` is intentionally OMITTED here — S5 writes
-	// no env var. S16 adds the WRITE to startBridge and the matching DELETE here.
+	delete process.env[BRIDGE_ENV]; // symmetric: clears the advertisement (no-op if absent)
 }
 
 /**
@@ -358,8 +368,9 @@ export function stopBridge(): void {
  * PRD §6.2) never leak a server or orphan a socket file.
  *
  * STATUS (P1.M2.T3.S5): server-start runtime. OUT OF SCOPE here (landed by later tasks):
- *  - process.env.PI_EDITOR_BRIDGE advertisement ........ P1.M3.T8.S16 (will call
- *    getSocketPath()/getToken()/ctx.cwd/process.pid here to build the BridgeDescriptor).
+ *  - process.env.PI_EDITOR_BRIDGE advertisement ........ DONE in P1.M3.T8.S16 (writes
+ *    the BridgeDescriptor as the LAST line of this function, reading socketPath/token/
+ *    process.pid/ctx.cwd/getFdAvailable()/BRIDGE_VERSION).
  *  - wiring startBridge into the session_start handler .. DONE in P1.M2.T3.S6 (S5 left
  *    it unwired so the existing mode-guard.test.ts (S3) wouldn't fire a real listen/chmod
  *    during a unit test; S6 lands both wirings atomically + cleans up in the guard test).
@@ -367,13 +378,12 @@ export function stopBridge(): void {
  *    'error' event (e.g. EADDRINUSE) THROWS and would crash pi (Node EventEmitter contract
  *    — verified); the handler logs + stopBridge()'s and does NOT rethrow.
  *
- * @param ctx accepted to match the contract signature and forward-compat the S16
- *   descriptor; `ctx.cwd` is NOT dereferenced in S5 (the socket path comes from
- *   `os.tmpdir()` per the item contract). Signaled with `void ctx;`.
+ * @param ctx its `.cwd` is read for the S16 `PI_EDITOR_BRIDGE` descriptor (the module
+ *   `cwd` is set in `session_start` AFTER this returns — GOTCHA #3 — so `ctx.cwd` is the
+ *   source of truth here). The socket path itself comes from `os.tmpdir()`.
  */
 export function startBridge(ctx: ExtensionContext): void {
 	stopBridge(); // idempotent teardown of any prior server (reload/new/resume/fork re-entry)
-	void ctx; // ctx.cwd is reserved for the S16 BridgeDescriptor; S5 derives path from tmpdir().
 
 	token = randomUUID().replace(/-/g, "").slice(0, 32); // 32 lowercase hex chars (PRD §12)
 	socketPath = join(tmpdir(), `pi-editor-bridge-${randomUUID()}.sock`);
@@ -402,7 +412,29 @@ export function startBridge(ctx: ExtensionContext): void {
 			/* best-effort; do not crash */
 		}
 	}
-	// NOTE: NO process.env.PI_EDITOR_BRIDGE write here — that is P1.M3.T8.S16.
+	/**
+	 * [Mode A] Advertise the bridge to the spawned $EDITOR via process.env.
+	 *
+	 * DISCOVERY: pi spawns the external editor with `spawn(editor, [tmpFile], {
+	 * stdio:"inherit", shell: process.platform==="win32" })` and NO `env:` option
+	 * (interactive-mode.ts:3811-3816), so the child Neovim INHERITS pi's process.env.
+	 * Writing PI_EDITOR_BRIDGE here (on session_start, before any Ctrl+G launch) makes
+	 * it visible to the spawned Neovim as `vim.env.PI_EDITOR_BRIDGE`. The plugin's
+	 * VimEnter gate vim.json.decode's it to find the socket path + token; absent/
+	 * unparseable → the plugin stays dormant (PRD §7.1). This write is THE discovery
+	 * that makes the two-component design work (PRD §2.1). CRITICALITY: without it the
+	 * plugin never activates and the bridge is unreachable. The descriptor is a flat
+	 * JSON object → JSON.stringify emits a single line (no "\n") — the safe env value.
+	 */
+	process.env[BRIDGE_ENV] = JSON.stringify({
+		transport: "unix",
+		path: socketPath, // module-level let — guaranteed set above
+		token, // module-level let — guaranteed set above
+		pid: process.pid,
+		cwd: ctx.cwd, // read DIRECTLY (module `cwd` is set in session_start AFTER startBridge)
+		fdAvailable: getFdAvailable(), // REAL resolver — consistent with hello/ping (GOTCHA #2)
+		serverVersion: BRIDGE_VERSION, // "0.1.0" — NOT "0.0.1" (GOTCHA #1)
+	} satisfies BridgeDescriptor); // compile-time guard against the `version` typo
 }
 
 /**
@@ -1001,11 +1033,11 @@ export default function (pi: ExtensionAPI): void {
 			"getCommands",
 			makeGetCommandsHandler({ getProvider }),
 		);
-		// (S14 DONE). TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
+		// (S14 DONE). S16 writes the BridgeDescriptor to process.env.PI_EDITOR_BRIDGE
+		// at the end of startBridge above (the discovery the Neovim plugin reads).
 	});
 
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
-		stopBridge(); // idempotent teardown: close server, unlink socket, clear state.
-		// NOTE: clearing process.env.PI_EDITOR_BRIDGE belongs to S16 (which writes it).
+		stopBridge(); // idempotent teardown: close server, unlink socket, clear state, delete env var.
 	});
 }
