@@ -567,7 +567,7 @@
                   "type": "Subtask",
                   "id": "P2.M5.T15.S24",
                   "title": "bridge.lua connect() — luv pipe, read_start, write helper",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M5.T14.S23"
