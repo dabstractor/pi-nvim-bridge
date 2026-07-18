@@ -160,7 +160,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T4.S7",
                   "title": "JSONL line reader — buffer partial lines, split on \\n only, strip \\r",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S4"
