@@ -234,7 +234,7 @@
               "type": "Task",
               "id": "P1.M2.T6",
               "title": "RPC method handlers (delegate to live provider)",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement all JSON-RPC method handlers that delegate to the captured live AutocompleteProvider: getSuggestions, applyCompletion, shouldTriggerFileCompletion, ping, bye, and getCommands. Each handler wraps the provider call in try/catch and returns JSON-RPC error envelopes on failure.",
               "subtasks": [
                 {
@@ -293,7 +293,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T6.S14",
                   "title": "ping, bye, getCommands handlers",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T5.S10"

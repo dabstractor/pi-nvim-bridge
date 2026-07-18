@@ -7,6 +7,25 @@
  * Env var:    process.env.PI_EDITOR_BRIDGE  (JSON BridgeDescriptor: { transport,
  *             path, token, pid, cwd, ... }) — written in a later task (S16).
  *
+ * STATUS (P1.M2.T6.S14): `ping` / `bye` / `getCommands` handlers registered (DONE).
+ *   - session_start now registers the FULL M2.T6 handler family: `hello` (S9),
+ *     `getSuggestions` (S11), `applyCompletion` (S12), `shouldTriggerFileCompletion`
+ *     (S13), AND the final three: `ping` / `bye` / `getCommands` (S14). This
+ *     completes T6 (RPC method handlers). ping/bye are SYNC; getCommands is ASYNC.
+ *     `bye` uses the `closeAfterResponse` flag (approach (a)): it sets
+ *     `state.closeAfterResponse = true` and returns `{ok:true}`; `handleLine`'s
+ *     success branch then calls `sock.end()` AFTER flushing the ack (mirroring the
+ *     existing fatal-close pattern) — so the server participates in the graceful
+ *     disconnect (PRD §5.4). `getCommands` derives its list from
+ *     `provider.getSuggestions(["/"],0,1)` on the captured provider (covers builtins
+ *     + templates + extensions + skills); `argumentHint` is unrecoverable (pi bakes
+ *     it into description as "hint — desc") and left `undefined` (documented
+ *     limitation). `connection.ts` got the additive `closeAfterResponse?: boolean`
+ *     field + a 3-line success-branch close check (backward compatible — no existing
+ *     handler sets the flag). `protocol.ts` UNCHANGED (all wire types pre-existed in
+ *     §C). `getPid()` (`process.pid`) is added for ping + S16's reuse. Domain-error
+ *     wrapping remains S15's TODO.
+ *
  * STATUS (P1.M1.T1.S3): TUI mode guard added.
  *   - session_start: guarded by `if (ctx.mode !== "tui") return;` at the very
  *     top, so the bridge performs ZERO work in rpc/json/print modes. The
@@ -78,6 +97,13 @@ import {
 import type {
 	HelloParams,
 	HelloResult,
+	PingParams,
+	PingResult,
+	ByeParams,
+	ByeResult,
+	GetCommandsParams,
+	GetCommandsResult,
+	CommandInfo,
 	GetSuggestionsParams,
 	GetSuggestionsResult,
 	ApplyCompletionParams,
@@ -199,6 +225,10 @@ export const GET_SUGGESTIONS_TIMEOUT_MS = 1500;
  *  {@link getCwd}; used by {@link makeHelloHandler} for `HelloResult.cwd` and (later)
  *  by S16's `PI_EDITOR_BRIDGE` descriptor. */
 let cwd: string | undefined;
+/** @returns the pi process PID (S14's `ping` result + S16's BridgeDescriptor both use this). */
+export function getPid(): number {
+	return process.pid;
+}
 /** @returns the session cwd captured on the last `session_start`, or `undefined`. */
 export function getCwd(): string | undefined {
 	return cwd;
@@ -391,6 +421,72 @@ export function makeHelloHandler(deps: {
 			cwd: deps.getCwd() ?? "",
 			fdAvailable: deps.getFdAvailable(),
 		};
+	};
+}
+
+/**
+ * Build the `ping` JSON-RPC handler (PRD §5.4). PURE factory — deps injected so
+ * unit tests stub pid/cwd/fdAvailable/version. SYNC (mirrors `makeHelloHandler`'s
+ * shape but WITHOUT the token branch).
+ *
+ * Liveness/diagnostics handler returning `PingResult` — i.e. `HelloResult` + a
+ * `pid` field. It is `makeHelloHandler` minus token validation: the S10 handshake
+ * gate (`handleLine`'s `method !== "hello" && !state.handshakeComplete`) ALREADY
+ * guarantees `state.handshakeComplete === true` before any non-hello method runs,
+ * so `ping` NEVER sees an unauthenticated caller and needs NO `getToken` dep.
+ *
+ * EMPTY params (`PingParams = Record<string, never>`) are IGNORED — consistent
+ * with `hello` ignoring `client`/`clientVersion`. NO params validator (there is
+ * nothing to narrow; pure rejection of an empty-params method is pointless).
+ *
+ * The MethodHandler union (`Promise<unknown> | unknown`) accommodates the SYNC
+ * return; handleLine's `await` is a no-op on a non-Promise.
+ *
+ * Consumer: P3.M10.T27.S42 (`:checkhealth pi-editor` opens a connection, handshakes,
+ * then sends `ping` to confirm liveness + read server identity/capabilities).
+ */
+export function makePingHandler(deps: {
+	getPid: () => number;
+	getCwd: () => string | undefined;
+	getFdAvailable: () => boolean;
+	version: string;
+}): MethodHandler {
+	return (_params: unknown, _state: ConnectionState): PingResult => ({
+		ok: true,
+		pid: deps.getPid(),
+		cwd: deps.getCwd() ?? "", // defensive fallback (mirrors hello's getCwd() ?? "")
+		fdAvailable: deps.getFdAvailable(),
+		serverVersion: deps.version,
+	});
+}
+
+/**
+ * Build the `bye` JSON-RPC handler (PRD §5.4 — "graceful disconnect"). PURE factory
+ * (no deps). SYNC.
+ *
+ * Returns `ByeResult = { ok: true }` AND requests a server-side half-close by
+ * setting `state.closeAfterResponse = true`. `handleLine`'s success branch checks
+ * that flag AFTER `sendResponse` flushes the ack and calls `sock.end()` (mirroring
+ * the existing fatal-close pattern). This makes the server PARTICIPATE in the close
+ * (the faithful reading of PRD §5.4's "graceful disconnect"); the client observes
+ * `close`/`end` instead of lingering on TCP keepalive.
+ *
+ * Handlers do NOT receive the socket (the `MethodHandler` signature is
+ * `(params, state)`), so `bye` cannot call `sock.end()` directly — the
+ * `ConnectionState` flag is the minimal, backward-compatible mechanism (optional;
+ * falsy ⇒ no close ⇒ all existing handlers/tests unaffected).
+ *
+ * REJECTED alternative: throw `BridgeRpcError({ fatal: true })` to close — that
+ * returns an ERROR envelope, violating the `ByeResult = { ok: true }` SUCCESS
+ * contract. The flag returns success THEN closes.
+ *
+ * Consumer: P2.M9.T23.S38 (Neovim `VimLeavePre`/`ExitPre` autocmd sends `bye` so
+ * the server can ack + half-close cleanly before the socket tears down).
+ */
+export function makeByeHandler(): MethodHandler {
+	return (_params: unknown, state: ConnectionState): ByeResult => {
+		state.closeAfterResponse = true; // approach (a): ack THEN half-close
+		return { ok: true };
 	};
 }
 
@@ -684,6 +780,68 @@ export function makeShouldTriggerFileCompletionHandler(deps: {
 	};
 }
 
+/**
+ * Build the `getCommands` JSON-RPC handler (PRD §5.4 — OPTIONAL docs-menu method).
+ * PURE factory — dep injected so unit tests stub the provider. ASYNC (mirrors
+ * S11/S12/S13's `getProvider` dep + `makeGetSuggestionsHandler`'s async shape).
+ *
+ * DATA SOURCE: the handler calls
+ * `provider.getSuggestions(["/"], 0, 1, { signal, force: false })` on the
+ * ALREADY-CAPTURERED live provider and maps each `AutocompleteItem{value,label,
+ * description?}` → `CommandInfo{name, description?}`. This covers EVERY command
+ * category (builtins + prompt templates + extension commands + skill commands) via
+ * pi's `CombinedAutocompleteProvider` — the `/` branch in `autocomplete.ts:118-165`
+ * is SYNC + in-memory (textBeforeCursor="/", no `@file`, no `fd`), and `fuzzyFilter`
+ * with an empty prefix returns ALL items.
+ *
+ * WHY NOT `pi.getCommands()` / hardcoding: `pi.getCommands()` (ExtensionAPI) OMITS
+ * the ~23 `BUILTIN_SLASH_COMMANDS`, and `BUILTIN_SLASH_COMMANDS` is NOT publicly
+ * exported (not in index.ts) — so hardcoding would drift. The captured provider's
+ * `getSuggestions(["/"])` is the ONLY source that covers the full surface.
+ *
+ * `argumentHint` is UNRECOVERABLE from this path: pi BAKES it into the description
+ * string as `"hint — desc"`, and `AutocompleteItem` has no `argumentHint` field.
+ * Splitting the description on `" — "` is unsafe (descriptions legitimately contain
+ * ` — `). So `argumentHint` is left `undefined` (protocol.ts marks it optional) —
+ * a documented limitation.
+ *
+ * TIMING: a fresh `AbortController` satisfies the `{signal, force}` signature only.
+ * The `/` branch is SYNC + in-memory (NO `fd` runaway risk, unlike S11's
+ * `getSuggestions`), so abort is a no-op and NO timeout / NO supersession is needed.
+ *
+ * EMPTY params (`GetCommandsParams = Record<string, never>`) are IGNORED — NO
+ * params validator (nothing to narrow; hello's precedent is to ignore unknown params).
+ *
+ * ERRORS: `deps.getProvider()` throwing (provider not captured) and any provider
+ * RUNTIME throw propagate to `handleLine`'s `-32603` safety net — S15 later wraps
+ * those. S14 keeps them flowing (keeps pi safe). A `null`/empty provider result
+ * yields `{commands: []}`.
+ */
+export function makeGetCommandsHandler(deps: {
+	getProvider: () => AutocompleteProvider;
+}): MethodHandler {
+	return async (
+		_params: unknown,
+		_state: ConnectionState,
+	): Promise<GetCommandsResult> => {
+		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		const ac = new AbortController(); // signature requires {signal}; the "/" branch is sync ⇒ no-op
+		const result = await provider.getSuggestions(["/"], 0, 1, {
+			signal: ac.signal,
+			force: false,
+		});
+		if (!result) return { commands: [] };
+		// Map AutocompleteItem → CommandInfo. `name = item.value` (no leading slash);
+		// `description` forwarded when present. `argumentHint` intentionally omitted
+		// (unrecoverable — pi bakes it into description as "hint — desc").
+		const commands: CommandInfo[] = result.items.map((item) => ({
+			name: item.value,
+			...(item.description ? { description: item.description } : {}),
+		}));
+		return { commands };
+	};
+}
+
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
 		/**
@@ -748,8 +906,27 @@ export default function (pi: ExtensionAPI): void {
 			"shouldTriggerFileCompletion",
 			makeShouldTriggerFileCompletionHandler({ getProvider }),
 		);
-		// (S13 DONE). TODO(S14): ping/bye/getCommands.
-		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
+		// S14: register `ping` / `bye` / `getCommands` AFTER `shouldTriggerFileCompletion`
+		// (so the provider is captured and the token exists) and AFTER startBridge.
+		// `ping` (SYNC): liveness/diagnostics handler returning PingResult (HelloResult +
+		// pid); NO token dep (the S10 gate already guarantees handshakeComplete===true).
+		// `bye` (SYNC): graceful-disconnect ack returning {ok:true} AND setting
+		// state.closeAfterResponse so handleLine half-closes after flushing the ack
+		// (approach (a); mirrors the fatal-close pattern). `getCommands` (ASYNC):
+		// derives the full command list from provider.getSuggestions(["/"],0,1) on the
+		// captured provider (covers builtins + templates + extensions + skills);
+		// argumentHint is unrecoverable and left undefined (documented limitation).
+		// All three are idempotent (Map.set) — safe across reload/new/resume/fork.
+		registerBridgeHandler(
+			"ping",
+			makePingHandler({ getPid, getCwd, getFdAvailable, version: BRIDGE_VERSION }),
+		);
+		registerBridgeHandler("bye", makeByeHandler());
+		registerBridgeHandler(
+			"getCommands",
+			makeGetCommandsHandler({ getProvider }),
+		);
+		// (S14 DONE). TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
 	});
 
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {

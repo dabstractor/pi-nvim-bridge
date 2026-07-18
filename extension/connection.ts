@@ -68,6 +68,10 @@ export class BridgeRpcError extends Error {
  *  `handshakeComplete=true` on a valid `hello`; S10 gates every non-hello method on it. */
 export interface ConnectionState {
 	handshakeComplete: boolean;
+	/** Set by a handler (e.g. `bye`) to request a graceful `sock.end()` AFTER
+	 *  the success response is flushed. Optional + backward compatible
+	 *  (falsy ⇒ no close ⇒ all existing handlers/tests unaffected). Added by S14. */
+	closeAfterResponse?: boolean;
 }
 
 /**
@@ -266,6 +270,18 @@ export async function handleLine(
 	try {
 		const result = await handler(params, state);
 		sendResponse(sock, reqId, result);
+		// S14: a handler (e.g. `bye`) may request a graceful half-close AFTER the
+		// success response is flushed. Mirrors the fatal-close `sock.end()` pattern
+		// in the catch branch (PRD §5.3 "reply then close"). try/catch-wrapped,
+		// best-effort — the socket may already be closing/closed. REQUEST branch
+		// only (bye is a REQUEST, NOT a notification).
+		if (state.closeAfterResponse) {
+			try {
+				sock.end();
+			} catch {
+				/* already closing/closed — best-effort */
+			}
+		}
 	} catch (handlerError) {
 		// S9: a handler may throw a typed BridgeRpcError to request a SPECIFIC error
 		// code (and, when fatal, a graceful close after the error is flushed). Only the
