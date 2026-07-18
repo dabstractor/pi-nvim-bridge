@@ -1,0 +1,23 @@
+{
+  "name": "pi-editor-bridge",
+  "version": "0.1.0",
+  "description": "Bridge pi's autocomplete engine to an external $EDITOR (Neovim) over a local Unix socket.",
+  "type": "module",
+  "keywords": ["pi-package", "pi", "neovim", "completion"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extension/pi-editor-bridge.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "jiti": "^2.7.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p extension/tsconfig.json",
+    "test": "echo 'See README — tests run via node --import jiti-register extension/tests/*.test.ts (node:test, not vitest)' && exit 0"
+  }
+}

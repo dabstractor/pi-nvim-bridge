@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "pi-editor-bridge Extension (pi side, TypeScript)",
-      "status": "Planned",
+      "status": "Complete",
       "description": "Build the pi TypeScript extension that captures the live AutocompleteProvider via a pass-through addAutocompleteProvider factory, serves it over a Unix domain socket using a JSONL JSON-RPC protocol, and advertises the socket path + auth token to the spawned $EDITOR via process.env.PI_EDITOR_BRIDGE. This is the pi-side component of the two-part bridge architecture.",
       "milestones": [
         {
@@ -337,7 +337,7 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "Env Advertisement & Packaging",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Wire the bridge descriptor into process.env.PI_EDITOR_BRIDGE so the spawned Neovim inherits it, implement commandsChanged notifications for provider rebuilds, and package the extension for installation.",
           "tasks": [
             {
@@ -397,14 +397,14 @@
               "type": "Task",
               "id": "P1.M3.T10",
               "title": "Extension packaging & README",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Create the package.json manifest for the extension, a README documenting installation and configuration, and verify the extension works in both single-file and package layouts.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T10.S18",
                   "title": "Create package.json manifest and README.md",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T8.S16",
