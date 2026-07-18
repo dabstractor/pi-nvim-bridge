@@ -241,7 +241,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T6.S11",
                   "title": "getSuggestions handler with AbortController + supersession",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T5.S10",

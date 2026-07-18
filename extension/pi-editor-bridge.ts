@@ -15,6 +15,16 @@
  *     (Socket server = M2, env advertisement = S16, commandsChanged = S17.)
  *   - session_shutdown: no-op placeholder. (Socket teardown/cleanup = S6/S15.)
  *
+ * STATUS (P1.M2.T6.S11): `getSuggestions` handler registered (DONE).
+ *   - session_start now registers `hello` (S9) AND `getSuggestions` (S11) after
+ *     startBridge + provider capture. The S11 handler is a deps-injected factory
+ *     (`makeGetSuggestionsHandler`) that delegates to pi's live
+ *     AutocompleteProvider, threading a FRESH AbortSignal + strict-boolean `force`,
+ *     with closure-scoped supersession (pendingAbort?.abort()) and a per-request
+ *     timeout (GET_SUGGESTIONS_TIMEOUT_MS=1500). applyCompletion/shouldTrigger-
+ *     FileCompletion (S12/S13), ping/bye/getCommands (S14), and domain-error
+ *     wrapping (S15) remain TODO. `connection.ts` and `protocol.ts` UNCHANGED.
+ *
  * Loaded by pi via jiti (TypeScript works without compilation). Install at
  * ~/.pi/agent/extensions/pi-editor-bridge.ts or load with `pi -e ./path.ts`.
  */
@@ -37,7 +47,12 @@ import {
 	type ConnectionState,
 	type MethodHandler,
 } from "./connection.ts";
-import type { HelloParams, HelloResult } from "./protocol.ts";
+import type {
+	HelloParams,
+	HelloResult,
+	GetSuggestionsParams,
+	GetSuggestionsResult,
+} from "./protocol.ts";
 
 /**
  * Captured reference to pi's live autocomplete provider chain.
@@ -139,6 +154,14 @@ export function getToken(): string | undefined {
  * `PI_EDITOR_BRIDGE` descriptor (`serverVersion`) and by {@link makeHelloHandler}.
  */
 export const BRIDGE_VERSION = "0.1.0";
+
+/**
+ * Per-`getSuggestions` server-side abort timeout (PRD §5.5 / §6.5). Aborts a runaway
+ * `fd` because pi's provider has NO internal timeout (research §1.1) — the CALLER
+ * owns cancellation via the `AbortSignal`. Injectable for tests via
+ * {@link makeGetSuggestionsHandler}'s `timeoutMs` dep.
+ */
+export const GET_SUGGESTIONS_TIMEOUT_MS = 1500;
 
 /** The session's cwd (stored from `ctx.cwd` on `session_start`). Read via
  *  {@link getCwd}; used by {@link makeHelloHandler} for `HelloResult.cwd` and (later)
@@ -339,6 +362,106 @@ export function makeHelloHandler(deps: {
 	};
 }
 
+/**
+ * Narrow a raw `unknown` JSON-RPC `params` into {@link GetSuggestionsParams}, throwing
+ * `BridgeRpcError(-32602, "invalid params: …")` on any malformed shape.
+ *
+ * `-32602` is the reserved JSON-RPC "invalid params" code (protocol.ts §A). This
+ * matches S9's precedent (hello throws `BridgeRpcError(-32600)` for a bad token):
+ * handler-level INPUT VALIDATION throws typed errors here; provider RUNTIME throws
+ * fall to `handleLine`'s `-32603` safety net (S15 later wraps those).
+ *
+ * Rules: `params` is a non-null object; `lines` is an Array of strings;
+ * `cursorLine`/`cursorCol` are non-negative integers; `force` is undefined or boolean.
+ * Returns a `force` of type `boolean | undefined` (callers thread it as `=== true`).
+ */
+function narrowGetSuggestionsParams(params: unknown): GetSuggestionsParams {
+	const p = params as Partial<GetSuggestionsParams> | null;
+	if (!p || typeof p !== "object") {
+		throw new BridgeRpcError(-32602, "invalid params: expected an object");
+	}
+	const { lines, cursorLine, cursorCol, force } = p;
+	if (!Array.isArray(lines) || !lines.every((l) => typeof l === "string")) {
+		throw new BridgeRpcError(-32602, "invalid params: lines must be string[]");
+	}
+	if (
+		typeof cursorLine !== "number" ||
+		!Number.isInteger(cursorLine) ||
+		cursorLine < 0
+	) {
+		throw new BridgeRpcError(-32602, "invalid params: cursorLine must be a non-negative integer");
+	}
+	if (
+		typeof cursorCol !== "number" ||
+		!Number.isInteger(cursorCol) ||
+		cursorCol < 0
+	) {
+		throw new BridgeRpcError(-32602, "invalid params: cursorCol must be a non-negative integer");
+	}
+	if (force !== undefined && typeof force !== "boolean") {
+		throw new BridgeRpcError(-32602, "invalid params: force must be boolean");
+	}
+	return { lines, cursorLine, cursorCol, force };
+}
+
+/**
+ * Build the `getSuggestions` JSON-RPC handler (PRD §5.4 / §6.5). PURE factory — deps
+ * injected so unit tests stub the provider + timeout. Delegates to pi's LIVE
+ * {@link AutocompleteProvider}, threading a FRESH `AbortSignal` + the boolean `force`.
+ *
+ * SUPERSESSION: a single closure-scoped `pendingAbort` slot is shared across all calls
+ * of this (one-per-session) handler instance. Each call aborts the previous in-flight
+ * controller (so `fd` is SIGKILL'd — research §1.1) before arming its own. Because pi's
+ * provider RESOLVES (never rejects) on abort (research §1.2), the superseded call
+ * shortly resolves to its abort result and its `handleLine` sends `{id_prior,result}`
+ * NATURALLY — the client ignores stale ids (PRD §5.5). S11 does NOT suppress that
+ * response (`handleLine` is fire-and-forget per line and ALWAYS replies once).
+ *
+ * TIMEOUT: `setTimeout(timeoutMs, () => ac.abort())` aborts a runaway `fd` (pi has no
+ * internal timeout — research §1.1). `clearTimeout(timer)` runs in `finally` so the
+ * timer never leaks past completion.
+ *
+ * ERRORS: malformed params throw `BridgeRpcError(-32602)` (S9 precedent; -32602 = the
+ * reserved "invalid params" code). `deps.getProvider()` throwing (provider not captured)
+ * and any provider RUNTIME throw propagate to `handleLine`'s `-32603` safety net — S15
+ * later wraps those into proper codes. S11 keeps them flowing (keeps pi safe).
+ *
+ * @param deps.getProvider  returns the live provider (throws plain `Error` if not
+ *   captured yet → `-32603` safety net; S15 refines).
+ * @param deps.timeoutMs    per-request abort timeout (defaults to
+ *   {@link GET_SUGGESTIONS_TIMEOUT_MS}; inject a short value in tests).
+ */
+export function makeGetSuggestionsHandler(deps: {
+	getProvider: () => AutocompleteProvider;
+	timeoutMs?: number;
+}): MethodHandler {
+	const timeoutMs = deps.timeoutMs ?? GET_SUGGESTIONS_TIMEOUT_MS;
+	let pendingAbort: AbortController | undefined;
+	return async (
+		_params: unknown,
+		_state: ConnectionState,
+	): Promise<GetSuggestionsResult> => {
+		const params = narrowGetSuggestionsParams(_params);
+		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		const ac = new AbortController();
+		pendingAbort?.abort(); // supersede any in-flight call (SIGKILLs its fd)
+		pendingAbort = ac;
+		const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+			if (!ac.signal.aborted) ac.abort();
+		}, timeoutMs);
+		try {
+			return await provider.getSuggestions(
+				params.lines,
+				params.cursorLine,
+				params.cursorCol,
+				{ signal: ac.signal, force: params.force === true },
+			);
+		} finally {
+			clearTimeout(timer);
+		}
+	};
+}
+
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
 		/**
@@ -373,6 +496,16 @@ export default function (pi: ExtensionAPI): void {
 			"hello",
 			makeHelloHandler({ getToken, getCwd, getFdAvailable, version: BRIDGE_VERSION }),
 		);
+		// S11: register `getSuggestions` AFTER `hello` (so the provider is captured and the
+		// token exists) and AFTER startBridge. The handler delegates to pi's live
+		// AutocompleteProvider with a FRESH AbortSignal per call (supersession + per-request
+		// timeout). Idempotent (Map.set) — one handler instance (and its closure-scoped
+		// `pendingAbort`) per session, safe across reload/new/resume/fork (research §3/§6).
+		registerBridgeHandler(
+			"getSuggestions",
+			makeGetSuggestionsHandler({ getProvider }), // timeoutMs defaults to GET_SUGGESTIONS_TIMEOUT_MS
+		);
+		// TODO(S12): register "applyCompletion"; (S13): "shouldTriggerFileCompletion"; (S14): ping/bye/getCommands.
 		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
 	});
 
