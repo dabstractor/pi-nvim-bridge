@@ -481,14 +481,14 @@
               "type": "Task",
               "id": "P2.M4.T12",
               "title": "Activation gate — read & validate PI_EDITOR_BRIDGE",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the activation logic that reads the PI_EDITOR_BRIDGE environment variable, validates the JSON descriptor, checks transport type, and either activates the plugin for the current buffer or stays dormant.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M4.T12.S21",
                   "title": "VimEnter gate — parse env var, validate, activate or stay dormant",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M4.T11.S19"
