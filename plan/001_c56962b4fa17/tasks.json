@@ -538,14 +538,14 @@
               "type": "Task",
               "id": "P2.M5.T14",
               "title": "JSONL reader module (Lua)",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement a Lua module that buffers partial socket chunks and emits parsed JSON objects one per newline-delimited line, mirroring the server-side framing rules.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M5.T14.S23",
                   "title": "jsonlreader.lua — buffer chunks, split on \\n, decode each line",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/external_deps.md, `vim.json.decode(str)` parses JSON (throws on invalid — wrap in pcall). The framing rules from rpc.md: split on \\n only, strip trailing \\r, do NOT use readers that split on U+2028/U+2029. Per PRD §5.2, both sides buffer partial lines.\n2. INPUT: String chunks from `pipe:read_start()` callback (may be partial or multi-line).\n3. LOGIC: Create `plugin/lua/pi-editor/jsonlreader.lua` as a module returning a factory `M.new(on_message)`. Internal state: `buffer = \"\"`. Method `feed(chunk)` that: (a) appends chunk to buffer, (b) splits buffer on \\n, (c) for each complete line (all but last segment): strip trailing \\r, skip empty, pcall vim.json.decode, call on_message(parsed) on success, (d) keep last partial segment in buffer.\n4. OUTPUT: Each call to `feed(chunk)` results in zero or more `on_message(table)` callbacks for complete JSON lines.\n5. MOCKING: Test with multi-line, partial-across-feeds, \\r\\n, empty lines. Verify no U+2028 splitting.\n6. DOCS: [Mode A] Lua docstring explaining strict \\n-only framing.",
