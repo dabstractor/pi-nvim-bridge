@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Extension Foundation & Provider Capture",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Create the extension entry point with default factory function, register session_start/session_shutdown lifecycle hooks, and implement the provider capture mechanism via a pass-through addAutocompleteProvider factory. Include a TUI-mode guard since addAutocompleteProvider is a no-op in RPC mode.",
           "tasks": [
             {
@@ -75,14 +75,14 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "IPC protocol shared types",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Define the TypeScript types that form the JSON-RPC 2.0 IPC protocol contract between the bridge extension and the Neovim plugin. These types encode the wire format and must match pi's AutocompleteItem/AutocompleteSuggestions exactly.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T2.S4",
                   "title": "Define JSON-RPC envelope, method, and bridge descriptor types",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-pi-autocomplete.md, AutocompleteItem is `{ value: string; label: string; description?: string }` and AutocompleteSuggestions is `{ items: AutocompleteItem[]; prefix: string }`. The applyCompletion return type is `{ lines: string[]; cursorLine: number; cursorCol: number }`. The PRD §5 specifies JSON-RPC 2.0 envelopes with string `id`, and methods: hello, ping, getSuggestions, applyCompletion, shouldTriggerFileCompletion, getCommands, commandsChanged (notification), bye.\n2. INPUT: pi's AutocompleteItem and AutocompleteSuggestions types from `@earendil-works/pi-tui`.\n3. LOGIC: Create `extension/protocol.ts` with: (a) `JsonRpcRequest` — `{ jsonrpc: \"2.0\"; id: string; method: string; params?: unknown }`, (b) `JsonRpcResponse` — `{ jsonrpc: \"2.0\"; id: string; result?: unknown } | { jsonrpc: \"2.0\"; id: string; error: { code: number; message: string } }`, (c) `JsonRpcNotification` — `{ jsonrpc: \"2.0\"; method: string; params?: unknown }`, (d) `BridgeDescriptor` — `{ transport: \"unix\"; path: string; token: string; pid: number; cwd: string; fdAvailable: boolean; serverVersion: string }`, (e) Method name union type and params/result types for each method matching §5.4 table exactly. Re-export AutocompleteItem and AutocompleteSuggestions from pi-tui for convenience.\n4. OUTPUT: A `protocol.ts` module importable by the extension that provides full type safety for the IPC layer.\n5. DOCS: [Mode A] JSDoc on each type explaining its wire format role.",
