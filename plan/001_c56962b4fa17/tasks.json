@@ -117,7 +117,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T3.S5",
                   "title": "startBridge() — create Unix socket server, generate token, chmod 0o600",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S3",

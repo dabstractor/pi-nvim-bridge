@@ -25,6 +25,11 @@ import type {
 	SessionStartEvent,
 	SessionShutdownEvent,
 } from "@earendil-works/pi-coding-agent";
+import { createServer, type Server, type Socket } from "node:net";
+import { randomUUID } from "node:crypto";
+import { chmodSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Captured reference to pi's live autocomplete provider chain.
@@ -71,6 +76,143 @@ export function getProvider(): AutocompleteProvider {
 		);
 	}
 	return liveProvider;
+}
+
+/**
+ * Mutable dependency seam for the bridge's socket server, defaulting to the REAL Node
+ * builtins so production behavior is byte-identical to calling `net.createServer` /
+ * `fs.chmodSync` directly.
+ *
+ * WHY A SEAM (not direct calls or module mocking): the `node:net` ESM module namespace
+ * is FROZEN — `mock.method(net,"createServer",fn)` / `Object.defineProperty` throws
+ * `TypeError: Cannot redefine property: createServer` (verified on Node 26.4.0). A plain
+ * mutable object is the clean way to honor the S5 test contract ("mock createServer +
+ * assert chmod is called with 0o600") without fighting the frozen namespace. Tests do
+ * `const real = __deps.createServer; __deps.createServer = fake; try {...} finally
+ * { __deps.createServer = real; }` (research §1.1, §3).
+ *
+ * STATUS (P1.M2.T3.S5): server-start seam. Later handlers do NOT go through __deps
+ * (only createServer + chmodSync are seam'd, because only those have a test contract in S5).
+ */
+export const __deps: {
+	createServer: typeof createServer;
+	chmodSync: typeof chmodSync;
+} = {
+	createServer,
+	chmodSync,
+};
+
+/** The live bridge socket server, or `undefined` when stopped. Module singleton. */
+let server: Server | undefined;
+/** The bound Unix-domain socket file path, or `undefined` when stopped. */
+let socketPath: string | undefined;
+/** The 32-hex-char secret token (the real auth boundary, PRD §12), or `undefined` when stopped. */
+let token: string | undefined;
+
+/** @returns the live bridge server (S8 wires onConnection onto it), or `undefined`. */
+export function getServer(): Server | undefined {
+	return server;
+}
+/** @returns the bound socket path (S16 reads this for the BridgeDescriptor), or `undefined`. */
+export function getSocketPath(): string | undefined {
+	return socketPath;
+}
+/** @returns the secret token (S9's hello handshake validates against this), or `undefined`. */
+export function getToken(): string | undefined {
+	return token;
+}
+// NOTE: state is exposed ONLY via getters. jiti (pi's TS loader) does NOT implement
+// cross-module live-binding reassignment of `export let` — a consumer that imported a
+// `let` would keep seeing the initial value forever (verified, research §1.2). Getters
+// read the current value on each call. This mirrors the EXISTING getProvider() idiom.
+
+/**
+ * Per-connection handler. NO-OP PLACEHOLDER in S5.
+ *
+ * STATUS (P1.M2.T3.S5): placeholder. S8 replaces the body with the JSONL line reader
+ * (buffer partials, split on `\n` only, strip `\r`) + the RPC dispatcher (id correlation,
+ * JSON-RPC envelope handling — imports protocol.ts). S9 adds the handshake gate (reject
+ * every method before a valid `hello`; -32600 "bad token" on mismatch). S11–S14 add the
+ * method handlers (getSuggestions/applyCompletion/shouldTriggerFileCompletion/ping/bye/
+ * getCommands), delegating to getProvider(). Until then, connections are accepted but
+ * receive no responses.
+ */
+function onConnection(_sock: Socket): void {
+	// TODO(S8): wire the JSONL reader + RPC dispatcher onto _sock.
+	// TODO(S9): gate every method behind a valid hello handshake (token == getToken()).
+}
+
+/**
+ * Tear down the bridge server: close the server, unlink the socket file, reset state.
+ * IDEMPOTENT — safe to call when already stopped (all guards swallow no-op failures).
+ *
+ * STATUS (P1.M2.T3.S5): ships the server/socket/state teardown half. This is also the
+ * core of sibling task **P1.M2.T3.S6** ("close server, unlink socket, clear state,
+ * idempotent") — S6 should REUSE this function (verify it exists), wire it into
+ * `session_shutdown`, and (once S16 lands) add the `delete process.env.PI_EDITOR_BRIDGE`
+ * line. S5 does NOT delete the env var because S5 writes NONE (env advertisement is S16).
+ * S5 calls stopBridge() as the first line of startBridge() for idempotent re-entry.
+ */
+export function stopBridge(): void {
+	try {
+		server?.close(); // no-op if undefined or already closing; never throw
+	} catch {
+		/* idempotent */
+	}
+	if (socketPath) {
+		try {
+			rmSync(socketPath, { force: true }); // force:true → no ENOENT if already gone
+		} catch {
+			/* idempotent */
+		}
+	}
+	server = undefined;
+	socketPath = undefined;
+	token = undefined;
+	// NOTE: `delete process.env.PI_EDITOR_BRIDGE` is intentionally OMITTED here — S5 writes
+	// no env var. S16 adds the WRITE to startBridge and the matching DELETE here.
+}
+
+/**
+ * Start the bridge socket server: generate a fresh token, bind a unique Unix-domain
+ * socket under `os.tmpdir()`, and set restrictive `0o600` perms. IDEMPOTENT — calls
+ * {@link stopBridge} first so repeated `session_start` events (reload/new/resume/fork,
+ * PRD §6.2) never leak a server or orphan a socket file.
+ *
+ * STATUS (P1.M2.T3.S5): server-start runtime. OUT OF SCOPE here (landed by later tasks):
+ *  - process.env.PI_EDITOR_BRIDGE advertisement ........ P1.M3.T8.S16 (will call
+ *    getSocketPath()/getToken()/ctx.cwd/process.pid here to build the BridgeDescriptor).
+ *  - wiring startBridge into the session_start handler .. P1.M2.T3.S6 (the L101
+ *    `// TODO(M2): startBridge(...)` call site). NOT wired in S5 so the existing
+ *    mode-guard.test.ts (S3) doesn't fire a real listen/chmod during a unit test.
+ *  - server.on('error', ...) handler .................... S6, when wiring. An unhandled
+ *    'error' event (e.g. EADDRINUSE) THROWS and would crash pi; S5's tests use unique
+ *    UUID paths under tmpdir so no 'error' arises, but the production wiring MUST add one.
+ *
+ * @param ctx accepted to match the contract signature and forward-compat the S16
+ *   descriptor; `ctx.cwd` is NOT dereferenced in S5 (the socket path comes from
+ *   `os.tmpdir()` per the item contract). Signaled with `void ctx;`.
+ */
+export function startBridge(ctx: ExtensionContext): void {
+	stopBridge(); // idempotent teardown of any prior server (reload/new/resume/fork re-entry)
+	void ctx; // ctx.cwd is reserved for the S16 BridgeDescriptor; S5 derives path from tmpdir().
+
+	token = randomUUID().replace(/-/g, "").slice(0, 32); // 32 lowercase hex chars (PRD §12)
+	socketPath = join(tmpdir(), `pi-editor-bridge-${randomUUID()}.sock`);
+	server = __deps.createServer((sock) => onConnection(sock));
+	server.listen(socketPath);
+	// Restrictive perms (PRD §5.1/§12). libuv creates the socket FILE synchronously inside
+	// listen() (verified on-disk), so chmodSync here does NOT ENOENT and yields mode 0o600.
+	// Wrapped in try/catch: 0o600 is defense-in-depth; the token is the real auth boundary,
+	// so a chmod hiccup must never crash session_start. Skipped on Windows (no Unix perms).
+	if (process.platform !== "win32") {
+		try {
+			__deps.chmodSync(socketPath, 0o600);
+		} catch {
+			/* best-effort; do not crash */
+		}
+	}
+	// NOTE: NO process.env.PI_EDITOR_BRIDGE write here — that is P1.M3.T8.S16.
 }
 
 export default function (pi: ExtensionAPI): void {
