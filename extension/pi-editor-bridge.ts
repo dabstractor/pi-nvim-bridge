@@ -15,6 +15,23 @@
  *     (Socket server = M2, env advertisement = S16, commandsChanged = S17.)
  *   - session_shutdown: no-op placeholder. (Socket teardown/cleanup = S6/S15.)
  *
+ * STATUS (P1.M2.T6.S13): `shouldTriggerFileCompletion` handler registered (DONE).
+ *   - session_start now registers `hello` (S9), `getSuggestions` (S11),
+ *     `applyCompletion` (S12), AND `shouldTriggerFileCompletion` (S13) after
+ *     startBridge + provider capture. The S13 handler is a deps-injected factory
+ *     (`makeShouldTriggerFileCompletionHandler`) that delegates to pi's LIVE
+ *     AutocompleteProvider.shouldTriggerFileCompletion SYNCHRONOUSLY (pi's impl is a
+ *     pure SYNC function — autocomplete.ts:775-785, verified; the TUI calls it WITHOUT
+ *     await — editor.ts:2152-2153). It has NO AbortController, NO supersession, NO
+ *     timeout, NO closure state — plain delegation. The MethodHandler union
+ *     (`Promise<unknown> | unknown`) accommodates the sync return; handleLine's `await`
+ *     is a no-op on a non-Promise. The method is OPTIONAL on the interface
+ *     (autocomplete.ts:269 has the `?`), so the handler uses optional chaining `?.` +
+ *     nullish coalescing `?? true` (pi's documented default: absent method ⇒ ALLOW
+ *     file completion) — byte-identical to pi's own tests/docs/examples. ping/bye/
+ *     getCommands (S14) and domain-error wrapping (S15) remain TODO.
+ *     `connection.ts` and `protocol.ts` UNCHANGED.
+ *
  * STATUS (P1.M2.T6.S12): `applyCompletion` handler registered (DONE).
  *   - session_start now registers `hello` (S9), `getSuggestions` (S11), AND
  *     `applyCompletion` (S12) after startBridge + provider capture. The S12 handler is
@@ -65,6 +82,8 @@ import type {
 	GetSuggestionsResult,
 	ApplyCompletionParams,
 	ApplyCompletionResult,
+	ShouldTriggerFileCompletionParams,
+	ShouldTriggerFileCompletionResult,
 } from "./protocol.ts";
 
 /**
@@ -572,6 +591,99 @@ export function makeApplyCompletionHandler(deps: {
 	};
 }
 
+/**
+ * Narrow a raw `unknown` JSON-RPC `params` into {@link ShouldTriggerFileCompletionParams},
+ * throwing `BridgeRpcError(-32602, "invalid params: …")` on any malformed shape.
+ *
+ * Mirrors {@link narrowGetSuggestionsParams} but with ONLY `lines`/`cursorLine`/
+ * `cursorCol` (no `force`, no `item`/`prefix`). `-32602` is the reserved JSON-RPC
+ * "invalid params" code (protocol.ts §A). This matches S9/S11/S12 precedent:
+ * handler-level INPUT VALIDATION throws typed errors here; provider RUNTIME throws
+ * fall to `handleLine`'s `-32603` safety net (S15 later wraps).
+ *
+ * Rules: `params` is a non-null object; `lines` is an Array of strings;
+ * `cursorLine`/`cursorCol` are non-negative integers.
+ */
+function narrowShouldTriggerFileCompletionParams(
+	params: unknown,
+): ShouldTriggerFileCompletionParams {
+	const p = params as Partial<ShouldTriggerFileCompletionParams> | null;
+	if (!p || typeof p !== "object") {
+		throw new BridgeRpcError(-32602, "invalid params: expected an object");
+	}
+	const { lines, cursorLine, cursorCol } = p;
+	if (!Array.isArray(lines) || !lines.every((l) => typeof l === "string")) {
+		throw new BridgeRpcError(-32602, "invalid params: lines must be string[]");
+	}
+	if (
+		typeof cursorLine !== "number" ||
+		!Number.isInteger(cursorLine) ||
+		cursorLine < 0
+	) {
+		throw new BridgeRpcError(-32602, "invalid params: cursorLine must be a non-negative integer");
+	}
+	if (
+		typeof cursorCol !== "number" ||
+		!Number.isInteger(cursorCol) ||
+		cursorCol < 0
+	) {
+		throw new BridgeRpcError(-32602, "invalid params: cursorCol must be a non-negative integer");
+	}
+	return { lines, cursorLine, cursorCol };
+}
+
+/**
+ * Build the `shouldTriggerFileCompletion` JSON-RPC handler (PRD §5.4 / §6.5). PURE
+ * factory — dep injected so unit tests stub the provider. Delegates to pi's LIVE {@link
+ * AutocompleteProvider.shouldTriggerFileCompletion} SYNCHRONOUSLY.
+ *
+ * SYNC, NO TIMING/RESOURCE CONCERNS: unlike getSuggestions (S11), shouldTriggerFileCompletion
+ * is a pure SYNC function (pi autocomplete.ts:775-785 — verified). It takes NO options/
+ * AbortSignal and returns a `boolean` directly. The TUI calls it WITHOUT await
+ * (editor.ts:2152-2153). So this handler has NO AbortController, NO supersession (no
+ * `pendingAbort`), NO timeout, NO closure state — it is plain delegation. The
+ * MethodHandler union (`Promise<unknown> | unknown`) accommodates a sync return;
+ * handleLine's `await` is a no-op on a non-Promise.
+ *
+ * OPTIONAL METHOD + `true` DEFAULT: UNLIKE getSuggestions/applyCompletion (required),
+ * shouldTriggerFileCompletion is marked OPTIONAL on AutocompleteProvider
+ * (autocomplete.ts:269 has the `?`). The handler MUST use optional chaining `?.` (a
+ * direct call throws TypeError on a provider without the method) and nullish coalescing
+ * `?? true` (pi's documented default: absent method ⇒ ALLOW file completion). pi's own
+ * tests, docs, and examples ALL write `current.shouldTriggerFileCompletion?.(...) ?? true`
+ * (byte-identical across 5 sources). The bridge replicates this VERBATIM.
+ *
+ * GATE IS PI'S JOB: pi's impl returns `false` while the user types a bare slash command
+ * (e.g. `/set` before any space) and `true` otherwise (PRD §11). This handler forwards
+ * (lines,cursorLine,cursorCol) and returns pi's boolean UNCHANGED — the bridge never
+ * reimplements the gate.
+ *
+ * ERRORS: malformed params throw `BridgeRpcError(-32602)` (S9/S11/S12 precedent;
+ * -32602 = reserved "invalid params"). `deps.getProvider()` throwing (provider not
+ * captured) and any provider RUNTIME throw propagate to `handleLine`'s `-32603` safety
+ * net — S15 later wraps those. S13 keeps them flowing (keeps pi safe).
+ */
+export function makeShouldTriggerFileCompletionHandler(deps: {
+	getProvider: () => AutocompleteProvider;
+}): MethodHandler {
+	return (
+		_params: unknown,
+		_state: ConnectionState,
+	): ShouldTriggerFileCompletionResult => {
+		const params = narrowShouldTriggerFileCompletionParams(_params);
+		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		// SYNC delegation via `?.` (method is OPTIONAL) + `?? true` (pi's documented default).
+		// Return pi's boolean VERBATIM.
+		return (
+			provider.shouldTriggerFileCompletion?.(
+				params.lines,
+				params.cursorLine,
+				params.cursorCol,
+			) ?? true
+		);
+	};
+}
+
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
 		/**
@@ -625,7 +737,18 @@ export default function (pi: ExtensionAPI): void {
 			"applyCompletion",
 			makeApplyCompletionHandler({ getProvider }),
 		);
-		// TODO(S13): register "shouldTriggerFileCompletion"; (S14): ping/bye/getCommands.
+		// S13: register `shouldTriggerFileCompletion` AFTER `applyCompletion` (so the provider is
+		// captured and the token exists) and AFTER startBridge. The handler delegates to pi's live
+		// AutocompleteProvider.shouldTriggerFileCompletion SYNCHRONOUSLY via `?.` + `?? true` (the
+		// method is OPTIONAL on the interface; `?? true` is pi's documented default — absent method
+		// ⇒ ALLOW file completion). It has NO AbortController, NO supersession, NO timeout, NO
+		// closure state — plain delegation. Idempotent (Map.set) — safe across
+		// reload/new/resume/fork (research §3/§6).
+		registerBridgeHandler(
+			"shouldTriggerFileCompletion",
+			makeShouldTriggerFileCompletionHandler({ getProvider }),
+		);
+		// (S13 DONE). TODO(S14): ping/bye/getCommands.
 		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
 	});
 

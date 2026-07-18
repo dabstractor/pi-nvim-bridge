@@ -276,7 +276,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T6.S13",
                   "title": "shouldTriggerFileCompletion handler",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P1.M2.T5.S10",
