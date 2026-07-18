@@ -103,7 +103,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "JSONL Socket Server & RPC Engine",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Implement the Unix domain socket server with JSONL framing, connection lifecycle, token-based handshake authentication, and JSON-RPC method handlers that delegate to the captured live provider. Includes per-request timeout and stale-request supersession for cancellation.",
           "tasks": [
             {
@@ -310,14 +310,14 @@
               "type": "Task",
               "id": "P1.M2.T7",
               "title": "Cancellation, timeout & error wrapping",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Ensure all RPC handlers are wrapped in try/catch to return JSON-RPC error envelopes instead of throwing, and that the supersession/timeout logic in getSuggestions is robust.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T7.S15",
                   "title": "Wrap all handlers in try/catch with JSON-RPC error responses",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T6.S11",

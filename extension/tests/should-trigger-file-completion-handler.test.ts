@@ -316,15 +316,16 @@ test("UNIT: param validation happens BEFORE the provider is called (provider NOT
 	);
 });
 
-test("UNIT: provider-not-captured → rethrows the plain Error (NOT a BridgeRpcError; -32603 safety net)", () => {
+test("UNIT: provider-not-captured → throws BridgeRpcError(-32603, \"completion provider unavailable: …\")", () => {
 	const handler = makeShouldTriggerFileCompletionHandler({
 		getProvider: () => {
 			throw new Error("not captured");
 		},
 	});
 	const state = { handshakeComplete: true };
-	// S13 does NOT wrap this — it lets the plain Error propagate to handleLine's -32603 net.
-	// (S15 will later refine this into a specific code; S13 keeps it flowing — keeps pi safe.)
+	// S15 wraps deps.getProvider() throwing into BridgeRpcError(-32603) at the handler edge
+	// via toBridgeRpcError(e, "completion provider unavailable"). (The plain-Error stub stays;
+	// the assertion changes — now a typed BridgeRpcError, not a raw Error to the safety net.)
 	assert.throws(
 		() =>
 			handler(
@@ -332,9 +333,12 @@ test("UNIT: provider-not-captured → rethrows the plain Error (NOT a BridgeRpcE
 				state,
 			),
 		(err: unknown) => {
-			assert.ok(err instanceof Error, "must be a plain Error");
-			assert.ok(!(err instanceof BridgeRpcError), "must NOT be a BridgeRpcError (S15's lane)");
-			assert.equal(err.message, "not captured");
+			assert.ok(err instanceof BridgeRpcError, "S15: must be a BridgeRpcError now");
+			assert.equal((err as BridgeRpcError).code, -32603);
+			assert.ok(
+				(err as BridgeRpcError).message.startsWith("completion provider unavailable:"),
+				`got "${(err as BridgeRpcError).message}"`,
+			);
 			return true;
 		},
 	);

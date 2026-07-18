@@ -50,6 +50,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import {
+	BridgeRpcError,
 	handleLine,
 	onConnection,
 	registerBridgeHandler,
@@ -348,23 +349,24 @@ test("UNIT getCommands: exact provider call → getSuggestions([\"/\"],0,1,{sign
 	assert.equal(call!.signal.aborted, false, "the fresh AbortController must NOT be aborted (no-op)");
 });
 
-test("UNIT getCommands: provider-not-captured → rethrows plain Error (NOT BridgeRpcError; -32603 safety net)", async () => {
+test("UNIT getCommands: provider-not-captured → throws BridgeRpcError(-32603, \"completion provider unavailable: …\")", async () => {
 	const handler = makeGetCommandsHandler({
 		getProvider: () => {
 			throw new Error("not captured");
 		},
 	});
-	// S14 does NOT wrap this — it lets the plain Error propagate to handleLine's -32603 net.
-	// (S15 will later refine this into a specific code; S14 keeps it flowing — keeps pi safe.)
+	// S15 wraps deps.getProvider() throwing into BridgeRpcError(-32603) at the handler edge
+	// via toBridgeRpcError(e, "completion provider unavailable"). (The plain-Error stub stays;
+	// the assertion changes — now a typed BridgeRpcError, not a raw Error to the safety net.)
 	await assert.rejects(
 		async () => handler({}, { handshakeComplete: true }),
 		(err: unknown) => {
-			assert.ok(err instanceof Error, "must be a plain Error");
+			assert.ok(err instanceof BridgeRpcError, "S15: must be a BridgeRpcError now");
+			assert.equal((err as BridgeRpcError).code, -32603);
 			assert.ok(
-				!/Rpc/i.test(err.constructor.name),
-				"must NOT be a BridgeRpcError (S15's lane)",
+				(err as BridgeRpcError).message.startsWith("completion provider unavailable:"),
+				`got "${(err as BridgeRpcError).message}"`,
 			);
-			assert.equal(err.message, "not captured");
 			return true;
 		},
 	);
@@ -605,7 +607,7 @@ test("DISPATCH getCommands: empty-params method ignores unknown params (no -3260
 	}
 });
 
-test("DISPATCH getCommands: provider-not-captured → -32603 (safety net; S15 refines)", async () => {
+test("DISPATCH getCommands: provider-not-captured → -32603 (S15 wrapped: handler throws BridgeRpcError, not the safety-net else-branch)", async () => {
 	registerBridgeHandler(
 		"getCommands",
 		makeGetCommandsHandler({
@@ -628,7 +630,13 @@ test("DISPATCH getCommands: provider-not-captured → -32603 (safety net; S15 re
 		};
 		assert.equal(r.id, "g1");
 		assert.equal(r.error.code, -32603);
-		assert.ok(r.error.message.startsWith("internal error:"));
+		// S15: the handler now throws BridgeRpcError(-32603, "completion provider unavailable: …")
+		// itself; handleLine routes it to the same -32603 code but with the handler's clean,
+		// context-prefixed message (NOT the safety-net's "internal error: …" else-branch).
+		assert.ok(
+			r.error.message.startsWith("completion provider unavailable:"),
+			`got "${r.error.message}"`,
+		);
 	} finally {
 		__resetHandlersForTest();
 	}

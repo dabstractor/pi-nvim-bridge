@@ -63,6 +63,30 @@ export class BridgeRpcError extends Error {
 	}
 }
 
+/**
+ * Convert any thrown value into a {@link BridgeRpcError} for a handler's domain-error path.
+ * Pass-through if `err` is already a BridgeRpcError (so params-validation `-32602` and
+ * `hello`'s `-32600` keep their intentional codes); otherwise wrap into `-32603` (JSON-RPC
+ * "internal error") with a sanitized, context-prefixed message.
+ *
+ * STATUS (P1.M2.T7.S15): shared converter the 4 provider-dependent handlers
+ * (`getSuggestions` / `applyCompletion` / `shouldTriggerFileCompletion` / `getCommands`)
+ * use to wrap their domain errors (provider-not-captured, provider-runtime-throw) into
+ * proper JSON-RPC codes BEFORE they reach {@link handleLine}'s `-32603` last-resort
+ * safety net — so the safety net becomes truly last-resort. `-32603` is the JSON-RPC
+ * "internal error" code; the `-32000..-32099` server range is reserved for *distinguished*
+ * modes clients branch on (`research/jsonrpc-error-best-practices.md` §2) — the Neovim
+ * client treats ALL completion errors as silent-degrade (PRD §11), so a single
+ * interoperable `-32603` with a descriptive message beats inventing a `-320xx` taxonomy
+ * no client acts on. The message NEVER contains the token (the token lives in a separate
+ * module-level secret; the SECURITY sweep stays green).
+ */
+export function toBridgeRpcError(err: unknown, context: string): BridgeRpcError {
+	if (err instanceof BridgeRpcError) return err;
+	const detail = err instanceof Error ? err.message : String(err);
+	return new BridgeRpcError(-32603, `${context}: ${detail}`);
+}
+
 /** Per-connection state. S8 creates it fresh (`handshakeComplete:false`) inside each
  *  {@link onConnection} call; two sockets get two independent states. S9 sets
  *  `handshakeComplete=true` on a valid `hello`; S10 gates every non-hello method on it. */

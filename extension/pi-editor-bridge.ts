@@ -7,6 +7,31 @@
  * Env var:    process.env.PI_EDITOR_BRIDGE  (JSON BridgeDescriptor: { transport,
  *             path, token, pid, cwd, ... }) — written in a later task (S16).
  *
+ * STATUS (P1.M2.T7.S15): domain-error wrapping for the 4 provider-dependent
+ *   handlers — DONE. `getSuggestions` / `applyCompletion` /
+ *   `shouldTriggerFileCompletion` / `getCommands` now wrap BOTH `deps.getProvider()`
+ *   (context "completion provider unavailable") and the provider method call
+ *   (context "<methodName> failed") in `try/catch` blocks that re-throw via the shared
+ *   `toBridgeRpcError(e, context)` converter (added to `connection.ts`). A thrown plain
+ *   `Error` becomes `BridgeRpcError(-32603, "<context>: <msg>")` — so `handleLine`'s
+ *   `-32603` catch becomes a genuine LAST-RESORT safety net (only unexpected
+ *   programming bugs), not the path real domain failures take. `BridgeRpcError`
+ *   instances pass through unchanged (so `-32602` params validation + `hello`'s
+ *   `-32600` bad token keep their intentional codes). `narrow*Params()` stays BEFORE
+ *   the provider block so `-32602` flows untouched. `getSuggestions` preserves its
+ *   `finally { clearTimeout(timer) }` on all paths. `hello` / `ping` / `bye` are
+ *   INHERENTLY SAFE and are NOT wrapped: their only throw is the intentional
+ *   `BridgeRpcError`, their injected getters (`getPid`/`getCwd`/`getFdAvailable`/
+ *   `getToken`) are pure non-throwing functions, and `bye` just sets a flag — the
+ *   `handleLine` safety net still covers any impossible-in-practice throw from them.
+ *   `getProvider()` ITSELF still throws a plain `Error` (the HANDLER wraps it; the
+ *   `provider-capture.test.ts` contract stays intact). `-32603` (not `-320xx`) is used
+ *   for ALL domain failures: the Neovim client never branches on the code (PRD §11
+ *   silent-degrade), so a single interoperable code with a descriptive message beats
+ *   inventing a `-320xx` taxonomy no client acts on (research/
+ *   jsonrpc-error-best-practices.md §2; `-320xx` is a documented future refinement,
+ *   PRD §15).
+ *
  * STATUS (P1.M2.T6.S14): `ping` / `bye` / `getCommands` handlers registered (DONE).
  *   - session_start now registers the FULL M2.T6 handler family: `hello` (S9),
  *     `getSuggestions` (S11), `applyCompletion` (S12), `shouldTriggerFileCompletion`
@@ -91,6 +116,7 @@ import {
 	onConnection,
 	registerBridgeHandler,
 	BridgeRpcError,
+	toBridgeRpcError,
 	type ConnectionState,
 	type MethodHandler,
 } from "./connection.ts";
@@ -497,7 +523,8 @@ export function makeByeHandler(): MethodHandler {
  * `-32602` is the reserved JSON-RPC "invalid params" code (protocol.ts §A). This
  * matches S9's precedent (hello throws `BridgeRpcError(-32600)` for a bad token):
  * handler-level INPUT VALIDATION throws typed errors here; provider RUNTIME throws
- * fall to `handleLine`'s `-32603` safety net (S15 later wraps those).
+ * are wrapped by S15 into `BridgeRpcError(-32603)` at the handler edge (context
+ * "getSuggestions failed").
  *
  * Rules: `params` is a non-null object; `lines` is an Array of strings;
  * `cursorLine`/`cursorCol` are non-negative integers; `force` is undefined or boolean.
@@ -550,12 +577,14 @@ function narrowGetSuggestionsParams(params: unknown): GetSuggestionsParams {
  * timer never leaks past completion.
  *
  * ERRORS: malformed params throw `BridgeRpcError(-32602)` (S9 precedent; -32602 = the
- * reserved "invalid params" code). `deps.getProvider()` throwing (provider not captured)
- * and any provider RUNTIME throw propagate to `handleLine`'s `-32603` safety net — S15
- * later wraps those into proper codes. S11 keeps them flowing (keeps pi safe).
+ * reserved "invalid params" code). S15 wraps `deps.getProvider()` throwing (provider
+ * not captured) and any provider RUNTIME throw into `BridgeRpcError(-32603, "<context>:
+ * <msg>")` via {@link toBridgeRpcError} at the handler edge, so the safety net is
+ * last-resort. The contexts are "completion provider unavailable" (getProvider) and
+ * "getSuggestions failed" (the provider call).
  *
  * @param deps.getProvider  returns the live provider (throws plain `Error` if not
- *   captured yet → `-32603` safety net; S15 refines).
+ *   captured yet → S15 wraps to `-32603` "completion provider unavailable: ...").
  * @param deps.timeoutMs    per-request abort timeout (defaults to
  *   {@link GET_SUGGESTIONS_TIMEOUT_MS}; inject a short value in tests).
  */
@@ -570,7 +599,12 @@ export function makeGetSuggestionsHandler(deps: {
 		_state: ConnectionState,
 	): Promise<GetSuggestionsResult> => {
 		const params = narrowGetSuggestionsParams(_params);
-		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		let provider: AutocompleteProvider;
+		try {
+			provider = deps.getProvider(); // wrapped by S15: toBridgeRpcError(e, "completion provider unavailable") → -32603
+		} catch (e) {
+			throw toBridgeRpcError(e, "completion provider unavailable");
+		}
 		const ac = new AbortController();
 		pendingAbort?.abort(); // supersede any in-flight call (SIGKILLs its fd)
 		pendingAbort = ac;
@@ -578,12 +612,16 @@ export function makeGetSuggestionsHandler(deps: {
 			if (!ac.signal.aborted) ac.abort();
 		}, timeoutMs);
 		try {
-			return await provider.getSuggestions(
-				params.lines,
-				params.cursorLine,
-				params.cursorCol,
-				{ signal: ac.signal, force: params.force === true },
-			);
+			try {
+				return await provider.getSuggestions(
+					params.lines,
+					params.cursorLine,
+					params.cursorCol,
+					{ signal: ac.signal, force: params.force === true },
+				);
+			} catch (e) {
+				throw toBridgeRpcError(e, "getSuggestions failed");
+			}
 		} finally {
 			clearTimeout(timer);
 		}
@@ -597,7 +635,8 @@ export function makeGetSuggestionsHandler(deps: {
  * Mirrors {@link narrowGetSuggestionsParams} + adds `item`/`prefix` validation.
  * `-32602` is the reserved JSON-RPC "invalid params" code (protocol.ts §A). This
  * matches S9/S11 precedent: handler-level INPUT VALIDATION throws typed errors here;
- * provider RUNTIME throws fall to `handleLine`'s `-32603` safety net (S15 later wraps).
+ * provider RUNTIME throws are wrapped by S15 into `BridgeRpcError(-32603)` at the
+ * handler edge (context "applyCompletion failed").
  *
  * Rules: `params` is a non-null object; `lines` is an Array of strings;
  * `cursorLine`/`cursorCol` are non-negative integers; `item` is a non-null object with
@@ -663,9 +702,10 @@ function narrowApplyCompletionParams(params: unknown): ApplyCompletionParams {
  * pi's result UNCHANGED — the bridge never reimplements insertion (PRD §4 step 5).
  *
  * ERRORS: malformed params throw `BridgeRpcError(-32602)` (S9/S11 precedent; -32602 =
- * reserved "invalid params"). `deps.getProvider()` throwing (provider not captured) and
- * any provider RUNTIME throw propagate to `handleLine`'s `-32603` safety net — S15
- * later wraps those. S12 keeps them flowing (keeps pi safe).
+ * reserved "invalid params"). S15 wraps `deps.getProvider()` throwing (provider not
+ * captured) and any provider RUNTIME throw into `BridgeRpcError(-32603, "<context>:
+ * <msg>")` via {@link toBridgeRpcError} at the handler edge (contexts "completion
+ * provider unavailable" and "applyCompletion failed"); the safety net is last-resort.
  */
 export function makeApplyCompletionHandler(deps: {
 	getProvider: () => AutocompleteProvider;
@@ -675,15 +715,24 @@ export function makeApplyCompletionHandler(deps: {
 		_state: ConnectionState,
 	): ApplyCompletionResult => {
 		const params = narrowApplyCompletionParams(_params);
-		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		let provider: AutocompleteProvider;
+		try {
+			provider = deps.getProvider(); // wrapped by S15: toBridgeRpcError(e, "completion provider unavailable") → -32603
+		} catch (e) {
+			throw toBridgeRpcError(e, "completion provider unavailable");
+		}
 		// SYNC delegation — return pi's full new buffer + cursor VERBATIM.
-		return provider.applyCompletion(
-			params.lines,
-			params.cursorLine,
-			params.cursorCol,
-			params.item,
-			params.prefix,
-		);
+		try {
+			return provider.applyCompletion(
+				params.lines,
+				params.cursorLine,
+				params.cursorCol,
+				params.item,
+				params.prefix,
+			);
+		} catch (e) {
+			throw toBridgeRpcError(e, "applyCompletion failed");
+		}
 	};
 }
 
@@ -695,7 +744,8 @@ export function makeApplyCompletionHandler(deps: {
  * `cursorCol` (no `force`, no `item`/`prefix`). `-32602` is the reserved JSON-RPC
  * "invalid params" code (protocol.ts §A). This matches S9/S11/S12 precedent:
  * handler-level INPUT VALIDATION throws typed errors here; provider RUNTIME throws
- * fall to `handleLine`'s `-32603` safety net (S15 later wraps).
+ * are wrapped by S15 into `BridgeRpcError(-32603)` at the handler edge (context
+ * "shouldTriggerFileCompletion failed").
  *
  * Rules: `params` is a non-null object; `lines` is an Array of strings;
  * `cursorLine`/`cursorCol` are non-negative integers.
@@ -756,8 +806,10 @@ function narrowShouldTriggerFileCompletionParams(
  *
  * ERRORS: malformed params throw `BridgeRpcError(-32602)` (S9/S11/S12 precedent;
  * -32602 = reserved "invalid params"). `deps.getProvider()` throwing (provider not
- * captured) and any provider RUNTIME throw propagate to `handleLine`'s `-32603` safety
- * net — S15 later wraps those. S13 keeps them flowing (keeps pi safe).
+ * captured) and any provider RUNTIME throw into `BridgeRpcError(-32603, "<context>:
+ * <msg>")` via {@link toBridgeRpcError} at the handler edge (contexts "completion
+ * provider unavailable" and "shouldTriggerFileCompletion failed"); the safety net is
+ * last-resort.
  */
 export function makeShouldTriggerFileCompletionHandler(deps: {
 	getProvider: () => AutocompleteProvider;
@@ -767,16 +819,26 @@ export function makeShouldTriggerFileCompletionHandler(deps: {
 		_state: ConnectionState,
 	): ShouldTriggerFileCompletionResult => {
 		const params = narrowShouldTriggerFileCompletionParams(_params);
-		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		let provider: AutocompleteProvider;
+		try {
+			provider = deps.getProvider(); // wrapped by S15: toBridgeRpcError(e, "completion provider unavailable") → -32603
+		} catch (e) {
+			throw toBridgeRpcError(e, "completion provider unavailable");
+		}
 		// SYNC delegation via `?.` (method is OPTIONAL) + `?? true` (pi's documented default).
-		// Return pi's boolean VERBATIM.
-		return (
-			provider.shouldTriggerFileCompletion?.(
-				params.lines,
-				params.cursorLine,
-				params.cursorCol,
-			) ?? true
-		);
+		// Return pi's boolean VERBATIM. Wrap the whole expression so a throw from the
+		// optional method is caught (S15).
+		try {
+			return (
+				provider.shouldTriggerFileCompletion?.(
+					params.lines,
+					params.cursorLine,
+					params.cursorCol,
+				) ?? true
+			);
+		} catch (e) {
+			throw toBridgeRpcError(e, "shouldTriggerFileCompletion failed");
+		}
 	};
 }
 
@@ -812,10 +874,11 @@ export function makeShouldTriggerFileCompletionHandler(deps: {
  * EMPTY params (`GetCommandsParams = Record<string, never>`) are IGNORED — NO
  * params validator (nothing to narrow; hello's precedent is to ignore unknown params).
  *
- * ERRORS: `deps.getProvider()` throwing (provider not captured) and any provider
- * RUNTIME throw propagate to `handleLine`'s `-32603` safety net — S15 later wraps
- * those. S14 keeps them flowing (keeps pi safe). A `null`/empty provider result
- * yields `{commands: []}`.
+ * ERRORS: S15 wraps `deps.getProvider()` throwing (provider not captured) and any
+ * provider RUNTIME throw into `BridgeRpcError(-32603, "<context>: <msg>")` via
+ * {@link toBridgeRpcError} at the handler edge (contexts "completion provider
+ * unavailable" and "getSuggestions failed" — getCommands reuses getSuggestions); the
+ * safety net is last-resort. A `null`/empty provider result yields `{commands: []}`.
  */
 export function makeGetCommandsHandler(deps: {
 	getProvider: () => AutocompleteProvider;
@@ -824,12 +887,24 @@ export function makeGetCommandsHandler(deps: {
 		_params: unknown,
 		_state: ConnectionState,
 	): Promise<GetCommandsResult> => {
-		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		let provider: AutocompleteProvider;
+		try {
+			provider = deps.getProvider(); // wrapped by S15: toBridgeRpcError(e, "completion provider unavailable") → -32603
+		} catch (e) {
+			throw toBridgeRpcError(e, "completion provider unavailable");
+		}
 		const ac = new AbortController(); // signature requires {signal}; the "/" branch is sync ⇒ no-op
-		const result = await provider.getSuggestions(["/"], 0, 1, {
-			signal: ac.signal,
-			force: false,
-		});
+		let result: Awaited<ReturnType<AutocompleteProvider["getSuggestions"]>>;
+		try {
+			result = await provider.getSuggestions(["/"], 0, 1, {
+				signal: ac.signal,
+				force: false,
+			});
+		} catch (e) {
+			// getCommands reuses getSuggestions under the hood, so the method context is
+			// "getSuggestions failed" (S15).
+			throw toBridgeRpcError(e, "getSuggestions failed");
+		}
 		if (!result) return { commands: [] };
 		// Map AutocompleteItem → CommandInfo. `name = item.value` (no leading slash);
 		// `description` forwarded when present. `argumentHint` intentionally omitted
