@@ -7,10 +7,12 @@
  * Env var:    process.env.PI_EDITOR_BRIDGE  (JSON BridgeDescriptor: { transport,
  *             path, token, pid, cwd, ... }) — written in a later task (S16).
  *
- * STATUS (P1.M1.T1.S2): provider capture implemented.
- *   - session_start: logs a startup message AND captures pi's live autocomplete
- *     provider via a pass-through factory (getProvider() → captured reference).
- *     (TUI-mode guard = S3, socket server = M2, env advertisement = S16.)
+ * STATUS (P1.M1.T1.S3): TUI mode guard added.
+ *   - session_start: guarded by `if (ctx.mode !== "tui") return;` at the very
+ *     top, so the bridge performs ZERO work in rpc/json/print modes. The
+ *     startup log AND provider capture therefore run ONLY in tui mode (the log
+ *     is intentionally TUI-only — it is suppressed in --print/--rpc/--json).
+ *     (Socket server = M2, env advertisement = S16, commandsChanged = S17.)
  *   - session_shutdown: no-op placeholder. (Socket teardown/cleanup = S6/S15.)
  *
  * Loaded by pi via jiti (TypeScript works without compilation). Install at
@@ -73,13 +75,28 @@ export function getProvider(): AutocompleteProvider {
 
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
-		// Skeleton: just log. Real startup (open socket, set env) is added in
-		// M2 / S16. console.log is fine in --print/--rpc; a later task will
-		// prefer ctx.ui.notify when ctx.hasUI (TUI mode).
+		/**
+		 * TUI-only activation gate for the entire bridge.
+		 *
+		 * The external `$EDITOR` (the process this bridge serves completions to)
+		 * is launched EXCLUSIVELY by pi's interactive (TUI) mode via the
+		 * `app.editor.external` keybinding — `openExternalEditor()` exists only
+		 * under `modes/interactive/` and is never invoked in rpc/json/print
+		 * modes. In RPC mode, `ctx.ui.addAutocompleteProvider` is additionally a
+		 * documented NO-OP (rpc-mode.ts:271-273: "Autocomplete provider
+		 * composition is not supported in RPC mode"), so capturing the provider
+		 * would silently capture nothing.
+		 *
+		 * Short-circuiting here means the bridge performs zero work headlessly:
+		 * no provider capture, and (once added below) no socket bind, no env-var
+		 * advertisement, no commandsChanged emit. All future session_start logic
+		 * MUST be placed BELOW this guard so it inherits non-TUI protection.
+		 */
+		if (ctx.mode !== "tui") return;
+
 		console.log(
 			`pi-editor-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`,
 		);
-		// TODO(S3): guard with `if (ctx.mode !== "tui") return;` before capturing.
 		captureProvider(ctx);
 		// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE
 	});
