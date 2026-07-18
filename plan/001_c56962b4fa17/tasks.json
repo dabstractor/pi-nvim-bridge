@@ -448,7 +448,7 @@
                   "type": "Subtask",
                   "id": "P2.M4.T11.S19",
                   "title": "init.lua with setup() and default config options",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per PRD §7.5 and §10.5, default options: `menu = { max_height = 12, border = \"rounded\" }`, `debounce_ms = 25`, `rpc_timeout_ms = 2000`, `autosave_on_exit = true`, `engine = \"builtin\"`. Per architecture/external_deps.md, Neovim 0.10+ required (0.12 verified). Plugin module path is `lua/pi-editor/`.\n2. INPUT: User-provided options table (or empty table).\n3. LOGIC: Create `plugin/lua/pi-editor/init.lua` with a module table `M`. Implement `M.setup(opts)` that merges `opts` over defaults (using `vim.tbl_deep_extend`), stores config in `M.config`, and exposes it for other modules. Also expose `M.bridge` (placeholder nil for now) so external code can access the bridge client per PRD §7.7.\n4. OUTPUT: `require(\"pi-editor\").setup({})` works without errors and config is stored.\n5. DOCS: [Mode A] Lua docstring (`---@module` annotations) on setup() documenting each option.",
