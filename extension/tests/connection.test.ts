@@ -13,24 +13,31 @@ import {
 	sendError,
 	sendNotification,
 	registerBridgeHandler,
+	BridgeRpcError,
 	__resetHandlersForTest,
 } from "../connection.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 // A fake socket: EventEmitter (for .on/.emit/.listenerCount) + a write() that captures
-// every serialized line. .destroy() emits 'close' (the real net.Socket does too).
-function fakeSocket(): { sock: Socket; writes: string[] } {
+// every serialized line. .destroy()/.end() emit 'close' (the real net.Socket does too).
+// `state` records whether end() was called so the S9 fatal-close path is assertable.
+function fakeSocket(): { sock: Socket; writes: string[]; state: { ended: boolean } } {
 	const writes: string[] = [];
+	const state = { ended: false };
 	const sock = Object.assign(new EventEmitter(), {
 		write(s: string) {
 			writes.push(s);
 			return true;
 		},
+		end() {
+			state.ended = true;
+			(this as unknown as EventEmitter).emit("close");
+		},
 		destroy() {
 			(this as unknown as EventEmitter).emit("close");
 		},
 	}) as unknown as Socket;
-	return { sock, writes };
+	return { sock, writes, state };
 }
 function parseResponses(writes: string[]): unknown[] {
 	return writes.map((w) => JSON.parse(w.trim()));
@@ -136,6 +143,70 @@ test("handleLine: registered handler THROWS → -32603, no throw (S8 safety net)
 		const r = parseResponses(writes)[0] as { id: string; error: { code: number } };
 		assert.equal(r.id, "b1");
 		assert.equal(r.error.code, -32603);
+	} finally {
+		__resetHandlersForTest();
+	}
+});
+
+// (S9: BridgeRpcError mapping — typed errors → their code; fatal → graceful close) ---
+test("handleLine: handler throws non-fatal BridgeRpcError(code,msg) → that code, socket stays open", async () => {
+	registerBridgeHandler("typed", () => {
+		throw new BridgeRpcError(-32601, "nope");
+	});
+	try {
+		const { sock, writes, state } = fakeSocket();
+		await assert.doesNotReject(async () => {
+			await handleLine(sock, { handshakeComplete: true }, JSON.stringify({
+				jsonrpc: "2.0", id: "t1", method: "typed",
+			}));
+		});
+		const r = parseResponses(writes)[0] as { id: string; error: { code: number; message: string } };
+		assert.equal(r.id, "t1");
+		assert.equal(r.error.code, -32601);
+		assert.equal(r.error.message, "nope");
+		assert.equal(state.ended, false, "non-fatal BridgeRpcError must NOT close the socket");
+	} finally {
+		__resetHandlersForTest();
+	}
+});
+
+test("handleLine: handler throws fatal BridgeRpcError(-32600,...,{fatal:true}) → that code AND sock.end()", async () => {
+	registerBridgeHandler("die", () => {
+		throw new BridgeRpcError(-32600, "bad token", { fatal: true });
+	});
+	try {
+		const { sock, writes, state } = fakeSocket();
+		await assert.doesNotReject(async () => {
+			await handleLine(sock, { handshakeComplete: true }, JSON.stringify({
+				jsonrpc: "2.0", id: "d1", method: "die",
+			}));
+		});
+		const r = parseResponses(writes)[0] as { id: string; error: { code: number; message: string } };
+		assert.equal(r.id, "d1");
+		assert.equal(r.error.code, -32600);
+		assert.equal(r.error.message, "bad token");
+		assert.equal(state.ended, true, "fatal BridgeRpcError must close the socket");
+	} finally {
+		__resetHandlersForTest();
+	}
+});
+
+test("handleLine: REGRESSION — plain Error throw still maps to -32603, socket open", async () => {
+	// Re-asserts the S8 safety net under the S9 `instanceof BridgeRpcError` branch: a
+	// plain Error falls through to the else → -32603, and never closes.
+	registerBridgeHandler("plain", () => {
+		throw new Error("untyped");
+	});
+	try {
+		const { sock, writes, state } = fakeSocket();
+		await assert.doesNotReject(async () => {
+			await handleLine(sock, { handshakeComplete: true }, JSON.stringify({
+				jsonrpc: "2.0", id: "p1", method: "plain",
+			}));
+		});
+		const r = parseResponses(writes)[0] as { id: string; error: { code: number } };
+		assert.equal(r.error.code, -32603);
+		assert.equal(state.ended, false);
 	} finally {
 		__resetHandlersForTest();
 	}

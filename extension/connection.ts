@@ -32,6 +32,37 @@ import type { Socket } from "node:net";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl-reader.ts";
 import type { JsonRpcError } from "./protocol.ts";
 
+/** Options for {@link BridgeRpcError}. `fatal` opts in to a graceful `sock.end()`
+ *  after the error response is flushed (only `hello`'s bad-token path uses `fatal:true`). */
+export interface BridgeRpcErrorOptions {
+	fatal?: boolean;
+}
+
+/**
+ * Typed JSON-RPC error a handler THROWS to request a SPECIFIC error code (and,
+ * optionally, to close the connection after replying). {@link handleLine} maps it →
+ * `{jsonrpc,id,error:{code,message}}` and, when `fatal`, graceful `sock.end()`.
+ * Any OTHER thrown value falls through to the last-resort `-32603` (S8 safety net).
+ *
+ * Codes are the JSON-RPC 2.0 reserved range: -32700 parse, -32600 invalid
+ * request / bad token (PRD §5.3), -32601 method not found, -32602 invalid
+ * params, -32603 internal error.
+ *
+ * STATUS (P1.M2.T5.S9): foundation S15 ("wrap handlers' domain errors into
+ * proper codes") builds on. S9's `hello` is the first caller
+ * (bad token → `BridgeRpcError(-32600, "bad token", { fatal: true })`).
+ */
+export class BridgeRpcError extends Error {
+	readonly code: number;
+	readonly fatal: boolean;
+	constructor(code: number, message: string, options?: BridgeRpcErrorOptions) {
+		super(message);
+		this.name = "BridgeRpcError";
+		this.code = code;
+		this.fatal = options?.fatal ?? false;
+	}
+}
+
 /** Per-connection state. S8 creates it fresh (`handshakeComplete:false`) inside each
  *  {@link onConnection} call; two sockets get two independent states. S9 sets
  *  `handshakeComplete=true` on a valid `hello`; S10 gates every non-hello method on it. */
@@ -216,15 +247,32 @@ export async function handleLine(
 		const result = await handler(params, state);
 		sendResponse(sock, reqId, result);
 	} catch (handlerError) {
-		// S8's safety net: a request must ALWAYS get a response (never hang the client's
-		// RPC timeout). S15 makes each handler catch its OWN domain errors into proper
-		// codes BEFORE throwing, so this is the last-resort -32603.
-		sendError(
-			sock,
-			reqId,
-			-32603,
-			`internal error: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}`,
-		);
+		// S9: a handler may throw a typed BridgeRpcError to request a SPECIFIC error
+		// code (and, when fatal, a graceful close after the error is flushed). Only the
+		// `hello` bad-token path uses fatal:true (PRD §5.3 "then close"). S15 will throw
+		// non-fatal BridgeRpcErrors broadly (wrap domain errors into proper codes).
+		if (handlerError instanceof BridgeRpcError) {
+			sendError(sock, reqId, handlerError.code, handlerError.message);
+			if (handlerError.fatal) {
+				// "reply then close" (PRD §5.3): end() flushes the queued error write then
+				// half-closes (FIN); the existing 'close' handler detaches the reader.
+				try {
+					sock.end();
+				} catch {
+					/* already closing/closed — best-effort */
+				}
+			}
+		} else {
+			// S8's safety net: a request must ALWAYS get a response (never hang the
+			// client's RPC timeout). S15 makes each handler catch its OWN domain errors
+			// into proper codes BEFORE throwing, so this is the last-resort -32603.
+			sendError(
+				sock,
+				reqId,
+				-32603,
+				`internal error: ${handlerError instanceof Error ? handlerError.message : String(handlerError)}`,
+			);
+		}
 	}
 }
 

@@ -27,10 +27,17 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { createServer, type Server } from "node:net";
 import { randomUUID } from "node:crypto";
-import { chmodSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { onConnection } from "./connection.ts";
+import { chmodSync, rmSync, existsSync, statSync } from "node:fs";
+import { tmpdir, homedir } from "node:os";
+import { join, delimiter } from "node:path";
+import {
+	onConnection,
+	registerBridgeHandler,
+	BridgeRpcError,
+	type ConnectionState,
+	type MethodHandler,
+} from "./connection.ts";
+import type { HelloParams, HelloResult } from "./protocol.ts";
 
 /**
  * Captured reference to pi's live autocomplete provider chain.
@@ -128,6 +135,81 @@ export function getToken(): string | undefined {
 // read the current value on each call. This mirrors the EXISTING getProvider() idiom.
 
 /**
+ * Bridge protocol version. PRD §6.4 hardcodes "0.1.0". Reused by the S16
+ * `PI_EDITOR_BRIDGE` descriptor (`serverVersion`) and by {@link makeHelloHandler}.
+ */
+export const BRIDGE_VERSION = "0.1.0";
+
+/** The session's cwd (stored from `ctx.cwd` on `session_start`). Read via
+ *  {@link getCwd}; used by {@link makeHelloHandler} for `HelloResult.cwd` and (later)
+ *  by S16's `PI_EDITOR_BRIDGE` descriptor. */
+let cwd: string | undefined;
+/** @returns the session cwd captured on the last `session_start`, or `undefined`. */
+export function getCwd(): string | undefined {
+	return cwd;
+}
+/** Test seam: set the module `cwd`. */
+export function __setCwdForTest(v: string | undefined): void {
+	cwd = v;
+}
+
+/** Cached `fd`/`fdfind` availability (resolved ONCE per process via
+ *  {@link resolveFdAvailable}). Read via {@link getFdAvailable}; used by
+ *  {@link makeHelloHandler} for `HelloResult.fdAvailable` and (later) by S16. */
+let fdAvailableCache: boolean | undefined;
+/**
+ * @returns whether `fd`/`fdfind` is resolvable (pi agent bin dir first, then `PATH`).
+ *  Cached on first call (one-time per process). Mirrors pi's `getToolPath("fd")`
+ *  WITHOUT importing pi internals (`getToolPath`/`ensureTool` are not public exports —
+ *  research §4). Test seam: {@link __setFdAvailableForTest}.
+ */
+export function getFdAvailable(): boolean {
+	if (fdAvailableCache === undefined) fdAvailableCache = resolveFdAvailable();
+	return fdAvailableCache;
+}
+/** Test seam: override the cached fd-availability (pass `undefined` to reset). */
+export function __setFdAvailableForTest(v: boolean | undefined): void {
+	fdAvailableCache = v;
+}
+/**
+ * Self-contained fd resolver (mirrors pi `getToolPath("fd")` lookup order, research §4):
+ *  1. pi agent bin dir — `config.js`: `getBinDir() = join(getAgentDir(), "bin")`;
+ *     `tools-manager` downloads `fd` there. `getAgentDir` honors `$PI_CODING_AGENT_DIR`,
+ *     then `XDG_DATA_HOME ?? ~/.local/share` (POSIX) / `%APPDATA%/pi` (Windows).
+ *  2. `process.env.PATH` scan for an executable `fd` (+ `fdfind` on Linux).
+ */
+function resolveFdAvailable(): boolean {
+	const isWin = process.platform === "win32";
+	const names = process.platform === "linux" ? ["fd", "fdfind"] : ["fd"];
+	const ext = isWin ? ".exe" : "";
+	const agentDir =
+		process.env.PI_CODING_AGENT_DIR ??
+		(isWin
+			? join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "pi")
+			: join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "pi"));
+	for (const n of names) {
+		if (isExecutableFile(join(agentDir, "bin", n + ext))) return true;
+	}
+	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+		if (!dir) continue;
+		for (const n of names) {
+			if (isExecutableFile(join(dir, n + ext))) return true;
+		}
+	}
+	return false;
+}
+/** True iff `p` exists and has any execute bit (POSIX) / exists (Windows). Swallows fs errors. */
+function isExecutableFile(p: string): boolean {
+	try {
+		if (!existsSync(p)) return false;
+		if (process.platform === "win32") return true;
+		return (statSync(p).mode & 0o111) !== 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Tear down the bridge server: close the server, unlink the socket file, reset state.
  * IDEMPOTENT — safe to call when already stopped (all guards swallow no-op failures).
  *
@@ -212,6 +294,51 @@ export function startBridge(ctx: ExtensionContext): void {
 	// NOTE: NO process.env.PI_EDITOR_BRIDGE write here — that is P1.M3.T8.S16.
 }
 
+/**
+ * Build the `hello` JSON-RPC handler (PRD §5.3 / §5.4). PURE factory — deps are
+ * injected so the unit tests can exercise every branch without touching module
+ * state. `pi-editor-bridge.ts` registers it via
+ * `registerBridgeHandler("hello", makeHelloHandler({ getToken, getCwd, getFdAvailable, version: BRIDGE_VERSION }))`
+ * on every `session_start` (AFTER `startBridge`, so the token exists).
+ *
+ * Behavior:
+ *  - token match ⇒ set `state.handshakeComplete = true` (S10 gates every other
+ *    method on this) and return `HelloResult` (handleLine wraps it as a success).
+ *  - any mismatch / missing / wrong-type token / no expected token set (stopped
+ *    bridge) ⇒ throw `BridgeRpcError(-32600, "bad token", { fatal: true })`.
+ *    `handleLine` maps it to the `-32600` error response AND a graceful `sock.end()`
+ *    (PRD §5.3 "then close"). The message is the literal `"bad token"` — NEVER the
+ *    token value (PRD §12). `===` is fine: local process secret, timing attacks
+ *    out of scope (research §9).
+ *
+ * `client`/`clientVersion` params are accepted and ignored.
+ */
+export function makeHelloHandler(deps: {
+	getToken: () => string | undefined;
+	getCwd: () => string | undefined;
+	getFdAvailable: () => boolean;
+	version: string;
+}): MethodHandler {
+	return (params: unknown, state: ConnectionState): HelloResult => {
+		const expected = deps.getToken();
+		const p = (params ?? null) as Partial<HelloParams> | null;
+		const received =
+			p && typeof p === "object" && typeof p.token === "string" ? p.token : undefined;
+		// No expected token (bridge stopped), empty, or any mismatch ⇒ bad token.
+		// NEVER include token values in the message (PRD §12).
+		if (typeof expected !== "string" || expected.length === 0 || received !== expected) {
+			throw new BridgeRpcError(-32600, "bad token", { fatal: true });
+		}
+		state.handshakeComplete = true; // S10 gates every other method on this.
+		return {
+			ok: true,
+			serverVersion: deps.version,
+			cwd: deps.getCwd() ?? "",
+			fdAvailable: deps.getFdAvailable(),
+		};
+	};
+}
+
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
 		/**
@@ -238,6 +365,14 @@ export default function (pi: ExtensionAPI): void {
 		);
 		captureProvider(ctx);
 		startBridge(ctx);
+		cwd = ctx.cwd; // HelloResult.cwd (S9) + the S16 descriptor.
+		// Register `hello` AFTER startBridge so the token exists. Idempotent (Map.set) —
+		// safe across reload/new/resume/fork re-entry (research §6). S9 only SETS the
+		// handshake flag; S10 adds the gate that blocks every non-hello method until it's set.
+		registerBridgeHandler(
+			"hello",
+			makeHelloHandler({ getToken, getCwd, getFdAvailable, version: BRIDGE_VERSION }),
+		);
 		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
 	});
 

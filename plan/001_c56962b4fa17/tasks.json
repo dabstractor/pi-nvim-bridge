@@ -201,7 +201,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T5.S9",
                   "title": "hello handshake — validate token, reply success or error+close",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T4.S8"
