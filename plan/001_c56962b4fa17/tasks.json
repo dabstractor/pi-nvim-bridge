@@ -560,7 +560,7 @@
               "type": "Task",
               "id": "P2.M5.T15",
               "title": "Socket client & handshake",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the bridge.lua module that connects to the Unix socket via luv, performs the token handshake, and wires incoming data through the JSONL reader.",
               "subtasks": [
                 {
@@ -583,7 +583,7 @@
                   "type": "Subtask",
                   "id": "P2.M5.T15.S25",
                   "title": "hello handshake — send token, validate response, extract server info",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M5.T15.S24"

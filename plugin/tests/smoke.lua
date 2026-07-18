@@ -41,6 +41,18 @@ check(pi.defaults.debounce_ms == 25, "defaults.debounce_ms was MUTATED")
 check(pi.defaults.menu.max_height == 12, "defaults.menu.max_height was MUTATED")
 check(pi.bridge == nil, "bridge is not the nil placeholder")
 
+-- S25 dormant-session guard: WITHOUT the PI_EDITOR_BRIDGE env var, activate() must leave
+-- pi.bridge == nil (the handshake never runs in a non-pi session). Also confirms a
+-- broken/missing bridge module can NEVER set it (activate's handshake call is pcall'd).
+do
+  local saved = vim.env.PI_EDITOR_BRIDGE
+  vim.env.PI_EDITOR_BRIDGE = nil -- simulate an ordinary (non-pi) nvim session
+  local desc = pi.activate()    -- dormant -> returns nil, must NOT throw / NOT notify
+  check(desc == nil, "activate() must return nil without PI_EDITOR_BRIDGE")
+  check(pi.bridge == nil, "pi.bridge must stay nil in a dormant session")
+  vim.env.PI_EDITOR_BRIDGE = saved -- restore (other tests / downstream may rely on it)
+end
+
 local cfg = pi.setup({ rpc_timeout_ms = 9000 })
 check(cfg.rpc_timeout_ms == 9000, "setup return value")
 check(cfg == pi.config, "setup did not return the same table as M.config")

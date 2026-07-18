@@ -109,10 +109,12 @@ M.descriptor = nil
 --- has `transport ~= "unix"` is ALSO treated as dormant. This function NEVER throws and
 --- NEVER notifies (the optional one-time `vim.notify` on hard failure is task S39's job).
 ---
---- Scope (what this gate does NOT do): it does NOT connect to the bridge (that is
---- `bridge.lua` / S24, which reads this |descriptor|) and it does NOT set buffer options or
---- keymaps (that is `ftplugin/pi-prompt.lua` / S22, auto-sourced when this sets filetype).
+--- Scope (what this gate does NOT do): it does NOT set buffer options or keymaps
+--- (that is `ftplugin/pi-prompt.lua` / S22, auto-sourced when this sets filetype).
 --- Setting the filetype is this gate's ONLY buffer mutation; it is the handshake to S22.
+--- (S25: this gate also kicks off the bridge `hello` handshake — async, `pcall`-wrapped,
+--- silent on failure. It does NOT block on the result; `bridge.lua` sets
+--- `require("pi-editor").bridge` on success.)
 ---
 ---@return pi-editor.BridgeDescriptor|nil desc The parsed descriptor on success; nil if dormant.
 function M.activate()
@@ -128,6 +130,17 @@ function M.activate()
   M.descriptor = desc                                     -- (e) store for S24/S30+
   local buf = vim.api.nvim_get_current_buf()
   vim.bo[buf].filetype = "pi-prompt"                      -- (f) activate -> fires FileType (S22 seam)
+  -- S25: connect + `hello` handshake (async). pcall so a bridge bug can NEVER break
+  -- activation (the buffer still works as plain markdown). Silent on failure — the
+  -- one-time `vim.notify` is task S39's job, NOT this task. `bridge.handshake` sets
+  -- `require("pi-editor").bridge` internally on success (the placeholder this gate
+  -- leaves `nil` in dormant / failed sessions).
+  pcall(function()
+    local ok, br = pcall(require, "pi-editor.bridge")
+    if ok and type(br.handshake) == "function" then
+      br.handshake(desc, function(_err, _info) end) -- no-op cb
+    end
+  end)
   return desc                                             -- (g)/(h) are S22/S24's job (see doc)
 end
 
