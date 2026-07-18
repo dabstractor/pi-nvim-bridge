@@ -5,14 +5,18 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": [],
     "baseUrl": ".",
     "paths": {
       "@earendil-works/pi-coding-agent": [
         "/home/dustin/.local/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ],
+      "@earendil-works/pi-tui": [
+        "/home/dustin/.local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui/dist/index.d.ts"
       ]
     }
   },
-  "include": ["pi-editor-bridge.ts"]
+  "include": ["pi-editor-bridge.ts", "tests/**/*.ts"]
 }

@@ -18,7 +18,7 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Extension entry point, lifecycle hooks & provider capture",
-              "status": "Planned",
+              "status": "Researching",
               "description": "Create the main extension file with default export factory, session_start/session_shutdown event registration, and the pass-through addAutocompleteProvider factory that captures the live CombinedAutocompleteProvider into a module-level variable.",
               "subtasks": [
                 {
@@ -40,7 +40,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Provider capture via pass-through addAutocompleteProvider factory",
-                  "status": "Researching",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -58,7 +58,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S3",
                   "title": "TUI mode guard — no-op when ctx.mode !== 'tui'",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 0.5,
                   "dependencies": [
                     "P1.M1.T1.S1"
