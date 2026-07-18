@@ -79,6 +79,34 @@
 --    module table ONLY on a `result.ok == true` response (the gate downstream completion
 --    keys on). A malformed / error / timeout / close path leaves it `nil` (silent degrade).
 --
+-- [Mode A] S26 EXTENSION — the generic `request()` RPC layer (the SECOND protocol consumer):
+--  * S26 adds `M.request(method, params, on_result) -> string|nil` (the generic JSON-RPC
+--    primitive S30+ completion keys on) + `M.cancel(id)` (local supersession cleanup).
+--    They are ADDED CALLERS of `connect()`/`send()`/`close()` (no public-signature change).
+--  * TWO-LAYER design: the transport keeps a `pending` MAP (id → entry) so EVERY concurrent
+--    outstanding request (e.g. getSuggestions racing applyCompletion) resolves to its OWN cb.
+--    Supersession is the CALLER's job (completion.lua S30+ tracks its latest id and ignores
+--    stale cbs OR calls `cancel(old_id)`). Do NOT collapse this to a single "current id" —
+--    that would mis-drop a legitimate applyCompletion response when a newer getSuggestions fires.
+--  * The dispatch SEAM: `dispatch(msg)` gains ONE branch (`pending[msg.id]`) AFTER the
+--    `id=="h1"` handshake branch (handshake routes first; the two are mutually exclusive —
+--    the monotonic-int→string counter can NEVER emit `"h1"`).
+--  * EXACTLY-ONCE guard: DELETE-THE-ENTRY — `resolve_request` does `pending[id]=nil` FIRST,
+--    then stops+ closes the timer, then fires the stored cb (schedule_wrap'd). A late
+--    resolver (timeout after response, duplicate response, stray) finds nil and no-ops.
+--  * PER-REQUEST LUV TIMER: `uv.new_timer()` (NEVER `vim.defer_fn` — GOTCHA 5). `:close()`
+--    is REQUIRED on every resolve path (response/timeout/cancel/close) — `:stop()` alone
+--    leaks the `uv_timer_t` handle across editor open/close cycles (PRD §6.7).
+--  * CLOSE() DRAINS pending: every outstanding cb resolves with `"connection closed"`
+--    (LSP invariant — never leave a cb hanging); timers closed; `next_id` reset to 0.
+--    `handshake_state` is NOT cleared here (see the comment in `M.close()` —
+--    `resolve_handshake` owns it via the `pending` bool).
+--  * `result: null` (getSuggestions empty): the resolver uses `rawget(msg,"result") ~= nil`
+--    to distinguish a PRESENT null (`vim.NIL`, success) from an ABSENT key (`nil`, malformed).
+--    `vim.NIL` is normalized to `nil` before the cb → `cb(nil, nil)` = "success, no result".
+--  * SECURITY (PRD §12): the token NEVER appears in any request/error string (it never
+--    appears in RPC responses anyway — verified by the server tests).
+--
 -- Node builtins analog: only `vim.uv` + `vim.json` (both built in) + the S23 `jsonlreader`.
 -- Module-level singleton state (one connection) — see Design Decision §6 in notes.
 
@@ -138,10 +166,32 @@ M.server_info = nil
 ---@type pi-editor.HandshakeState|nil
 local handshake_state = nil
 
+--- Monotonic request-id counter. Incremented by `M.request()`; reset to 0 by `close()`
+--- so each connection starts at id `"1"` (testability). Numeric strings only → can
+--- NEVER equal the handshake's literal `"h1"`. Single-threaded luv loop ⇒ no locking.
+local next_id = 0
+
+--- In-flight RPC requests keyed by id (string). Each entry is created by `request()`
+--- and deleted by the FIRST resolver (response / timeout / cancel / close) — the delete
+--- IS the exactly-once guard (a later resolver finds nil and no-ops). Drained wholesale
+--- by `close()`. This is the TWO-LAYER transport MAP: it holds EVERY concurrent
+--- outstanding request (e.g. getSuggestions racing applyCompletion); supersession is
+--- the CALLER's job (latest-id guard / `cancel(id)`) — see the [Mode A] header.
+---@class pi-editor.PendingRequest
+---@field method string The RPC method (for cancel routing / debugging; never sent on cancel wire).
+---@field cb fun(err:string?, result:any?) The user callback, wrapped in `vim.schedule_wrap` at
+---   store time so it is safe to invoke from BOTH the `read_start` cb and the luv timer cb
+---   (libuv/fast context — `vim.api.*` would throw `E5560` there; mirrors vim/lsp/rpc.lua:324).
+---@field timer userdata? luv one-shot timer for the per-request timeout (`nil` if disarmed).
+---   MUST be `:close()`d (not just `:stop()`d) on resolve or it leaks across editor open/close cycles.
+---@type table<string, pi-editor.PendingRequest>
+local pending = {}
+
 -- ===========================================================================
--- S25 — handshake internals (forward declarations; defined below).
+-- S25/S26 — internals (forward declarations; defined below).
 -- ===========================================================================
-local resolve_handshake -- (msg, err) — the SINGLE exit point (race-safe).
+local resolve_handshake -- (msg, err) — the SINGLE exit point for the handshake (race-safe).
+local resolve_request   -- (id, err, msg) — the SINGLE exit point for a regular request (race-safe).
 local dispatch          -- (msg)       — the single on_event (S26/S27 extension seam).
 
 --- The `read_start` callback. Routes data chunks to the `jsonlreader`; EOF / read errors
@@ -227,21 +277,87 @@ resolve_handshake = function(msg, err)
   end
 end
 
+--- The SINGLE exit point for every regular-request outcome (race-safe) — the sibling of
+--- `resolve_handshake`. Guards the exactly-once contract via DELETE-THE-ENTRY: the FIRST
+--- resolver (response / timeout / cancel / close) that finds `pending[id]` deletes it,
+--- stops+ closes the luv timer (or it leaks across cycles), then fires the stored cb. A
+--- LATE resolver (e.g. the timeout firing after the response already arrived) looks up
+--- `pending[id]`, finds nil, no-ops. Single-threaded nvim/luv loop ⇒ this is a
+--- sequenced-event guard, not a lock.
+---
+--- Branches:
+---   (a) `msg==nil`             — TIMEOUT / CANCEL / CLOSE path: fire `cb(err)` (err is the reason).
+---   (b) `type(msg.error)=="table"` — ERROR response: fire `cb(emsg)` (code + safe message; NEVER the token).
+---   (c) `rawget(msg,"result") ~= nil` — SUCCESS: normalize `vim.NIL→nil`, fire `cb(nil, result)`.
+---        `rawget` distinguishes a PRESENT null result (`vim.NIL`, getSuggestions empty) from an
+---        ABSENT key (`nil`, malformed) — LIVE-VERIFIED on Neovim 0.12.4.
+---   (d) else                   — MALFORMED (no result/error): fire `cb("malformed response…")`.
+---
+--- Runs INLINE from a luv callback (the read_start cb / the timer cb); does NO `vim.api.*`
+--- work (GOTCHA 5) — the cb is `schedule_wrap`d at store time so the user's nvim work is
+--- deferred to the safe nvim loop (mirrors `vim/lsp/rpc.lua:324`).
+---
+---@param id  string  The request id (must be a string; non-string is a no-op).
+---@param err string? A failure reason for the `msg==nil` path (timeout / cancel / close reason).
+---@param msg table?  The decoded JSON-RPC response (nil on timeout / cancel / close).
+resolve_request = function(id, err, msg)
+  if type(id) ~= "string" then return end
+  local entry = pending[id]
+  if not entry then return end            -- EXACTLY-ONCE guard (delete-entry); unknown id dropped
+  pending[id] = nil                       -- delete FIRST so a racing resolver (timeout vs response) no-ops
+  if entry.timer then                     -- luv timer :close() is REQUIRED (not just :stop())
+    pcall(function()
+      if not entry.timer:is_closing() then entry.timer:stop() end
+      if not entry.timer:is_closing() then entry.timer:close() end
+    end)
+  end
+  local cb = entry.cb
+  if not cb then return end
+  if msg == nil then                      -- timeout / cancel / close path
+    cb(err or "request failed")
+    return
+  end
+  if type(msg.error) == "table" then      -- error response (code is safe; NEVER the token — PRD §12)
+    local code = (type(msg.error.code) == "number") and msg.error.code or nil
+    local emsg = code and ("rpc error " .. code) or "rpc error"
+    if type(msg.error.message) == "string" and msg.error.message ~= "" then
+      emsg = emsg .. ": " .. msg.error.message  -- server messages are generic codes; safe
+    end
+    cb(emsg)
+  elseif rawget(msg, "result") ~= nil then -- LIVE-VERIFIED: present-null (vim.NIL) ≠ absent (nil)
+    local result = msg.result
+    if result == vim.NIL then result = nil end  -- normalize getSuggestions null -> nil (no matches)
+    cb(nil, result)
+  else
+    cb("malformed response: no result or error")
+  end
+end
+
 --- The single `on_event` dispatcher the jsonlreader feeds (SINGLETON — GOTCHA 10).
---- `M.handshake()` passes this as `connect()`'s `on_event`. Today it has ONE branch:
---- the `id == "h1"` hello response → `resolve_handshake`. It is the SEAM S26/S27 extend:
----   * S26 EXTENSION POINT: add `if pending[msg.id] then ... end` here (request correlation).
----   * S27 EXTENSION POINT: add `if msg.method == "commandsChanged" then ... end` here.
+--- `M.handshake()` passes this as `connect()`'s `on_event`. It has TWO branches today:
+---   * `id == "h1"`           → `resolve_handshake` (S25 — the `hello` response; STAYS FIRST).
+---   * `pending[msg.id]`      → `resolve_request`  (S26 — a regular JSON-RPC response).
+---   * S27 EXTENSION POINT:   notifications (`commandsChanged`) go here.
 --- Runs INLINE from the luv `read_start` cb (via `jsonlreader.feed`); does NO `vim.api.*`
---- work (GOTCHA 5). `resolve_handshake` is pure Lua writes + `M.send`/`M.close` (luv-safe).
+--- work (GOTCHA 5) — the resolvers are pure Lua writes + `M.close` (luv-safe).
 ---@param msg table A decoded JSON-RPC message (a table from `vim.json.decode`).
 dispatch = function(msg)
   if handshake_state and handshake_state.pending and msg and msg.id == "h1" then
     resolve_handshake(msg, nil)
     return
   end
-  -- S26 EXTENSION POINT: `if pending[msg.id] then ... end`.
-  -- S27 EXTENSION POINT: `if msg.method == "commandsChanged" then ... end`.
+  -- S26: correlate a regular JSON-RPC response by id. The `type(msg.id)=="string"` guard
+  -- defends a server `id:null` (JSON-RPC §5.1) — `pending[nil]` would be a Lua index error.
+  -- (The handshake's literal `"h1"` is a string, but the numeric-only counter can NEVER emit
+  -- it — `tostring(n)` is always a numeric string — so the two branches are mutually exclusive.)
+  if msg and type(msg.id) == "string" then
+    if pending[msg.id] then
+      resolve_request(msg.id, nil, msg)
+      return
+    end
+    -- no matching entry: stale / late / duplicate / stray -> dropped silently (PRD §11)
+  end
+  -- S27 EXTENSION POINT: notifications (commandsChanged) go here.
 end
 
 -- ===========================================================================
@@ -415,6 +531,91 @@ function M.send(obj)
   return ok
 end
 
+-- ===========================================================================
+-- S26 — the generic JSON-RPC `request()` / `cancel()` (the SECOND protocol consumer
+-- of the S24 transport — after the S25 handshake; the SEAM S30+ completion calls).
+-- TWO-LAYER design: this layer = the id-keyed `pending` MAP (correlates every concurrent
+-- request to its OWN cb); supersession is the CALLER's job (latest-id guard or cancel(id)).
+-- ===========================================================================
+
+--- Fire a generic JSON-RPC `request` and resolve `on_result` EXACTLY ONCE — by response,
+--- timeout, cancel, or close (LSP invariant: never leave a cb hanging). The generic
+--- primitive every downstream RPC (S27/S30/S32/S33/S38/S41/S42/S45/S46) calls.
+---
+--- Flow:
+---   1. validate `method` + `on_result` UP FRONT — never throw on bad args (a caller bug
+---      degrades via the cb / a nil return).
+---   2. if not connected → fire `on_result("not connected")` (scheduled) + return `nil`
+---      (no id, no pending entry, no timer).
+---   3. assign a fresh monotonic string id (`"1"`, `"2"`, …; NEVER `"h1"`), register
+---      `pending[id]` (cb stored `schedule_wrap`d), arm a per-request luv timeout
+---      (`uv.new_timer`, NEVER `vim.defer_fn` — GOTCHA 5).
+---   4. `M.send` the envelope `({jsonrpc="2.0",id,method,params})`; if the write was
+---      dropped (not connected / closing) → resolve with `"send failed"`.
+---   5. return the id so the caller can `cancel(id)` / supersede.
+---
+--- The `on_result` signature: `function(err:string?, result:any?)`. Success →
+--- `on_result(nil, result)`; error response → `on_result("rpc error <code>: <msg>")`;
+--- timeout / cancel / close → `on_result("<reason>")`. A `getSuggestions` null result
+--- (no matches) resolves `on_result(nil, nil)` (success, no result) — NOT an error.
+---
+--- NEVER throws (pcall-wrapped luv; bad args degrade via cb / nil return). NEVER includes
+--- `desc.token` in any error string (PRD §12 — it never appears in RPC responses anyway).
+---
+---@param method    string               A RequestMethod (getSuggestions/applyCompletion/…/ping/bye).
+---@param params    table?               Sent as-is (`nil` → omitted from the envelope; server reads as unknown).
+---@param on_result fun(err:string?, result:any?) Resolved EXACTLY ONCE (response/timeout/cancel/close).
+---@return string|nil id The request id (so the caller can `cancel(id)` / supersede); `nil` on bad args / not connected.
+function M.request(method, params, on_result)
+  -- (1) validate UP FRONT — never throw on bad args (the caller is completion/S30+; a bug must degrade).
+  if type(on_result) ~= "function" then return nil end
+  if type(method) ~= "string" or method == "" then
+    vim.schedule_wrap(on_result)("invalid method")
+    return nil
+  end
+  -- (2) not connected -> fire cb (scheduled) + return nil (no id, no pending entry, no timer).
+  if not M.is_connected() then
+    vim.schedule_wrap(on_result)("not connected")
+    return nil
+  end
+  -- (3)-(5) pcall the luv setup so a programming error degrades via on_result (S24/S25 discipline).
+  local id
+  local ok, setup_err = pcall(function()
+    next_id = next_id + 1
+    id = tostring(next_id)                                      -- numeric string; NEVER "h1"
+    pending[id] = { method = method, cb = vim.schedule_wrap(on_result), timer = nil }
+    local cfg = require("pi-editor")
+    local timeout_ms = ((cfg.config or cfg.defaults or {}).rpc_timeout_ms) or 2000
+    local timer = uv.new_timer()
+    pending[id].timer = timer
+    timer:start(timeout_ms, 0, function()                       -- luv timer cb (fast ctx); resolve_request is luv-safe
+      resolve_request(id, "request timeout", nil)               -- delete-entry guard: no-op if already resolved
+    end)
+    local sent = M.send({ jsonrpc = "2.0", id = id, method = method, params = params })
+    if not sent then resolve_request(id, "send failed", nil) end -- transport dropped the write (GOTCHA 6/7)
+  end)
+  if not ok then
+    if id then resolve_request(id, "request setup error: " .. tostring(setup_err), nil)
+    else vim.schedule_wrap(on_result)("request setup error: " .. tostring(setup_err)) end
+    return nil
+  end
+  return id                                                     -- so the caller can cancel(id) / supersede
+end
+
+--- Local supersession cleanup — fire the request's cb with `"cancelled"`, stop+close
+--- its timer, and delete its `pending` entry. NO wire notification: the server
+--- self-supersedes `getSuggestions` (a newer request aborts the prior `AbortController`);
+--- `protocol.ts` `BridgeMethod` has NO `cancel` method (a wire cancel would hit the
+--- server's `-32601` "method not found" — pointless). `resolve_request` is the SINGLE exit;
+--- cancel reuses it (exactly-once guaranteed by the delete-entry guard). NEVER throws.
+---
+---@param id string The request id returned by `M.request` (non-string / unknown is a no-op).
+function M.cancel(id)
+  if type(id) ~= "string" then return end
+  if not pending[id] then return end                           -- already resolved / unknown -> no-op
+  resolve_request(id, "cancelled", nil)                        -- fires cb("cancelled"), stops+closes timer, deletes entry
+end
+
 --- Idempotent teardown. Guards the luv double-close THROW (GOTCHA 2) with a shadow
 --- `state.closed` flag (set FIRST) + `is_closing()` + `pcall`. Safe across the many
 --- teardown paths (`on_close`, `on_exit`, VimLeavePre/ExitPre, socket-error, EOF).
@@ -428,6 +629,28 @@ function M.close()
     pcall(function() pipe:close() end)
   end
   if state.rx then state.rx:reset() end -- drop any partial line
+  -- S26: drain ALL pending requests — a closed transport can NEVER deliver more responses,
+  -- so every outstanding cb MUST be finalized (LSP invariant: never leave a cb hanging).
+  -- Resolve each with "connection closed", stop+close its timer, then clear the map + reset
+  -- the id counter. Snapshot the ids FIRST (clearer than delete-during-pairs — legal in
+  -- LuaJIT but unambiguous). The drained cbs are `schedule_wrap`d → they fire on the next
+  -- nvim loop pass (close() returns promptly; it does not block on them). NOTE:
+  -- `handshake_state` is NOT drained here (see below — `resolve_handshake` owns it via the
+  -- `pending` bool; on_close fires AFTER close() in read_cb).
+  local ids = {}
+  for k in pairs(pending) do ids[#ids + 1] = k end
+  for _, k in ipairs(ids) do
+    local entry = pending[k]
+    pending[k] = nil
+    if entry.timer then
+      pcall(function()
+        if not entry.timer:is_closing() then entry.timer:stop() end
+        if not entry.timer:is_closing() then entry.timer:close() end
+      end)
+    end
+    if entry.cb then entry.cb("connection closed") end      -- schedule_wrap'd -> next nvim loop pass
+  end
+  next_id = 0                                                 -- fresh ids on the next connection
   -- clear refs so a stale luv cb cannot touch dead state
   state.pipe = nil
   state.rx = nil
