@@ -16,6 +16,7 @@ import {
 	BridgeRpcError,
 	__resetHandlersForTest,
 } from "../connection.ts";
+import { makeHelloHandler, BRIDGE_VERSION } from "../pi-editor-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 // A fake socket: EventEmitter (for .on/.emit/.listenerCount) + a write() that captures
@@ -241,8 +242,18 @@ test("onConnection: socket 'close' detaches the reader (no leak)", () => {
 	assert.equal(sock.listenerCount("data"), 0, "close detaches the reader");
 });
 
-// (TEST 13: REAL integration — a real Unix socket pair end-to-end) ----------------
-test("REAL: end-to-end JSONL round-trip over a Unix socket (method-not-found then success)", async () => {
+// (TEST 13: REAL integration — hello-first handshake, then method-not-found then success) --
+const REAL_TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef";
+
+test("REAL: end-to-end JSONL round-trip over a Unix socket (hello → method-not-found → success)", async () => {
+	// S10 handshake gate: a fresh connection starts handshakeComplete:false, so every
+	// non-hello REQUEST would be rejected with -32600 until a valid hello arrives. To
+	// exercise the ORIGINAL method-not-found-then-success sequence (test 13 pre-S10),
+	// register a hello handler and have the client hello-first, then proceed.
+	registerBridgeHandler(
+		"hello",
+		makeHelloHandler({ getToken: () => REAL_TOKEN, getCwd: () => "/tmp", getFdAvailable: () => true, version: BRIDGE_VERSION }),
+	);
 	const sockpath = join(tmpdir(), `pi-editor-conn-test-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
@@ -251,14 +262,23 @@ test("REAL: end-to-end JSONL round-trip over a Unix socket (method-not-found the
 		const client = connect(sockpath);
 		await once(client, "connect");
 
-		// collect client-side responses (registry is EMPTY → expect -32601)
+		// (1) hello first (gate-exempt) ⇒ HelloResult + flips handshakeComplete true
+		const helloResponse = readFirstResponse(client);
+		client.write(serializeJsonLine({ jsonrpc: "2.0", id: "h1", method: "hello", params: { token: REAL_TOKEN } }));
+		const rHello = await helloResponse;
+		assert.equal(rHello.id, "h1");
+		assert.deepEqual((rHello as { result: unknown }).result, {
+			ok: true, serverVersion: BRIDGE_VERSION, cwd: "/tmp", fdAvailable: true,
+		});
+
+		// (2) ping still unregistered ⇒ -32601 (now post-handshake — preserves original assertion)
 		const firstResponse = readFirstResponse(client);
 		client.write(serializeJsonLine({ jsonrpc: "2.0", id: "r1", method: "ping" }));
 		const r1 = await firstResponse;
 		assert.equal(r1.id, "r1");
 		assert.equal((r1 as { error: { code: number } }).error.code, -32601);
 
-		// register a handler; expect success
+		// (3) register a handler; (4) expect success (preserves original success assertion)
 		registerBridgeHandler("ping", () => ({ ok: true }));
 		const secondResponse = readFirstResponse(client);
 		client.write(serializeJsonLine({ jsonrpc: "2.0", id: "r2", method: "ping" }));

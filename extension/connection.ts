@@ -169,9 +169,11 @@ export function __hasHandlerForTest(method: string): boolean {
  * rejection (which would crash pi, violating PRD §6.7). S15 makes each handler catch its
  * OWN domain errors before they reach the `-32603` safety net.
  *
- * STATUS (P1.M2.T4.S8): the dispatch unit. S9 adds `hello` via registerBridgeHandler
- * (no change here); S10 adds a `if (!state.handshakeComplete && method !== "hello")`
- * gate (one guard inside the request branch, or a wrapper). The registry is EMPTY in S8.
+ * STATUS (P1.M2.T4.S8): the dispatch unit. S9 added `hello` via registerBridgeHandler
+ * (no change here); S10 added the handshake gate (a single guard placed BEFORE the
+ * notification/request split — see inline) that rejects every method except `hello`
+ * until `state.handshakeComplete` is true (flipped by S9's hello handler on a correct
+ * token). The registry is EMPTY in S8.
  */
 export async function handleLine(
 	sock: Socket,
@@ -216,6 +218,24 @@ export async function handleLine(
 	// A message with NO `id` key at all is a NOTIFICATION (no response). A string `id` is a REQUEST.
 	if ("id" in (parsed as object) && typeof idField !== "string") {
 		sendError(sock, null, -32600, "invalid request: id must be a string");
+		return;
+	}
+
+	// S10 handshake gate (PRD §12): reject every method except "hello" until S9's hello
+	// handler flips `state.handshakeComplete` on a correct token. Placed BEFORE the
+	// notification/request split so it defends BOTH branches (the registry is
+	// module-level — a pre-handshake notification must not reach a registered handler
+	// either). NON-FATAL: consistent with the parse (-32700) and envelope-narrow (-32600)
+	// paths here, which call sendError directly and do NOT close; only bad-token hello
+	// closes (S9, via BridgeRpcError fatal). The token is the real boundary (PRD §12);
+	// an unauthenticated peer can never flip this flag, so it is permanently locked out
+	// of results regardless. The gate fires BEFORE registry lookup, so an UNREGISTERED
+	// method sent pre-handshake returns -32600 (NOT -32601).
+	if (method !== "hello" && !state.handshakeComplete) {
+		if (isRequest) {
+			sendError(sock, id as string, -32600, "handshake required: send hello first");
+		}
+		// Notification (no string id): JSON-RPC 2.0 forbids a response. Drop silently.
 		return;
 	}
 

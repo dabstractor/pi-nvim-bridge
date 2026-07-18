@@ -194,7 +194,7 @@
               "type": "Task",
               "id": "P1.M2.T5",
               "title": "Handshake & token authentication",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the hello handshake that validates the client's token against the server's, replies with server info on success or an error + close on mismatch. Enforce that no RPC methods are accepted before a valid handshake.",
               "subtasks": [
                 {
@@ -217,7 +217,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T5.S10",
                   "title": "Reject any method before valid handshake",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P1.M2.T5.S9"
