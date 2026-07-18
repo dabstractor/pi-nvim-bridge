@@ -15,20 +15,31 @@
  *     (Socket server = M2, env advertisement = S16, commandsChanged = S17.)
  *   - session_shutdown: no-op placeholder. (Socket teardown/cleanup = S6/S15.)
  *
+ * STATUS (P1.M2.T6.S12): `applyCompletion` handler registered (DONE).
+ *   - session_start now registers `hello` (S9), `getSuggestions` (S11), AND
+ *     `applyCompletion` (S12) after startBridge + provider capture. The S12 handler is
+ *     a deps-injected factory (`makeApplyCompletionHandler`) that delegates to pi's live
+ *     AutocompleteProvider.applyCompletion SYNCHRONOUSLY (pi's impl is a pure SYNC
+ *     function — autocomplete.ts:256-271, verified). It has NO AbortController, NO
+ *     supersession, NO timeout, NO closure state — plain delegation. The MethodHandler
+ *     union (`Promise<unknown> | unknown`) accommodates the sync return; handleLine's
+ *     `await` is a no-op on a non-Promise. shouldTriggerFileCompletion (S13),
+ *     ping/bye/getCommands (S14), and domain-error wrapping (S15) remain TODO.
+ *     `connection.ts` and `protocol.ts` UNCHANGED.
+ *
  * STATUS (P1.M2.T6.S11): `getSuggestions` handler registered (DONE).
  *   - session_start now registers `hello` (S9) AND `getSuggestions` (S11) after
  *     startBridge + provider capture. The S11 handler is a deps-injected factory
  *     (`makeGetSuggestionsHandler`) that delegates to pi's live
  *     AutocompleteProvider, threading a FRESH AbortSignal + strict-boolean `force`,
  *     with closure-scoped supersession (pendingAbort?.abort()) and a per-request
- *     timeout (GET_SUGGESTIONS_TIMEOUT_MS=1500). applyCompletion/shouldTrigger-
- *     FileCompletion (S12/S13), ping/bye/getCommands (S14), and domain-error
- *     wrapping (S15) remain TODO. `connection.ts` and `protocol.ts` UNCHANGED.
+ *     timeout (GET_SUGGESTIONS_TIMEOUT_MS=1500). `connection.ts` and `protocol.ts`
+ *     UNCHANGED.
  *
  * Loaded by pi via jiti (TypeScript works without compilation). Install at
  * ~/.pi/agent/extensions/pi-editor-bridge.ts or load with `pi -e ./path.ts`.
  */
-import type { AutocompleteProvider } from "@earendil-works/pi-tui";
+import type { AutocompleteProvider, AutocompleteItem } from "@earendil-works/pi-tui";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -52,6 +63,8 @@ import type {
 	HelloResult,
 	GetSuggestionsParams,
 	GetSuggestionsResult,
+	ApplyCompletionParams,
+	ApplyCompletionResult,
 } from "./protocol.ts";
 
 /**
@@ -462,6 +475,103 @@ export function makeGetSuggestionsHandler(deps: {
 	};
 }
 
+/**
+ * Narrow a raw `unknown` JSON-RPC `params` into {@link ApplyCompletionParams}, throwing
+ * `BridgeRpcError(-32602, "invalid params: …")` on any malformed shape.
+ *
+ * Mirrors {@link narrowGetSuggestionsParams} + adds `item`/`prefix` validation.
+ * `-32602` is the reserved JSON-RPC "invalid params" code (protocol.ts §A). This
+ * matches S9/S11 precedent: handler-level INPUT VALIDATION throws typed errors here;
+ * provider RUNTIME throws fall to `handleLine`'s `-32603` safety net (S15 later wraps).
+ *
+ * Rules: `params` is a non-null object; `lines` is an Array of strings;
+ * `cursorLine`/`cursorCol` are non-negative integers; `item` is a non-null object with
+ * `value:string` + `label:string` (`description` is OPTIONAL — AutocompleteItem marks
+ * it `?`); `prefix` is a string.
+ */
+function narrowApplyCompletionParams(params: unknown): ApplyCompletionParams {
+	const p = params as Partial<ApplyCompletionParams> | null;
+	if (!p || typeof p !== "object") {
+		throw new BridgeRpcError(-32602, "invalid params: expected an object");
+	}
+	const { lines, cursorLine, cursorCol, item, prefix } = p;
+	if (!Array.isArray(lines) || !lines.every((l) => typeof l === "string")) {
+		throw new BridgeRpcError(-32602, "invalid params: lines must be string[]");
+	}
+	if (
+		typeof cursorLine !== "number" ||
+		!Number.isInteger(cursorLine) ||
+		cursorLine < 0
+	) {
+		throw new BridgeRpcError(-32602, "invalid params: cursorLine must be a non-negative integer");
+	}
+	if (
+		typeof cursorCol !== "number" ||
+		!Number.isInteger(cursorCol) ||
+		cursorCol < 0
+	) {
+		throw new BridgeRpcError(-32602, "invalid params: cursorCol must be a non-negative integer");
+	}
+	// item: non-null object with value:string + label:string (description optional).
+	if (!item || typeof item !== "object") {
+		throw new BridgeRpcError(-32602, "invalid params: item must be an object");
+	}
+	const it = item as Partial<AutocompleteItem>;
+	if (typeof it.value !== "string" || typeof it.label !== "string") {
+		throw new BridgeRpcError(
+			-32602,
+			"invalid params: item.value and item.label must be strings",
+		);
+	}
+	if (typeof prefix !== "string") {
+		throw new BridgeRpcError(-32602, "invalid params: prefix must be a string");
+	}
+	return { lines, cursorLine, cursorCol, item: it as AutocompleteItem, prefix };
+}
+
+/**
+ * Build the `applyCompletion` JSON-RPC handler (PRD §5.4 / §6.5). PURE factory — dep
+ * injected so unit tests stub the provider. Delegates to pi's LIVE {@link
+ * AutocompleteProvider.applyCompletion} SYNCHRONOUSLY.
+ *
+ * SYNC, NO TIMING/RESOURCE CONCERNS: unlike getSuggestions (S11), applyCompletion is a
+ * pure SYNC function (pi autocomplete.ts:256-271 — verified). It takes NO options/
+ * AbortSignal/force and returns the new {lines,cursorLine,cursorCol} directly. The TUI
+ * calls it WITHOUT await (editor.ts:669/690/2257). So this handler has NO AbortController,
+ * NO supersession (no `pendingAbort`), NO timeout, NO closure state — it is plain
+ * delegation. The MethodHandler union (`Promise<unknown> | unknown`) accommodates a sync
+ * return; handleLine's `await` is a no-op on a non-Promise.
+ *
+ * INSERTION IS PI'S JOB: pi's impl computes every insertion edge case (slash `/cmd `
+ * trailing space, `@file` trailing space for files / none for dirs, quote handling,
+ * cursor repositioning). This handler forwards (…,item,prefix) VERBATIM and returns
+ * pi's result UNCHANGED — the bridge never reimplements insertion (PRD §4 step 5).
+ *
+ * ERRORS: malformed params throw `BridgeRpcError(-32602)` (S9/S11 precedent; -32602 =
+ * reserved "invalid params"). `deps.getProvider()` throwing (provider not captured) and
+ * any provider RUNTIME throw propagate to `handleLine`'s `-32603` safety net — S15
+ * later wraps those. S12 keeps them flowing (keeps pi safe).
+ */
+export function makeApplyCompletionHandler(deps: {
+	getProvider: () => AutocompleteProvider;
+}): MethodHandler {
+	return (
+		_params: unknown,
+		_state: ConnectionState,
+	): ApplyCompletionResult => {
+		const params = narrowApplyCompletionParams(_params);
+		const provider = deps.getProvider(); // throws plain Error if not captured → -32603 (S15 refines)
+		// SYNC delegation — return pi's full new buffer + cursor VERBATIM.
+		return provider.applyCompletion(
+			params.lines,
+			params.cursorLine,
+			params.cursorCol,
+			params.item,
+			params.prefix,
+		);
+	};
+}
+
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
 		/**
@@ -505,7 +615,17 @@ export default function (pi: ExtensionAPI): void {
 			"getSuggestions",
 			makeGetSuggestionsHandler({ getProvider }), // timeoutMs defaults to GET_SUGGESTIONS_TIMEOUT_MS
 		);
-		// TODO(S12): register "applyCompletion"; (S13): "shouldTriggerFileCompletion"; (S14): ping/bye/getCommands.
+		// S12: register `applyCompletion` AFTER `getSuggestions` (so the provider is captured
+		// and the token exists) and AFTER startBridge. The handler delegates to pi's live
+		// AutocompleteProvider.applyCompletion SYNCHRONOUSLY (pi's impl is a pure SYNC
+		// function — autocomplete.ts:256-271, verified). It has NO AbortController, NO
+		// supersession, NO timeout, NO closure state — plain delegation. Idempotent
+		// (Map.set) — safe across reload/new/resume/fork (research §3/§6).
+		registerBridgeHandler(
+			"applyCompletion",
+			makeApplyCompletionHandler({ getProvider }),
+		);
+		// TODO(S13): register "shouldTriggerFileCompletion"; (S14): ping/bye/getCommands.
 		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
 	});
 
