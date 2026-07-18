@@ -441,7 +441,7 @@
               "type": "Task",
               "id": "P2.M4.T11",
               "title": "Plugin structure, setup() & default options",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Create the init.lua module with setup() function accepting user configuration, defining default options for menu dimensions, debounce, RPC timeout, autosave, and completion engine selection.",
               "subtasks": [
                 {
@@ -463,7 +463,7 @@
                   "type": "Subtask",
                   "id": "P2.M4.T11.S20",
                   "title": "plugin/pi-editor.lua VimEnter auto-activation shim",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M4.T11.S19"
