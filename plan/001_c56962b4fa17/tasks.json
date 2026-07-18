@@ -434,7 +434,7 @@
           "type": "Milestone",
           "id": "P2.M4",
           "title": "Plugin Scaffold & Activation",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Create the plugin directory structure, setup() function with default options, VimEnter auto-activation shim, and the activation gate that reads PI_EDITOR_BRIDGE and decides whether to activate or stay dormant.",
           "tasks": [
             {
@@ -505,14 +505,14 @@
               "type": "Task",
               "id": "P2.M4.T13",
               "title": "ftplugin/pi-prompt.lua buffer setup",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Create the ftplugin that configures the pi prompt buffer with appropriate options, buffer-local keymaps for completion navigation and acceptance, and buffer-local autocmds for completion triggers and autosave.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M4.T13.S22",
                   "title": "Buffer-local options, keymaps & autocmds for pi-prompt filetype",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M4.T12.S21"
