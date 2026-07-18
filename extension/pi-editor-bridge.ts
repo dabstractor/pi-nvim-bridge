@@ -146,12 +146,12 @@ function onConnection(_sock: Socket): void {
  * Tear down the bridge server: close the server, unlink the socket file, reset state.
  * IDEMPOTENT — safe to call when already stopped (all guards swallow no-op failures).
  *
- * STATUS (P1.M2.T3.S5): ships the server/socket/state teardown half. This is also the
- * core of sibling task **P1.M2.T3.S6** ("close server, unlink socket, clear state,
- * idempotent") — S6 should REUSE this function (verify it exists), wire it into
- * `session_shutdown`, and (once S16 lands) add the `delete process.env.PI_EDITOR_BRIDGE`
- * line. S5 does NOT delete the env var because S5 writes NONE (env advertisement is S16).
- * S5 calls stopBridge() as the first line of startBridge() for idempotent re-entry.
+ * STATUS (P1.M2.T3.S5): ships the server/socket/state teardown half. **P1.M2.T3.S6
+ * REUSES this function (wired into session_shutdown); the env-clear is deferred to S16.**
+ * S5 does NOT delete the env var because S5 writes NONE (env advertisement is S16).
+ * S5 calls stopBridge() as the first line of startBridge() for idempotent re-entry; S6
+ * also calls it from the `server.on("error")` handler in startBridge (double-close is a
+ * safe no-op — verified).
  */
 export function stopBridge(): void {
 	try {
@@ -182,12 +182,12 @@ export function stopBridge(): void {
  * STATUS (P1.M2.T3.S5): server-start runtime. OUT OF SCOPE here (landed by later tasks):
  *  - process.env.PI_EDITOR_BRIDGE advertisement ........ P1.M3.T8.S16 (will call
  *    getSocketPath()/getToken()/ctx.cwd/process.pid here to build the BridgeDescriptor).
- *  - wiring startBridge into the session_start handler .. P1.M2.T3.S6 (the L101
- *    `// TODO(M2): startBridge(...)` call site). NOT wired in S5 so the existing
- *    mode-guard.test.ts (S3) doesn't fire a real listen/chmod during a unit test.
- *  - server.on('error', ...) handler .................... S6, when wiring. An unhandled
- *    'error' event (e.g. EADDRINUSE) THROWS and would crash pi; S5's tests use unique
- *    UUID paths under tmpdir so no 'error' arises, but the production wiring MUST add one.
+ *  - wiring startBridge into the session_start handler .. DONE in P1.M2.T3.S6 (S5 left
+ *    it unwired so the existing mode-guard.test.ts (S3) wouldn't fire a real listen/chmod
+ *    during a unit test; S6 lands both wirings atomically + cleans up in the guard test).
+ *  - server.on('error', ...) handler .................... DONE in P1.M2.T3.S6. An unhandled
+ *    'error' event (e.g. EADDRINUSE) THROWS and would crash pi (Node EventEmitter contract
+ *    — verified); the handler logs + stopBridge()'s and does NOT rethrow.
  *
  * @param ctx accepted to match the contract signature and forward-compat the S16
  *   descriptor; `ctx.cwd` is NOT dereferenced in S5 (the socket path comes from
@@ -200,6 +200,18 @@ export function startBridge(ctx: ExtensionContext): void {
 	token = randomUUID().replace(/-/g, "").slice(0, 32); // 32 lowercase hex chars (PRD §12)
 	socketPath = join(tmpdir(), `pi-editor-bridge-${randomUUID()}.sock`);
 	server = __deps.createServer((sock) => onConnection(sock));
+	// Defensive: an unhandled 'error' event (e.g. EADDRINUSE, EACCES binding tmpdir, EMFILE)
+	// on a net.Server THROWS and would crash the process (Node EventEmitter contract —
+	// verified in P1M2T3S6/research §3). Because startBridge is wired into session_start
+	// (P1.M2.T3.S6), such a failure MUST NOT crash pi (PRD §6.7 "never throws from
+	// handlers"). Handle it: log the Error (NOT the token/descriptor — PRD §12), then
+	// stopBridge so we don't leave a half-bound server or orphaned socket, and do NOT
+	// rethrow. Double-close is a safe no-op (verified), so stopBridge()'s own
+	// `server?.close()` won't choke when this handler calls it first.
+	server.on("error", (err: Error) => {
+		console.error(`pi-editor-bridge: socket server error (terminating bridge): ${err}`);
+		stopBridge();
+	});
 	server.listen(socketPath);
 	// Restrictive perms (PRD §5.1/§12). libuv creates the socket FILE synchronously inside
 	// listen() (verified on-disk), so chmodSync here does NOT ENOENT and yields mode 0o600.
@@ -240,10 +252,12 @@ export default function (pi: ExtensionAPI): void {
 			`pi-editor-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`,
 		);
 		captureProvider(ctx);
-		// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE
+		startBridge(ctx);
+		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
 	});
 
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
-		// No-op placeholder. TODO(S6/S15): stopBridge() + clear env.
+		stopBridge(); // idempotent teardown: close server, unlink socket, clear state.
+		// NOTE: clearing process.env.PI_EDITOR_BRIDGE belongs to S16 (which writes it).
 	});
 }

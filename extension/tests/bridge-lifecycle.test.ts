@@ -41,6 +41,9 @@ test("startBridge (mocked): createServer + chmodSync(_,0o600) invoked, token 32-
 		close() {
 			/* no-op */
 		},
+		on(_event: string, _handler: (err: Error) => void) {
+			return fakeServer; // S6: startBridge attaches server.on("error", …); no-op in the mock.
+		},
 	};
 	__deps.createServer = (() => fakeServer) as unknown as typeof realCreateServer;
 	__deps.chmodSync = ((path: string, mode: number) => {

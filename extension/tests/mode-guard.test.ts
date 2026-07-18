@@ -5,7 +5,7 @@ import type {
 	ExtensionContext,
 	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import bridgeFactory from "../pi-editor-bridge.ts";
+import bridgeFactory, { stopBridge } from "../pi-editor-bridge.ts";
 
 // Type alias for the session_start handler signature (pi registers
 // ExtensionHandler<SessionStartEvent> = (event, ctx) => void | ...).
@@ -64,12 +64,19 @@ test("session_start no-ops (does not call addAutocompleteProvider) in rpc/json/p
 test("session_start proceeds (calls addAutocompleteProvider) in tui mode", () => {
 	const handler = captureSessionStartHandler();
 	let called = false;
-	handler(STARTUP_EVENT, makeCtx("tui", () => {
-		called = true;
-	}));
-	assert.equal(
-		called,
-		true,
-		"addAutocompleteProvider MUST be called in tui mode (happy path through the handler)",
-	);
+	try {
+		handler(STARTUP_EVENT, makeCtx("tui", () => {
+			called = true;
+		}));
+		assert.equal(
+			called,
+			true,
+			"addAutocompleteProvider MUST be called in tui mode (happy path through the handler)",
+		);
+	} finally {
+		// S6 wires startBridge() into the session_start handler, so a tui-mode invocation
+		// now creates a REAL socket server (createServer+listen+chmod). Clean it up so this
+		// guard test leaks nothing. (Non-tui cases never reach startBridge — the guard returns first.)
+		stopBridge();
+	}
 });

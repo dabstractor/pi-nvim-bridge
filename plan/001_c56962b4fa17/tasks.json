@@ -110,7 +110,7 @@
               "type": "Task",
               "id": "P1.M2.T3",
               "title": "Socket server lifecycle (start/stop/idempotent)",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement startBridge() and stopBridge() functions that manage the Unix domain socket server's lifecycle, token generation, socket file permissions, and environment variable advertisement.",
               "subtasks": [
                 {
@@ -135,7 +135,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T3.S6",
                   "title": "stopBridge() — close server, unlink socket, clear state, idempotent",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T3.S5"
