@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "/home/dustin/.local/lib/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ]
+    }
+  },
+  "include": ["pi-editor-bridge.ts"]
+}

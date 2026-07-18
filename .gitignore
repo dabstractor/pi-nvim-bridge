@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+venv/
+
+# Build artifacts
+dist/
+build/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# pi-subagents runtime artifacts (transcripts, meta, transient outputs)
+.pi-subagents/
