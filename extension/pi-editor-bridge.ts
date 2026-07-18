@@ -25,11 +25,12 @@ import type {
 	SessionStartEvent,
 	SessionShutdownEvent,
 } from "@earendil-works/pi-coding-agent";
-import { createServer, type Server, type Socket } from "node:net";
+import { createServer, type Server } from "node:net";
 import { randomUUID } from "node:crypto";
 import { chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { onConnection } from "./connection.ts";
 
 /**
  * Captured reference to pi's live autocomplete provider chain.
@@ -125,22 +126,6 @@ export function getToken(): string | undefined {
 // cross-module live-binding reassignment of `export let` — a consumer that imported a
 // `let` would keep seeing the initial value forever (verified, research §1.2). Getters
 // read the current value on each call. This mirrors the EXISTING getProvider() idiom.
-
-/**
- * Per-connection handler. NO-OP PLACEHOLDER in S5.
- *
- * STATUS (P1.M2.T3.S5): placeholder. S8 replaces the body with the JSONL line reader
- * (buffer partials, split on `\n` only, strip `\r`) + the RPC dispatcher (id correlation,
- * JSON-RPC envelope handling — imports protocol.ts). S9 adds the handshake gate (reject
- * every method before a valid `hello`; -32600 "bad token" on mismatch). S11–S14 add the
- * method handlers (getSuggestions/applyCompletion/shouldTriggerFileCompletion/ping/bye/
- * getCommands), delegating to getProvider(). Until then, connections are accepted but
- * receive no responses.
- */
-function onConnection(_sock: Socket): void {
-	// TODO(S8): wire the JSONL reader + RPC dispatcher onto _sock.
-	// TODO(S9): gate every method behind a valid hello handshake (token == getToken()).
-}
 
 /**
  * Tear down the bridge server: close the server, unlink the socket file, reset state.

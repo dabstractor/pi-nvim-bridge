@@ -153,7 +153,7 @@
               "type": "Task",
               "id": "P1.M2.T4",
               "title": "JSONL framing & connection handling",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the JSONL line reader that buffers partial socket chunks and splits on newline only (never U+2028/U+2029), plus the connection handler that wires incoming data through the reader and dispatches parsed JSON-RPC messages to handlers.",
               "subtasks": [
                 {
@@ -175,7 +175,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T4.S8",
                   "title": "onConnection handler — accept, wire reader, dispatch, write responses",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T4.S7",
