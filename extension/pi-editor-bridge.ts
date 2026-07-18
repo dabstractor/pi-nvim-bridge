@@ -8,6 +8,32 @@
  *             path, token, pid, cwd, fdAvailable, serverVersion }) — written in
  *             startBridge (S16) and deleted in stopBridge.
  *
+ * STATUS (P1.M3.T9.S17): `commandsChanged` S→C notification — DONE. `connection.ts`
+ *   got the bridge's FIRST connection registry (`Map<Socket, ConnectionState>`),
+ *   populated in `onConnection`, removed on socket `close`. On that registry:
+ *   `broadcastNotification(method, params?)` iterates ONLY handshaken connections
+ *   (`state.handshakeComplete` — PRD §12: never push to an unauthenticated peer) and
+ *   calls the existing per-socket `sendNotification`; `closeAllConnections()`
+ *   `sock.end()`s every tracked socket and clears the map — REQUIRED because Node's
+ *   `net.Server.close()` only stops accepting NEW connections and KEEPS existing ones
+ *   (verified, scout Q2), so without it `stopBridge` would orphan any editor socket
+ *   open during a `/reload`. `stopBridge()` now calls `closeAllConnections()` after
+ *   `server?.close()` (full teardown: server listener + every accepted socket — a
+ *   no-op when the registry is empty, which is the case in every existing lifecycle
+ *   test). `session_start` emits `__deps.broadcastNotification("commandsChanged")`
+ *   as its LAST statement (after startBridge + provider re-capture + all handler
+ *   registrations), guarded by `if (getServer())`. The emit routes through the
+ *   `__deps` seam (extended with `broadcastNotification`) so the wiring test can spy.
+ *   HONEST PROPERTY: in the current tear-down-on-reload architecture (session_shutdown
+ *   fully drains BEFORE session_start), the registry is EMPTY at every realistic
+ *   session_start, so the broadcast is structurally quiescent in v1 — it is correctly
+ *   wired and activates the moment a future change lets a connection survive a
+ *   session boundary (PRD §15 future enhancement). This completes PRD §5.4
+ *   (`commandsChanged` was the only method with NO server-side implementation).
+ *   `protocol.ts` UNCHANGED (CommandsChangedParams/NotificationMethod/TypedNotification
+ *   all already defined in §C/§D). Downstream: P2.M5.T16.S27 (Neovim notification
+ *   handler) + P3.M10.T26.S41 (Neovim cache invalidation).
+ *
  * STATUS (P1.M2.T7.S15): domain-error wrapping for the 4 provider-dependent
  *   handlers — DONE. `getSuggestions` / `applyCompletion` /
  *   `shouldTriggerFileCompletion` / `getCommands` now wrap BOTH `deps.getProvider()`
@@ -118,6 +144,8 @@ import {
 	registerBridgeHandler,
 	BridgeRpcError,
 	toBridgeRpcError,
+	broadcastNotification,
+	closeAllConnections,
 	type ConnectionState,
 	type MethodHandler,
 } from "./connection.ts";
@@ -206,9 +234,11 @@ export function getProvider(): AutocompleteProvider {
 export const __deps: {
 	createServer: typeof createServer;
 	chmodSync: typeof chmodSync;
+	broadcastNotification: typeof broadcastNotification;
 } = {
 	createServer,
 	chmodSync,
+	broadcastNotification,
 };
 
 /** The live bridge socket server, or `undefined` when stopped. Module singleton. */
@@ -348,6 +378,7 @@ export function stopBridge(): void {
 	} catch {
 		/* idempotent */
 	}
+	closeAllConnections(); // S17: Node server.close() keeps existing sockets — close them too
 	if (socketPath) {
 		try {
 			rmSync(socketPath, { force: true }); // force:true → no ENOENT if already gone
@@ -1035,6 +1066,19 @@ export default function (pi: ExtensionAPI): void {
 		);
 		// (S14 DONE). S16 writes the BridgeDescriptor to process.env.PI_EDITOR_BRIDGE
 		// at the end of startBridge above (the discovery the Neovim plugin reads).
+		//
+		// S17: broadcast `commandsChanged` (S→C notification) to every connected,
+		// handshaken editor so it can invalidate its command cache (the provider was
+		// just rebuilt on this reload/new/resume/fork). Downstream consumers:
+		// P2.M5.T16.S27 (Neovim notification handler) + P3.M10.T26.S41 (cache
+		// invalidation). Guarded by `getServer()` (PRD §6.2 "when server running" —
+		// defined after startBridge). Routed through `__deps.broadcastNotification`
+		// (NOT the bare import) so the wiring test can spy — startBridge's internal
+		// stopBridge→closeAllConnections clears the registry before this runs, so the
+		// emit's on-socket effect is structurally unobservable (documented property:
+		// the registry is EMPTY at every realistic session_start — to type `/reload`
+		// the TUI must be active ⇒ no external editor open — research §6.6).
+		if (getServer()) __deps.broadcastNotification("commandsChanged");
 	});
 
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {

@@ -125,6 +125,22 @@ export type MethodHandler = (
 const handlers = new Map<string, MethodHandler>();
 
 /**
+ * The live set of connected, not-yet-closed sockets and their per-connection state.
+ * Populated by {@link onConnection}; drained by each socket's `close` handler and by
+ * {@link closeAllConnections}. Iterated by {@link broadcastNotification} (handshaken
+ * entries only). MODULE-LEVEL (shared across all connections — one bridge, one set).
+ *
+ * STATUS (P1.M3.T9.S17): the connection registry introduced so the server can PUSH an
+ * S→C notification (`commandsChanged`) to every authenticated peer and fully tear down
+ * every accepted socket on `stopBridge` (Node's `net.Server.close()` only stops
+ * accepting NEW connections — it KEEPS existing ones; see {@link closeAllConnections}).
+ * It is a `Map<Socket, ConnectionState>` (NOT a bare `Set<Socket>`) because the
+ * broadcast filter needs `state.handshakeComplete` alongside the socket (PRD §12:
+ * never push to an unauthenticated peer).
+ */
+const connections = new Map<Socket, ConnectionState>();
+
+/**
  * Register (or replace) the handler for a JSON-RPC method name. Idempotent
  * (`Map.set`). S9 registers `"hello"`; S11–S14 register the rest. Re-registering on
  * each `session_start` (reload/new/resume/fork) is safe — the handler closures read
@@ -169,6 +185,60 @@ export function sendNotification(
 	return sock.write(serializeJsonLine(envelope));
 }
 
+/**
+ * Write a JSON-RPC 2.0 NOTIFICATION to every HANDSHAKEN connected socket. Filters on
+ * `state.handshakeComplete` (PRD §12: never push to an unauthenticated peer; the Neovim
+ * client only processes notifications AFTER its own `hello`). Reuses the per-socket
+ * {@link sendNotification} primitive. `params` omitted on the wire when `undefined`.
+ *
+ * Best-effort: a dead socket's `'error'` is already handled by {@link onConnection}'s
+ * error handler — this function does not double-handle it.
+ *
+ * STATUS (P1.M3.T9.S17): the server→client PUSH primitive `session_start` calls as
+ * `broadcastNotification("commandsChanged")` after every (re)start so connected
+ * editors can invalidate their command cache (downstream consumers P2.M5.T16.S27 /
+ * P3.M10.T26.S41). HONEST PROPERTY: in the current tear-down-on-reload architecture
+ * the registry is EMPTY at every realistic session_start (to type `/reload` the TUI
+ * must be active ⇒ no external editor open), so the broadcast is structurally
+ * quiescent in v1 — it is correctly wired and activates the moment a future change
+ * lets a connection survive a session boundary (PRD §15 future enhancement).
+ */
+export function broadcastNotification(method: string, params?: unknown): void {
+	for (const [sock, state] of connections) {
+		if (state.handshakeComplete) sendNotification(sock, method, params);
+	}
+}
+
+/**
+ * Force-close (graceful `end()`, NOT `destroy()`) every tracked socket and clear the
+ * registry. Iterates a SNAPSHOT (`[...connections.keys()]`) so a synchronous
+ * `'close'`→`delete` mid-loop cannot mutate the map under us, then `connections.clear()`
+ * guarantees the empty state. Idempotent (empty registry → no-op).
+ *
+ * REQUIRED in {@link stopBridge} (pi-editor-bridge.ts) because Node's
+ * `net.Server.close()` only stops ACCEPTING new connections — it does NOT close
+ * already-accepted sockets (verified, scout Q2). Without this, `stopBridge` would
+ * orphan any editor socket open during a `/reload` (still connected, untracked,
+ * validating against the NEW token → -32600).
+ *
+ * Uses `sock.end()` (graceful FIN) — NOT `sock.destroy()` (RST) — to match the
+ * existing `bye`/fatal-close `sock.end()` pattern; lets in-flight writes flush and
+ * gives the remote a clean EOF (the Neovim plugin's silent-degrade path, PRD §11).
+ *
+ * STATUS (P1.M3.T9.S17): the teardown half of the registry. A no-op in every
+ * realistic scenario (the registry is empty on reload — see {@link broadcastNotification}).
+ */
+export function closeAllConnections(): void {
+	for (const sock of [...connections.keys()]) {
+		try {
+			sock.end();
+		} catch {
+			/* already closing/closed — best-effort */
+		}
+	}
+	connections.clear();
+}
+
 /** Test seam: clear the registry (module-level — isolate between tests). */
 export function __resetHandlersForTest(): void {
 	handlers.clear();
@@ -176,6 +246,18 @@ export function __resetHandlersForTest(): void {
 /** Test seam: does a handler exist for `method`? (assertions about dispatch routing.) */
 export function __hasHandlerForTest(method: string): boolean {
 	return handlers.has(method);
+}
+/** Test seam: clear the connection registry (module-level — isolate between tests). */
+export function __resetConnectionsForTest(): void {
+	connections.clear();
+}
+/** Test seam: how many sockets are currently tracked? (assertions about registry lifecycle.) */
+export function __getActiveConnectionCountForTest(): number {
+	return connections.size;
+}
+/** Test seam: read a socket's stored state (so a UNIT test can flip `handshakeComplete`). */
+export function __getConnectionStateForTest(sock: Socket): ConnectionState | undefined {
+	return connections.get(sock);
 }
 
 /**
@@ -356,6 +438,7 @@ export async function handleLine(
  */
 export function onConnection(sock: Socket): void {
 	const state: ConnectionState = { handshakeComplete: false };
+	connections.set(sock, state); // S17: track for broadcast/teardown
 
 	const detach = attachJsonlLineReader(sock, (line) => {
 		void handleLine(sock, state, line); // fire-and-forget; loop-level catches → responses, never rejections.
@@ -377,6 +460,7 @@ export function onConnection(sock: Socket): void {
 	});
 
 	sock.on("close", () => {
+		connections.delete(sock); // S17: idempotent removal (close fires after error too)
 		try {
 			detach(); // idempotent — removes the reader's data/end listeners only.
 		} catch {

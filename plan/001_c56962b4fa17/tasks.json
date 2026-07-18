@@ -370,14 +370,14 @@
               "type": "Task",
               "id": "P1.M3.T9",
               "title": "commandsChanged notification on provider rebuild",
-              "status": "Planned",
+              "status": "Complete",
               "description": "When session_start fires with reason reload/new/resume/fork and the server is already running (meaning a client may be connected), broadcast a commandsChanged notification to connected clients so they can clear their caches.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T9.S17",
                   "title": "Broadcast commandsChanged S→C notification on session_start when server running",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T4.S8",
