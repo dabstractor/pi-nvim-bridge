@@ -531,7 +531,7 @@
           "type": "Milestone",
           "id": "P2.M5",
           "title": "Bridge Client (Lua) — Socket, JSONL, Handshake, RPC",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Implement the Lua-side bridge client: JSONL reader, luv Unix socket connection, token handshake, and RPC dispatch with monotonic id correlation and stale-response supersession.",
           "tasks": [
             {
@@ -601,7 +601,7 @@
               "type": "Task",
               "id": "P2.M5.T16",
               "title": "RPC dispatch with id correlation & supersession",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the request/response correlation layer that auto-assigns monotonic ids, tracks pending requests, and drops responses whose id is not the current pending request (natural supersession/cancellation).",
               "subtasks": [
                 {
@@ -624,7 +624,7 @@
                   "type": "Subtask",
                   "id": "P2.M5.T16.S27",
                   "title": "Notification handler for commandsChanged",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M5.T16.S26"

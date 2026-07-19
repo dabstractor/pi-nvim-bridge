@@ -107,6 +107,26 @@
 --  * SECURITY (PRD §12): the token NEVER appears in any request/error string (it never
 --    appears in RPC responses anyway — verified by the server tests).
 --
+-- [Mode A] S27 EXTENSION — the notification dispatch (the THIRD protocol consumer):
+--  * S27 adds ONE branch to `dispatch(msg)` at the literal `-- S27 EXTENSION POINT`
+--    placeholder (AFTER the S25 handshake branch + the S26 request-response branch): if
+--    a decoded msg has a string `method` and NO string `id` (JSON-RPC section 4
+--    notification), look up `notification_handlers[method]` and invoke it
+--    (schedule_wrap'd). NEVER reply (JSON-RPC: a notification expects no response).
+--    Unknown method / missing handler -> silently dropped.
+--  * S27 adds `M.on_notification(method, handler)` — the registration API S41 (cache
+--    invalidation) + future consumers call. Last-wins; nil removes; never throws;
+--    handler stored vim.schedule_wrap'd (GOTCHA 5 — dispatch runs inline from the luv
+--    read_start cb).
+--  * M.close() clears `notification_handlers` (hygiene — no stale handler across
+--    reconnects).
+--  * The three dispatch branches are mutually exclusive by wire shape: handshake resp
+--    has id == "h1"; request resp has a string id (no method); notification has method +
+--    no string id.
+--  * commandsChanged is the ONLY NotificationMethod in v1 (protocol.ts section D). Its
+--    params are EMPTY and OMITTED on the wire (S17) -> the handler receives
+--    `params == nil`.
+--
 -- Node builtins analog: only `vim.uv` + `vim.json` (both built in) + the S23 `jsonlreader`.
 -- Module-level singleton state (one connection) — see Design Decision §6 in notes.
 
@@ -187,8 +207,18 @@ local next_id = 0
 ---@type table<string, pi-editor.PendingRequest>
 local pending = {}
 
+--- Notification handlers keyed by method (string). Each value is the user handler wrapped
+--- in `vim.schedule_wrap` at registration (GOTCHA 5 — dispatch runs inline from the luv
+--- `read_start` callback; raw `vim.api.*` throws `E5560` there). Last-wins re-registration
+--- (a Lua table set); `on_notification(method, nil)` removes an entry. Cleared wholesale
+--- by `close()` (hygiene: a stale handler must not fire across reconnects — PRD §6.7). S27
+--- is the MECHANISM; the cache-invalidation BEHAVIOR is S41 (`require("pi-editor").bridge.
+--- on_notification("commandsChanged", function(_params) ... end)`).
+---@type table<string, function>
+local notification_handlers = {}
+
 -- ===========================================================================
--- S25/S26 — internals (forward declarations; defined below).
+-- S25/S26/S27 — internals (forward declarations; defined below).
 -- ===========================================================================
 local resolve_handshake -- (msg, err) — the SINGLE exit point for the handshake (race-safe).
 local resolve_request   -- (id, err, msg) — the SINGLE exit point for a regular request (race-safe).
@@ -357,7 +387,15 @@ dispatch = function(msg)
     end
     -- no matching entry: stale / late / duplicate / stray -> dropped silently (PRD §11)
   end
-  -- S27 EXTENSION POINT: notifications (commandsChanged) go here.
+  -- S27: a NOTIFICATION (method present, no string id — JSON-RPC §4). Dispatch to a
+  -- registered handler (schedule_wrap'd at registration so it is safe to call from this
+  -- luv read_start cb — GOTCHA 5). NEVER reply (JSON-RPC: a notification expects no
+  -- response). An unknown method or a missing handler is silently dropped (PRD §11).
+  if msg and type(msg.method) == "string" and type(msg.id) ~= "string" then
+    local h = notification_handlers[msg.method]
+    if h then h(msg.params) end   -- h is schedule_wrap'd -> next nvim loop pass (safe)
+    return
+  end
 end
 
 -- ===========================================================================
@@ -616,6 +654,29 @@ function M.cancel(id)
   resolve_request(id, "cancelled", nil)                        -- fires cb("cancelled"), stops+closes timer, deletes entry
 end
 
+--- Register (or replace / remove) a handler for a server-to-client NOTIFICATION method.
+--- handler(params) is invoked (on the next nvim main-loop pass) when the server sends
+--- a notification {jsonrpc="2.0",method=METHOD} (no id). Pass nil to remove. Never
+--- throws (bad args degrade to a no-op). The handler is stored vim.schedule_wrap'd at
+--- REGISTRATION time so dispatch, which runs inline from the luv read_start callback,
+--- can call it safely (GOTCHA 5: raw vim.api.* throws E5560 in libuv fast context).
+---
+--- Last-wins: registering handler B for a method that already had handler A REPLACES A
+--- (a Lua table set; no multi-cast in v1 - PRD section 15). The prior closure is GC'd.
+---
+---@param method  string             Notification method name (PRD section 5.4: "commandsChanged" in v1).
+---@param handler fun(params:any?)|nil Called with msg.params (nil for commandsChanged,
+---                                      empty params are omitted on the wire by the S17 server).
+function M.on_notification(method, handler)
+  if type(method) ~= "string" or method == "" then return end   -- bad method -> no-op (never throws)
+  if handler == nil then
+    notification_handlers[method] = nil                          -- remove
+    return
+  end
+  if type(handler) ~= "function" then return end                 -- non-function -> no-op
+  notification_handlers[method] = vim.schedule_wrap(handler)     -- last-wins; safe from luv (GOTCHA 5)
+end
+
 --- Idempotent teardown. Guards the luv double-close THROW (GOTCHA 2) with a shadow
 --- `state.closed` flag (set FIRST) + `is_closing()` + `pcall`. Safe across the many
 --- teardown paths (`on_close`, `on_exit`, VimLeavePre/ExitPre, socket-error, EOF).
@@ -666,6 +727,14 @@ function M.close()
   -- `pending` flag (flips false on first resolve); `M.handshake` re-arms a fresh
   -- state on reconnect. `pending==false` makes any stale resolver a no-op.
   M.server_info = nil
+  -- S27: clear the notification-handler registry (hygiene - a stale handler must not
+  -- fire across reconnects). notification_handlers is a module-level local read as an
+  -- upvalue by dispatch; reassigning it updates the upvalue (same pattern connect() uses
+  -- to reset the state table), so dispatch sees the empty table. The drained handlers
+  -- are user closures; clearing does NOT call them (unlike the S26 pending cbs,
+  -- notifications have nothing to resolve). PRD section 6.7: no leak across editor
+  -- open/close cycles.
+  notification_handlers = {}
 end
 
 --- VimLeavePre / ExitPre handler — fulfills the S22 ftplugin forward contract
