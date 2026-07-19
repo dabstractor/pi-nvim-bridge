@@ -152,3 +152,139 @@ describe("pi-editor.coords", function()
     end)
   end)
 end)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- S29: nvim↔pi cursor wrappers (nvim_to_pi_coords / pi_to_nvim_coords).
+-- THE public nvim↔pi cursor API. Composes S28's byte↔utf16 primitives with the
+-- row ±1 + cursor-API (0-based byte) alignment. Every value below is
+-- LIVE‑VERIFIED on nvim 0.12.4 (research/notes.md §4). Pure functions over
+-- explicit (lines, …) args — NO buffer/setup/teardown.
+-- ─────────────────────────────────────────────────────────────────────────────
+describe("pi-editor.coords nvim_to_pi_coords / pi_to_nvim_coords", function()
+  -- surface: both exports are functions
+  it("exposes nvim_to_pi_coords and pi_to_nvim_coords as functions", function()
+    assert.are.equals("function", type(coords.nvim_to_pi_coords))
+    assert.are.equals("function", type(coords.pi_to_nvim_coords))
+  end)
+
+  -- ROW ±1 (the ONLY index arithmetic; column is ±0)
+  describe("row ±1 (nvim row 1-based ↔ pi cursorLine 0-based)", function()
+    it("nvim_to_pi_coords: row 2 → cursorLine 1", function()
+      assert.are.equals(1, coords.nvim_to_pi_coords({ "x", "y" }, 2, 0).cursorLine)
+    end)
+
+    it("pi_to_nvim_coords: cursorLine 1 → row 2", function()
+      assert.are.equals(2, coords.pi_to_nvim_coords({ "x", "y" }, 1, 0).row)
+    end)
+
+    it("nvim_to_pi_coords: row 1 → cursorLine 0", function()
+      assert.are.equals(0, coords.nvim_to_pi_coords({ "hello" }, 1, 0).cursorLine)
+    end)
+  end)
+
+  -- EXACT known values (LIVE‑VERIFIED) — incl. the astral headline + the no-`-1` inverse
+  describe("exact known values (LIVE‑VERIFIED)", function()
+    it("nvim_to_pi_coords: BMP 'héllo' byte 3 → cursorCol 2", function()
+      assert.are.equals(2, coords.nvim_to_pi_coords({ "héllo" }, 1, 3).cursorCol)
+    end)
+
+    it("nvim_to_pi_coords: EOL 'héllo' byte 6 → cursorCol 5 (utf16 len)", function()
+      assert.are.equals(5, coords.nvim_to_pi_coords({ "héllo" }, 1, 6).cursorCol)
+    end)
+
+    it("nvim_to_pi_coords: astral 'a😀b' byte 5 → cursorCol 3 (😀 = 2 utf16 units)", function()
+      assert.are.equals(3, coords.nvim_to_pi_coords({ "a😀b" }, 1, 5).cursorCol)
+    end)
+
+    it("pi_to_nvim_coords: astral 'a😀b' cursorCol 3 → col 5 (NO -1; the headline)", function()
+      assert.are.equals(5, coords.pi_to_nvim_coords({ "a😀b" }, 0, 3).col)
+    end)
+
+    it("pi_to_nvim_coords: BMP 'héllo' cursorCol 2 → col 3", function()
+      assert.are.equals(3, coords.pi_to_nvim_coords({ "héllo" }, 0, 2).col)
+    end)
+  end)
+
+  -- ROUND-TRIP exactness: pi_to_nvim_coords(nvim_to_pi_coords(L,r,c)).{row,col} == {r,c}
+  describe("round-trip pi_to_nvim_coords ∘ nvim_to_pi_coords preserves {row,col}", function()
+    local cases = {
+      { name = "ASCII 'hello'@1,3", lines = { "hello" },     row = 1, col = 3 },
+      { name = "BMP 'héllo'@1,3",   lines = { "héllo" },     row = 1, col = 3 },
+      { name = "CJK '日本語'@1,3",  lines = { "日本語" },    row = 1, col = 3 },
+      { name = "astral 'a😀b'@1,1", lines = { "a😀b" },      row = 1, col = 1 },
+      { name = "astral 'a😀b'@1,5", lines = { "a😀b" },      row = 1, col = 5 },
+      { name = "multi-line row 2",  lines = { "héllo", "line2" }, row = 2, col = 2 },
+    }
+    for _, c in ipairs(cases) do
+      it(c.name, function()
+        local pi = coords.nvim_to_pi_coords(c.lines, c.row, c.col)
+        local nv = coords.pi_to_nvim_coords(pi.lines, pi.cursorLine, pi.cursorCol)
+        assert.are.equals(c.row, nv.row, c.name .. " row")
+        assert.are.equals(c.col, nv.col, c.name .. " col")
+      end)
+    end
+
+    it("empty single line @1,0 round-trips", function()
+      local pi = coords.nvim_to_pi_coords({ "" }, 1, 0)
+      local nv = coords.pi_to_nvim_coords(pi.lines, pi.cursorLine, pi.cursorCol)
+      assert.are.equals(1, nv.row)
+      assert.are.equals(0, nv.col)
+    end)
+  end)
+
+  -- EOL cursor (maps to utf16 length AND round-trips back to the byte length)
+  describe("EOL cursor", function()
+    it("nvim_to_pi_coords: 'héllo' EOL byte 6 → cursorCol 5", function()
+      assert.are.equals(5, coords.nvim_to_pi_coords({ "héllo" }, 1, 6).cursorCol)
+    end)
+
+    it("EOL round-trips back to the byte col (6 → 5 → 6)", function()
+      local pi = coords.nvim_to_pi_coords({ "héllo" }, 1, 6)
+      local nv = coords.pi_to_nvim_coords(pi.lines, pi.cursorLine, pi.cursorCol)
+      assert.are.equals(6, nv.col)
+    end)
+  end)
+
+  -- lines pass-through (the SAME table reference)
+  describe("lines pass-through (same reference)", function()
+    it("nvim_to_pi_coords returns the same `lines` table", function()
+      local L = {}
+      assert.are.equals(L, coords.nvim_to_pi_coords(L, 1, 0).lines)
+    end)
+
+    it("pi_to_nvim_coords returns the same `lines` table", function()
+      local L = {}
+      assert.are.equals(L, coords.pi_to_nvim_coords(L, 0, 0).lines)
+    end)
+  end)
+
+  -- NEVER THROWS + line guard (missing line / out-of-range row / non-table lines)
+  describe("never-throws + line guard", function()
+    it("nvim_to_pi_coords on empty lines + out-of-range row does not throw", function()
+      assert.has_no.errors(function()
+        coords.nvim_to_pi_coords({}, 5, 9)
+      end)
+      local r = coords.nvim_to_pi_coords({}, 5, 9)
+      assert.are.equals(4, r.cursorLine)  -- row NOT clamped (5 - 1)
+      assert.are.equals(0, r.cursorCol)   -- missing line → "" → 0
+    end)
+
+    it("pi_to_nvim_coords on empty lines + out-of-range cursorLine does not throw", function()
+      assert.has_no.errors(function()
+        coords.pi_to_nvim_coords({}, 9, 9)
+      end)
+      local r = coords.pi_to_nvim_coords({}, 9, 9)
+      assert.are.equals(10, r.row)        -- cursorLine NOT clamped (9 + 1)
+      assert.are.equals(0, r.col)         -- missing line → "" → 0
+    end)
+
+    it("non-table `lines` (nil) degrades without throwing", function()
+      assert.has_no.errors(function()
+        coords.nvim_to_pi_coords(nil, 1, 0)
+        coords.pi_to_nvim_coords(nil, 0, 0)
+      end)
+      assert.are.equals(0, coords.nvim_to_pi_coords(nil, 1, 0).cursorCol)
+      assert.are.equals(0, coords.pi_to_nvim_coords(nil, 0, 0).col)
+    end)
+  end)
+end)

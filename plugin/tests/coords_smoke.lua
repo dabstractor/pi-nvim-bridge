@@ -61,6 +61,28 @@ do
   end
 end
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- S29 wrapper smoke (nvim_to_pi_coords / pi_to_nvim_coords) — the public API.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- ── astral round-trip (😀 = surrogate pair = 2 UTF‑16 units; NO -1 on inverse) ─
+check(coords.nvim_to_pi_coords({ "a😀b" }, 1, 5).cursorCol == 3, "wrap astral nvim→pi a😀b@5 cursorCol == 3")
+check(coords.pi_to_nvim_coords({ "a😀b" }, 0, 3).col == 5, "wrap astral pi→nvim a😀b cursorCol 3 col == 5 (NO -1)")
+check(coords.pi_to_nvim_coords(coords.nvim_to_pi_coords({ "a😀b" }, 1, 5).lines, coords.nvim_to_pi_coords({ "a😀b" }, 1, 5).cursorLine, coords.nvim_to_pi_coords({ "a😀b" }, 1, 5).cursorCol).col == 5, "wrap astral full round-trip col == 5")
+
+-- ── row ±1 (the ONLY index arithmetic; column is ±0) ───────────────────────────
+check(coords.nvim_to_pi_coords({ "x", "y" }, 2, 0).cursorLine == 1, "wrap nvim→pi row 2 → cursorLine 1")
+check(coords.pi_to_nvim_coords({ "x", "y" }, 1, 0).row == 2, "wrap pi→nvim cursorLine 1 → row 2")
+
+-- ── EOL cursor (maps to utf16 length) ───────────────────────────────────────────
+check(coords.nvim_to_pi_coords({ "héllo" }, 1, 6).cursorCol == 5, "wrap EOL héllo@6 cursorCol == 5 (utf16 len)")
+
+-- ── never-throws (empty lines + out-of-range row) ──────────────────────────────
+check(pcall(coords.nvim_to_pi_coords, {}, 5, 9), "wrap nvim_to_pi_coords({}, 5, 9) does not throw")
+check(pcall(coords.pi_to_nvim_coords, {}, 9, 9), "wrap pi_to_nvim_coords({}, 9, 9) does not throw")
+check(coords.nvim_to_pi_coords({}, 5, 9).cursorCol == 0, "wrap nvim_to_pi_coords({}, 5, 9).cursorCol == 0 (missing line → \"\" → 0)")
+check(coords.pi_to_nvim_coords({}, 9, 9).col == 0, "wrap pi_to_nvim_coords({}, 9, 9).col == 0 (missing line → \"\" → 0)")
+
 if fails > 0 then
   io.stderr:write(fails .. " check(s) failed\n")
   vim.cmd("cquit 1")

@@ -1,15 +1,20 @@
---- coords.lua — the CENTRALIZED byte↔UTF‑16 coordinate-conversion seam (PRD §8).
+--- coords.lua — the CENTRALIZED byte↔UTF‑16 + nvim↔pi coordinate-conversion seam
+-- (PRD §8).
 --
--- Owns the LOWEST layer of parent task P2.M6.T17 ("coords.lua — byte↔UTF‑16 and
--- nvim↔pi cursor conversion"): two stateless pure functions that convert a position
--- WITHIN a single line string between Neovim/Lua's native unit (a BYTE offset) and
--- pi's unit (a UTF‑16 code-unit offset — i.e. a JavaScript string index = pi's
--- `cursorCol`). These are THE single, centralized implementation of PRD §8's
--- "Coordinate & Encoding Contract" — every nvim→pi (and pi→nvim) coordinate
--- translation that the sibling S29 (row/col wrappers) and S30+/S32 (completion /
--- accept) will ever do MUST route through these two functions, so the conversion —
--- and any future fix — lives in exactly ONE place ("MUST be centralized so the fix
--- is one place").
+-- Owns the FULL nvim↔pi coordinate-translation stack for parent task P2.M6.T17
+-- ("coords.lua — byte↔UTF‑16 and nvim↔pi cursor conversion"): the LOWEST layer —
+-- two stateless pure functions that convert a position WITHIN a single line string
+-- between Neovim/Lua's native unit (a BYTE offset) and pi's unit (a UTF‑16
+-- code-unit offset — i.e. a JavaScript string index = pi's `cursorCol`) — PLUS the
+-- S29 row/col wrappers (`nvim_to_pi_coords` / `pi_to_nvim_coords`) that compose
+-- these primitives with the nvim↔pi row ±1 and cursor-API alignment — THE public
+-- nvim↔pi cursor API for S30+ completion / S32 accept. These are THE single,
+-- centralized implementation of PRD §8's "Coordinate & Encoding Contract" — every
+-- nvim→pi (and pi→nvim) coordinate translation that S30+/S32 (completion / accept)
+-- and any blink/cmp source will ever do MUST route through these wrappers (which
+-- in turn route through the byte/utf16 primitives), so the conversion — and any
+-- future fix — lives in exactly ONE place ("MUST be centralized so the fix is one
+-- place").
 --
 -- [Mode A] header — read before editing:
 --  * CENTRALIZED SEAM (PRD §8 (heading:h2.8) "MUST be centralized so the fix is one
@@ -78,11 +83,43 @@
 --    (News-0.11). PRD §10.1 (heading:h3.26) says "Neovim 0.10+ (0.12 verified)";
 --    the UTF‑16 path raises the effective floor to 0.11. 0.12.4 is the verified
 --    target.
+--  * CURSOR-API COL IS 0-BASED BYTE (external_deps.md §1.2, LIVE‑VERIFIED):
+--    `nvim_win_get_cursor(0)` returns `{row 1-indexed, col 0-indexed BYTE}` and
+--    `nvim_win_set_cursor(0, {row, col})` takes the SAME 0-indexed BYTE col
+--    (unlike `vim.fn.col`, which is 1-indexed). So the COLUMN conversion in the
+--    S29 wrappers is ±0 — S28's byte domain aligns with the cursor API DIRECTLY;
+--    the ONLY ±1 in the whole module is the ROW (nvim row 1-based ↔ pi cursorLine
+--    0-based). `nvim_to_pi_coords` reads `byte_col` from `nvim_win_get_cursor[2]`
+--    unchanged; `pi_to_nvim_coords` returns a `col` ready for `nvim_win_set_cursor`
+--    unchanged.
+--  * PRD §7.4 `bytecol - 1` IS SUPERSEDED (refinement over PRD): PRD §7.4 step 4
+--    says `nvim_win_set_cursor(0, {row, bytecol - 1})`. Under the exact-UTF‑16 +
+--    0-based-byte-API design (S28 + external_deps.md §1.2) that `-1` DOUBLE-
+--    CORRECTS — it would nudge the cursor ONE BYTE LEFT on every accept (worst on
+--    multibyte lines). S29 follows `external_deps.md §1.2` over PRD §7.4. A reader
+--    of PRD §7.4 should not be surprised by the absence of the `-1` in
+--    `pi_to_nvim_coords` — that is why this note exists (mirrors the S28
+--    utf16_len_of_prefix supersession pattern: document every refinement over PRD).
 --
 -- Node builtins analog: only `vim.str_utfindex` / `vim.str_byteindex` (both built
 -- in). No module-level mutable state — a pure-function library.
 
 local M = {}
+
+--- Result of nvim_to_pi_coords: nvim-native cursor → pi-native. `lines` is
+--- pass-through (SAME table reference as the input) so the result drops straight
+--- into a `getSuggestions` RPC params object (`vim.tbl_extend("keep", …)`).
+---@class pi-editor.PiCoords
+---@field lines      string[] The buffer lines (UNCHANGED — same reference as input).
+---@field cursorLine integer 0-indexed line (pi's unit) == nvim `row` - 1.
+---@field cursorCol  integer 0-indexed UTF‑16 code-unit offset (pi's `cursorCol`).
+
+--- Result of pi_to_nvim_coords: pi-native cursor → nvim-native. `lines` is
+--- pass-through (SAME table reference as the input).
+---@class pi-editor.NvimCoords
+---@field lines string[] The buffer lines (UNCHANGED — same reference as input).
+---@field row   integer 1-indexed nvim row == pi `cursorLine` + 1 (nvim_win_set_cursor[1]).
+---@field col   integer 0-indexed BYTE offset (nvim_win_set_cursor[2] — NO `-1`; see header).
 
 --- Convert a 0-indexed BYTE offset in `line` to a 0-indexed UTF‑16 code-unit
 --- offset (pi's `cursorCol` unit). For sending an nvim cursor position to pi
@@ -133,6 +170,80 @@ function M.utf16_to_byte(line, utf16_idx)
   local ok, v = pcall(vim.str_byteindex, line, "utf-16", u)  -- 3-arg string-encoding (refinement over PRD §8)
   if ok and type(v) == "number" then return v end
   return #line                                         -- fall back (shouldn't happen post-clamp)
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- S29: the row/col wrappers — THE public nvim↔pi cursor API.
+-- Compose S28's byte/utf16 primitives with the nvim↔pi ROW ±1 + cursor-API
+-- alignment. PURE functions over explicit `(lines, …)` args (NOT a buffer/win):
+-- the caller reads the buffer/cursor and passes values in (S30 completion /
+-- S32 accept). ROUTE THROUGH S28 — never `vim.str_utfindex`/`str_byteindex` here.
+-- COLUMN math is ±0 (cursor-API col is 0-based byte; see header); the ONLY ±1 is
+-- the ROW. NEVER THROWS (type-guard `lines`; `or ""` line guard; S28 inherited).
+--
+-- CALLER pattern (FUTURE S30/S32 — NOT implemented here, design only):
+--   completion (nvim → pi):
+--     local cur   = vim.api.nvim_win_get_cursor(0)             -- {row 1-based, col 0-based byte}
+--     local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+--     local pi    = coords.nvim_to_pi_coords(lines, cur[1], cur[2])
+--     bridge.request("getSuggestions",
+--       vim.tbl_extend("keep", pi, { force = force }), cb)       -- {lines, cursorLine, cursorCol, force?}
+--   accept (pi → nvim):
+--     local nv = coords.pi_to_nvim_coords(r.lines, r.cursorLine, r.cursorCol)
+--     vim.api.nvim_buf_set_lines(0, 0, -1, false, nv.lines)
+--     vim.api.nvim_win_set_cursor(0, { nv.row, nv.col })        -- NO -1 (PRD §7.4 superseded)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+--- nvim-native cursor → pi-native. For sending the nvim cursor to pi (S30
+--- `getSuggestions`). `row` is 1-indexed (nvim); `byte_col` is **0-indexed BYTE**
+--- (the value `nvim_win_get_cursor(0)[2]` already returns — NO ±1 on the column).
+---
+--- Routes through S28's `byte_to_utf16` (the centralized seam); the column
+--- conversion is ±0 — the ONLY index arithmetic is `cursorLine = row - 1`. Never
+--- throws (type-guard `lines`; `lines[row] or ""` guards the line access so a
+--- missing/out-of-range line degrades to `""` → `cursorCol` 0; the ROW is NOT
+--- clamped — a real nvim cursor is always in range, clamping would hide caller
+--- bugs; the LINE guard is the defensive boundary).
+---
+---@param lines    string[] Buffer lines (as from `nvim_buf_get_lines(0,0,-1,false)`).
+---@param row      integer  1-indexed nvim row (`nvim_win_get_cursor(0)[1]`).
+---@param byte_col integer  0-indexed BYTE offset (`nvim_win_get_cursor(0)[2]`) — NO ±1.
+---@return pi-editor.PiCoords `{lines, cursorLine, cursorCol}` (lines is pass-through).
+function M.nvim_to_pi_coords(lines, row, byte_col)
+  if type(lines) ~= "table" then lines = {} end        -- never-throws (non-table → safe)
+  local r = (type(row) == "number") and row or 1       -- never-throws; default row 1
+  local line = lines[r] or ""                         -- Lua 1-based array (nvim row already 1-based); guard missing (→ "" → col 0)
+  return {
+    lines      = lines,                               -- pass-through (SAME table reference)
+    cursorLine = r - 1,                               -- nvim row 1-based → pi cursorLine 0-based (the ONLY ±1)
+    cursorCol  = M.byte_to_utf16(line, byte_col),     -- S28 primitive; ±0 on the column
+  }
+end
+
+--- pi-native cursor → nvim-native. The EXACT inverse of `nvim_to_pi_coords`. For
+--- applying a pi result back to nvim (S32 `applyCompletion` → `nvim_win_set_cursor`).
+--- `col` is **0-indexed BYTE**, ready for `nvim_win_set_cursor(0, {row, col})`
+--- UNCHANGED — **NO `-1`** (PRD §7.4's `bytecol - 1` is superseded under this
+--- design; see header — it would nudge the cursor one byte LEFT on every accept).
+---
+--- Routes through S28's `utf16_to_byte` (the centralized seam); the column
+--- conversion is ±0 — the ONLY index arithmetic is `row = cursorLine + 1`. Never
+--- throws (same guards as `nvim_to_pi_coords`; `lines[cursorLine + 1] or ""`
+--- handles the pi-0-based → Lua-1-based indexing asymmetry).
+---
+---@param lines      string[] Buffer/result lines.
+---@param cursorLine integer  0-indexed pi line.
+---@param cursorCol  integer  0-indexed UTF‑16 offset (pi's `cursorCol` unit).
+---@return pi-editor.NvimCoords `{lines, row, col}` (lines is pass-through; col is 0-based byte — NO -1).
+function M.pi_to_nvim_coords(lines, cursorLine, cursorCol)
+  if type(lines) ~= "table" then lines = {} end        -- never-throws
+  local cl = (type(cursorLine) == "number") and cursorLine or 0  -- never-throws; default cursorLine 0
+  local line = lines[cl + 1] or ""                    -- pi 0-based → Lua 1-based; guard missing (→ "" → col 0)
+  return {
+    lines = lines,                                    -- pass-through (SAME table reference)
+    row   = cl + 1,                                   -- pi 0-based → nvim 1-based (the ONLY ±1)
+    col   = M.utf16_to_byte(line, cursorCol),         -- S28 primitive; 0-based byte (NO -1)
+  }
 end
 
 return M

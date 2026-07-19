@@ -643,14 +643,14 @@
           "type": "Milestone",
           "id": "P2.M6",
           "title": "Coordinate Conversion (coords.lua)",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Implement the byte ↔ UTF-16 coordinate conversion module that translates between Neovim's byte-indexed cursor positions and pi's UTF-16 code-unit-indexed cursor positions.",
           "tasks": [
             {
               "type": "Task",
               "id": "P2.M6.T17",
               "title": "coords.lua — byte↔UTF-16 and nvim↔pi cursor conversion",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the coordinate conversion module using Neovim's built-in vim.str_utfindex and vim.str_byteindex with the 'utf-16' encoding argument for exact conversion (no codepoint approximation needed).",
               "subtasks": [
                 {
@@ -669,7 +669,7 @@
                   "type": "Subtask",
                   "id": "P2.M6.T17.S29",
                   "title": "nvim_to_pi_coords() and pi_to_nvim_coords() wrapper functions",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M6.T17.S28"
