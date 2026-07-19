@@ -657,7 +657,7 @@
                   "type": "Subtask",
                   "id": "P2.M6.T17.S28",
                   "title": "byte_to_utf16(line, byte_idx) and utf16_to_byte(line, utf16_idx) primitives",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/system_context.md (key discovery), Neovim 0.12 provides 3-arg forms: `vim.str_utfindex(str, 'utf-16', byte_idx)` returns exact UTF-16 code unit index, and `vim.str_byteindex(str, 'utf-16', utf16_idx)` returns exact byte index. This is MORE correct than the PRD's suggested codepoint approximation (2-arg str_utfindex). Verified: `vim.str_utfindex('héllo', 'utf-16', 3)` → 2, `vim.str_byteindex('héllo', 'utf-16', 2)` → 3. Handle edge case: byte_idx beyond string length should return the string's UTF-16 length.\n2. INPUT: A Lua string (UTF-8) and a byte index (0-indexed) or UTF-16 index (0-indexed).\n3. LOGIC: Create `plugin/lua/pi-editor/coords.lua`. Implement `M.byte_to_utf16(line, byte_idx)` → calls `vim.str_utfindex(line, \"utf-16\", byte_idx)` with pcall safety. Implement `M.utf16_to_byte(line, utf16_idx)` → calls `vim.str_byteindex(line, \"utf-16\", utf16_idx)` with pcall safety. Both return the converted index. Clamp/handle out-of-range indices gracefully.\n4. OUTPUT: Pure conversion functions that handle BMP and astral-plane characters exactly.\n5. MOCKING: Test ASCII (identity), multibyte BMP (é, 日), astral (emoji 😀 = surrogate pair in UTF-16). Verify round-trip byte→utf16→byte.\n6. DOCS: [Mode A] Lua docstring explaining the UTF-16 vs codepoint distinction and why 3-arg form is used.",
