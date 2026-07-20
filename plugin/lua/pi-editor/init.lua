@@ -74,7 +74,8 @@ end
 -- S21 — VimEnter activation gate (PRD §7.1, §11). Called once by the auto-sourced
 -- shim (plugin/pi-editor.lua) on VimEnter. DORMANT BY DESIGN: returns nil unless pi
 -- spawned this editor with the bridge descriptor env var set AND valid. NEVER throws
--- and NEVER notifies (the one-time notify on hard failure is task S39's job). The shim
+-- and now (S39) emits at most ONE `vim.notify` on hard failure (the dedup is task
+-- S39's `notify.lua`). The shim
 -- calls this WITHOUT a pcall, so internal safety is load-bearing (GOTCHA E).
 -- ===========================================================================
 
@@ -106,8 +107,9 @@ M.descriptor = nil
 --- DORMANT BY DESIGN (PRD §7.1, §11): in every ordinary (non-pi) nvim session the env var
 --- is unset, so this returns nil immediately and the plugin does nothing. A descriptor that
 --- is malformed JSON, valid JSON but not a JSON object (e.g. a bare `123`/`true`/`"s"`), or
---- has `transport ~= "unix"` is ALSO treated as dormant. This function NEVER throws and
---- NEVER notifies (the optional one-time `vim.notify` on hard failure is task S39's job).
+--- has `transport ~= "unix"` is ALSO treated as dormant. This function NEVER throws
+--- and emits at most ONE `vim.notify` on hard failure (the optional one-time notify,
+--- implemented in S39's `notify.lua` — dedup'd by category "bridge").
 ---
 --- Scope (what this gate does NOT do): it does NOT set buffer options or keymaps
 --- (that is `ftplugin/pi-prompt.lua` / S22, auto-sourced when this sets filetype).
@@ -130,15 +132,35 @@ function M.activate()
   M.descriptor = desc                                     -- (e) store for S24/S30+
   local buf = vim.api.nvim_get_current_buf()
   vim.bo[buf].filetype = "pi-prompt"                      -- (f) activate -> fires FileType (S22 seam)
-  -- S25: connect + `hello` handshake (async). pcall so a bridge bug can NEVER break
-  -- activation (the buffer still works as plain markdown). Silent on failure — the
-  -- one-time `vim.notify` is task S39's job, NOT this task. `bridge.handshake` sets
-  -- `require("pi-editor").bridge` internally on success (the placeholder this gate
-  -- leaves `nil` in dormant / failed sessions).
+  -- S25 + S39: connect + `hello` handshake (async), then surface a SINGLE notify on hard
+  -- failure (connect refused / bad token / timeout / malformed — PRD §11). pcall so a
+  -- bridge bug can NEVER break activation (the buffer still works as plain markdown).
+  -- The handshake `on_result` cb runs INLINE from luv fast context (resolve_handshake is
+  -- NOT schedule_wrap'd) → notify.once schedules the vim.notify internally (GOTCHA A/C).
+  -- `bridge.handshake` sets `require("pi-editor").bridge` on success ONLY (stays nil on
+  -- failure → completion auto-bails → degrade to a normal buffer). Register the disconnect
+  -- handler AFTER handshake() (handshake() runs M.close() at its start which would clear
+  -- an earlier registration — GOTCHA D).
   pcall(function()
     local ok, br = pcall(require, "pi-editor.bridge")
-    if ok and type(br.handshake) == "function" then
-      br.handshake(desc, function(_err, _info) end) -- no-op cb
+    if not ok or type(br.handshake) ~= "function" then return end
+    br.handshake(desc, function(err, _info)
+      if err == nil then return end -- success
+      -- forward the bridge's token-free error string VERBATIM (GOTCHA H; PRD §12)
+      require("pi-editor.notify").once("bridge", vim.log.levels.WARN,
+        "pi-editor: completion unavailable — " .. tostring(err))
+    end)
+    -- S39: process-death (post-handshake socket drop) → single notify + hide stale menu +
+    -- cancel pending completion. The handler is schedule_wrap'd by on_disconnect (runs on
+    -- the nvim main loop → api-safe; GOTCHA I). notify.once dedups with the handshake cb
+    -- (same category "bridge" → at most ONE toast per session; GOTCHA B).
+    if type(br.on_disconnect) == "function" then
+      br.on_disconnect(function(_reason)
+        pcall(function() require("pi-editor.menu").close() end)
+        pcall(function() require("pi-editor.completion").reset() end)
+        require("pi-editor.notify").once("bridge", vim.log.levels.WARN,
+          "pi-editor: bridge connection lost — completion disabled")
+      end)
     end
   end)
   -- S31: wire completion results -> menu population (forward-contract no-op-safe,

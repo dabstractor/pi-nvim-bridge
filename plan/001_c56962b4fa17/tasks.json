@@ -926,14 +926,14 @@
               "type": "Task",
               "id": "P3.M10.T24",
               "title": "Silent degradation — connect fail, bad handshake, process death",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement graceful failure handling so that any bridge connection failure degrades silently to a normal buffer with at most a single vim.notify.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P3.M10.T24.S39",
                   "title": "Graceful failure — degrade to normal buffer with single notify",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M5.T15.S25"

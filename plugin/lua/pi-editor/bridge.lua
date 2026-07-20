@@ -127,6 +127,19 @@
 --    params are EMPTY and OMITTED on the wire (S17) -> the handler receives
 --    `params == nil`.
 --
+-- [Mode A] S39 EXTENSION — the disconnect event (the FOURTH protocol consumer):
+--  * S39 adds `M.on_disconnect(handler)` — the sibling of `on_notification` (S27) for the
+--    pipe-drop event (process death / dropped connection post-handshake; PRD §11). SAME
+--    shape: single slot (last-wins — there is exactly ONE disconnect event), stored
+--    `schedule_wrap`'d at registration (GOTCHA 5 — fired from the luv `read_cb`), nil'd
+--    by `close()` (hygiene — no stale handler across reconnects), never throws.
+--  * `fire_disconnect(reason)` runs INLINE from `read_cb`'s EOF (`data==nil`) + read-error
+--    (`err~=nil`) branches, BEFORE `M.close()` (close() nils the slot — GOTCHA G). Gated
+--    on `not (handshake_state and handshake_state.pending)` so an UNRESOLVED handshake's
+--    drop is owned by the handshake cb (its message is more accurate; dedup covers the
+--    overlap — GOTCHA F). Never fired from `close()` itself (close() is also the planned
+--    `on_exit`/reconnect path — would notify on a graceful :q; GOTCHA E).
+--
 -- Node builtins analog: only `vim.uv` + `vim.json` (both built in) + the S23 `jsonlreader`.
 -- Module-level singleton state (one connection) — see Design Decision §6 in notes.
 
@@ -217,13 +230,36 @@ local pending = {}
 ---@type table<string, function>
 local notification_handlers = {}
 
+--- S39: single disconnect-handler slot (the pipe-drop event consumer). Mirrors
+--- `notification_handlers`/`on_notification` (S27) but a SINGLE slot (last-wins) since
+--- there is exactly one disconnect event. schedule_wrap'd at registration (GOTCHA 5/I —
+--- fired from the luv read_cb; raw vim.api.* throws E5560 there). nil'd by close()
+--- (hygiene — no stale handler across reconnects; mirrors notification_handlers = {}).
+--- Fired by the local `fire_disconnect` from read_cb's EOF + read-error branches.
+local disconnect_handler = nil
+
 -- ===========================================================================
 -- S25/S26/S27 — internals (forward declarations; defined below).
 -- ===========================================================================
 local resolve_handshake -- (msg, err) — the SINGLE exit point for the handshake (race-safe).
 local resolve_request   -- (id, err, msg) — the SINGLE exit point for a regular request (race-safe).
 local dispatch          -- (msg)       — the single on_event (S26/S27 extension seam).
+local fire_disconnect   -- (reason)   — S39: fire the disconnect handler from read_cb (defined below).
 local autosave_if_modified -- (buf) — S38 best-effort autosave helper (pure nvim-API; defined below).
+
+--- S39: fire the registered disconnect handler when the transport pipe drops (EOF or
+--- read error) AFTER the handshake has resolved. Gated on `not (handshake_state and
+--- handshake_state.pending)` so an UNRESOLVED handshake's drop is owned by the handshake
+--- cb (its message is more accurate; dedup covers the overlap anyway — GOTCHA F). Runs
+--- INLINE from the luv read_cb; the handler itself is schedule_wrap'd at registration
+--- (GOTCHA 5/I) so its nvim-API work (menu.close/completion.reset/notify) defers to the
+--- safe nvim loop. Reads the module slot BEFORE close() nils it (GOTCHA G). Never throws.
+---@param reason string? nil = clean EOF; bare errno string (e.g. "ECONNRESET") = read error.
+fire_disconnect = function(reason)
+  if handshake_state and handshake_state.pending then return end -- active handshake owns it
+  local h = disconnect_handler
+  if type(h) == "function" then pcall(h, reason) end
+end
 
 --- The `read_start` callback. Routes data chunks to the `jsonlreader`; EOF / read errors
 --- to `on_close` + teardown. Runs on the libuv loop (no `vim.api.*` here — GOTCHA 5).
@@ -236,6 +272,7 @@ local function read_cb(err, data)
   end
   if err then -- read error (e.g. "ECONNRESET")
     local cb = state.on_close
+    fire_disconnect(err)  -- S39: pipe-drop notify (post-handshake); gated inside
     M.close()
     if cb then cb(err) end
     return
@@ -243,6 +280,7 @@ local function read_cb(err, data)
   if data == nil then -- EOF (err==nil && data==nil) — GOTCHA 4
     if state.rx then state.rx:flush() end -- deliver any trailing line via on_event FIRST
     local cb = state.on_close
+    fire_disconnect(nil)  -- S39: EOF disconnect (post-handshake); gated inside
     M.close()
     if cb then cb(nil) end
     return
@@ -678,6 +716,19 @@ function M.on_notification(method, handler)
   notification_handlers[method] = vim.schedule_wrap(handler)     -- last-wins; safe from luv (GOTCHA 5)
 end
 
+--- Register (or replace / remove) the SINGLE disconnect handler — fired when the
+--- transport pipe drops (EOF or read error in read_cb) AFTER a successful handshake
+--- (process death / dropped connection; PRD §11). The sibling of `on_notification`
+--- (S27): same shape, but a single slot (last-wins) since there is one disconnect event.
+--- handler(reason) runs on the next nvim main-loop pass (`reason` is nil for clean EOF
+--- or a bare errno string for a read error). Pass nil to remove. Never throws.
+---@param handler fun(reason:string?)|nil Called when the pipe drops post-handshake.
+function M.on_disconnect(handler)
+  if handler == nil then disconnect_handler = nil; return end -- remove
+  if type(handler) ~= "function" then return end              -- bad arg -> no-op
+  disconnect_handler = vim.schedule_wrap(handler)             -- GOTCHA 5/I: safe from luv read_cb
+end
+
 --- Idempotent teardown. Guards the luv double-close THROW (GOTCHA 2) with a shadow
 --- `state.closed` flag (set FIRST) + `is_closing()` + `pcall`. Safe across the many
 --- teardown paths (`on_close`, `on_exit`, VimLeavePre/ExitPre, socket-error, EOF).
@@ -736,6 +787,7 @@ function M.close()
   -- notifications have nothing to resolve). PRD section 6.7: no leak across editor
   -- open/close cycles.
   notification_handlers = {}
+  disconnect_handler = nil  -- S39: clear the disconnect slot (hygiene; no stale handler across reconnects)
 end
 
 --- Best-effort autosave of `buf` to its named file when modified. Pure nvim-API (no bridge
