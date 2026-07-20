@@ -18,7 +18,7 @@ check(ok, "require('pi-editor') failed: " .. tostring(pi))
 pi = ok and pi or {}
 
 check(type(pi.setup) == "function", "setup is not a function")
-check(pi.defaults.debounce_ms == 25, "default debounce_ms")
+check(pi.defaults.debounce_ms == 20, "default debounce_ms")
 check(pi.defaults.rpc_timeout_ms == 2000, "default rpc_timeout_ms")
 check(pi.defaults.autosave_on_exit == true, "default autosave_on_exit")
 check(pi.defaults.engine == "builtin", "default engine")
@@ -28,7 +28,7 @@ check(pi.config == nil, "config should be nil before setup")
 
 pi.setup({})
 check(pi.config ~= nil, "config nil after setup({})")
-check(pi.config.debounce_ms == 25, "config.debounce_ms after empty setup")
+check(pi.config.debounce_ms == 20, "config.debounce_ms after empty setup")
 check(pi.config.autosave_on_exit == true, "config.autosave_on_exit after empty setup")
 check(pi.config.menu.border == "rounded", "config.menu.border after empty setup")
 
@@ -37,7 +37,7 @@ check(pi.config.debounce_ms == 50, "scalar override debounce_ms")
 check(pi.config.autosave_on_exit == false, "false-overrides-true (autosave)")
 check(pi.config.menu.max_height == 40, "nested override menu.max_height")
 check(pi.config.menu.border == "rounded", "nested default menu.border preserved")
-check(pi.defaults.debounce_ms == 25, "defaults.debounce_ms was MUTATED")
+check(pi.defaults.debounce_ms == 20, "defaults.debounce_ms was MUTATED")
 check(pi.defaults.menu.max_height == 12, "defaults.menu.max_height was MUTATED")
 check(pi.bridge == nil, "bridge is not the nil placeholder")
 
