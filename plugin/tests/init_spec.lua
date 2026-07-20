@@ -12,10 +12,10 @@ describe("pi-editor.setup", function()
     assert.are.equals("function", type(pi.setup))
   end)
 
-  it("ships the exact PRD §10.5 defaults", function()
+  it("ships the pi-faithful defaults (debounce_ms=20 supersedes PRD §10.5's 25; editor.ts:236)", function()
     assert.are.same({ max_height = 12, border = "rounded" }, pi.defaults.menu)
-    assert.are.equals(25, pi.defaults.debounce_ms)
-    assert.are.equals(2000, pi.defaults.rpc_timeout_ms)
+    assert.are.equals(20, pi.defaults.debounce_ms)   -- S40: pi ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS (was 25)
+    assert.are.equals(2000, pi.defaults.rpc_timeout_ms) -- S40: MUST exceed server fd-abort 1500
     assert.is_true(pi.defaults.autosave_on_exit)
     assert.are.equals("builtin", pi.defaults.engine)
   end)
@@ -63,7 +63,7 @@ describe("pi-editor.setup", function()
 
   it("does NOT mutate M.defaults after a setup with overrides", function()
     pi.setup({ debounce_ms = 1, menu = { max_height = 99 } })
-    assert.are.equals(25, pi.defaults.debounce_ms)
+    assert.are.equals(20, pi.defaults.debounce_ms)  -- S40: was 25
     assert.are.equals(12, pi.defaults.menu.max_height)
     assert.are.equals("rounded", pi.defaults.menu.border)
   end)
@@ -73,7 +73,7 @@ describe("pi-editor.setup", function()
     assert.are.equals(10, pi.config.debounce_ms)
     pi.setup({ debounce_ms = 70 })
     assert.are.equals(70, pi.config.debounce_ms)
-    assert.are.equals(25, pi.defaults.debounce_ms)         -- defaults still pristine
+    assert.are.equals(20, pi.defaults.debounce_ms)         -- S40: defaults still pristine (was 25)
   end)
 
   it("exposes M.bridge as a nil placeholder (PRD §7.7)", function()
@@ -85,5 +85,17 @@ describe("pi-editor.setup", function()
     local cfg = pi.setup({ debounce_ms = 33 })
     assert.are.equals(33, cfg.debounce_ms)
     assert.are.equals(cfg, pi.config)                      -- shallow: same table object
+  end)
+
+  -- S40: document the trigger-aware debounce model — slash/typing use 0 ms (pi-faithful).
+  it("documents the trigger-aware debounce model (slash/typing use 0 ms; @/# use debounce_ms)", function()
+    -- the @---@field debounce_ms doc states the pi-faithful semantics; verify the shipped
+    -- default + the (testable) completion.is_attachment_context mirror the model.
+    assert.are.equals(20, pi.defaults.debounce_ms)
+    local completion = require("pi-editor.completion")
+    assert.are.equals("function", type(completion.is_attachment_context))
+    assert.is_true(completion.is_attachment_context("@src"))   -- attachment → debounce_ms
+    assert.is_false(completion.is_attachment_context("/mod"))  -- slash → 0 ms (immediate)
+    assert.is_false(completion.is_attachment_context("hello")) -- typing → 0 ms (immediate)
   end)
 end)

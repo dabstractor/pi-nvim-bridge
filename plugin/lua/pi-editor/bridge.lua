@@ -523,6 +523,13 @@ end
 ---        * `on_close(reason)`  — silent server close / transport error → resolve with reason.
 ---   6. the luv timer fires after `config.rpc_timeout_ms` (default 2000) → resolve timeout.
 ---
+--- S40 INVARIANT (documented, not enforced here): `rpc_timeout_ms` (default 2000) MUST exceed
+--- the server fd-abort `GET_SUGGESTIONS_TIMEOUT_MS` (1500, extension/pi-editor-bridge.ts:289)
+--- so the server's OWN `fd` abort wins (timeouts cascade outward). If the client timeout were
+--- BELOW the server abort, the client would abandon @file searches first while the server's
+--- `fd` scan keeps running (orphaned work + a confusing "request timeout"). The optional
+--- setup-time WARN guard (S40, init.lua) protects this.
+---
 --- The `hello` envelope (EXACT — sent inside `on_ready`):
 ---   `{jsonrpc="2.0", id="h1", method="hello", params={token=desc.token,
 ---   client="pi-editor.nvim", clientVersion=M.version}}` (LF-terminated by `M.send`).

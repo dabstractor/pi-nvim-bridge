@@ -17,8 +17,8 @@
 
 ---@class pi-editor.Config
 ---@field menu pi-editor.MenuConfig Floating-menu appearance (PRD §7.5).
----@field debounce_ms integer Ms to debounce before re-querying the bridge after a change.
----@field rpc_timeout_ms integer Ms before a pending RPC is considered stale (supersession).
+---@field debounce_ms integer The file/attachment-context debounce window (default 20 = pi's ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS, editor.ts:236). Slash commands and plain typing use 0 ms (immediate), matching pi's TUI `getAutocompleteDebounceMs` (editor.ts:2214); NOT separately configurable (pi hardcodes 0). S40.
+---@field rpc_timeout_ms integer Ms before a pending RPC is considered stale (supersession). MUST exceed the server fd-abort GET_SUGGESTIONS_TIMEOUT_MS (1500, extension/pi-editor-bridge.ts:289) so the server's own abort wins (timeouts cascade outward); default 2000. See bridge.lua header. S40.
 ---@field autosave_on_exit boolean Write the pi temp file on VimLeavePre if modified (PRD §7.6, §11).
 ---@field engine ("builtin"|"blink"|"cmp") Which completion UI engine to drive.
 ---@field env_var? string Override the bridge-descriptor env var (default "PI_EDITOR_BRIDGE"; PRD §7.1).
@@ -33,8 +33,8 @@ M.defaults = {
     max_height = 12,
     border = "rounded",
   },
-  debounce_ms = 25,
-  rpc_timeout_ms = 2000,
+  debounce_ms = 20,        -- pi ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS (editor.ts:236). file/attachment-context window; slash/typing use 0 ms (pi-faithful). S40 (was 25).
+  rpc_timeout_ms = 2000,   -- MUST exceed the server fd-abort GET_SUGGESTIONS_TIMEOUT_MS (1500). S40.
   autosave_on_exit = true,
   engine = "builtin",
 }
@@ -67,6 +67,18 @@ M.bridge = nil
 function M.setup(opts)
   opts = opts or {}
   M.config = vim.tbl_deep_extend("force", M.defaults, opts)
+  -- S40 optional invariant guard: WARN (dedup'd via notify.once) if a user set rpc_timeout_ms
+  -- at/below the server fd-abort floor (GET_SUGGESTIONS_TIMEOUT_MS=1500). A client timeout BELOW
+  -- the server abort would orphan the server's fd scan + cut off @file searches client-side.
+  -- pcall-wrapped (setup NEVER throws; notify.once schedules the vim.notify internally + dedups).
+  pcall(function()
+    local rt = M.config.rpc_timeout_ms
+    if type(rt) == "number" and rt > 0 and rt <= 1500 then
+      require("pi-editor.notify").once("config", vim.log.levels.WARN,
+        "pi-editor: rpc_timeout_ms (" .. rt .. "ms) is at/below the bridge fd-abort (1500ms) "
+          .. "— @file searches may be cut off client-side")
+    end
+  end)
   return M.config
 end
 

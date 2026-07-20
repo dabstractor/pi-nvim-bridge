@@ -136,6 +136,35 @@ if pi.bridge == bridge then
 
   vim.api.nvim_win_close(win, true)
   vim.api.nvim_buf_delete(buf, { force = true })
+
+  -- S40: file-context (@sr) trigger-aware path end-to-end.
+  -- A buffer holding an @-mention refreshes + the server receives a getSuggestions
+  -- whose params.lines == { "@sr" }. Proves the trigger-aware debounce (S40) reaches
+  -- the bridge for file/attachment context (mirrors the /mod headline case above).
+  if pi.config then pi.config.debounce_ms = 5 end -- shrink so vim.wait drives it quickly
+  local fbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_lines(fbuf, 0, -1, false, { "@sr" })
+  local fwin = vim.api.nvim_open_win(fbuf, true, {
+    relative = "editor", row = 1, col = 1, width = 40, height = 4, border = "none",
+  })
+  vim.wo[fwin].virtualedit = "onemore"
+  vim.api.nvim_win_set_cursor(fwin, { 1, 3 }) -- row 1, byte col 3 (end of "@sr")
+  local n_before3 = #seen
+  completion.refresh(fbuf)
+  vim.wait(500, function() return #seen > n_before3 end, 5)
+  vim.wait(80)
+  local new_after3 = #seen - n_before3
+  check(new_after3 == 1, "exactly one getSuggestions must arrive for the @sr file-context refresh (got " .. new_after3 .. ")")
+  local freq = seen[#seen]
+  check(freq ~= nil, "the @sr request must be captured")
+  if freq then
+    check(freq.method == "getSuggestions", "@sr method == getSuggestions")
+    check(freq.params.lines[1] == "@sr", "@sr params.lines[1] == '@sr' (got " .. tostring(freq.params.lines and freq.params.lines[1]) .. ")")
+    check(freq.params.cursorLine == 0, "@sr cursorLine == 0")
+    check(freq.params.force == false, "@sr force == false")
+  end
+  vim.api.nvim_win_close(fwin, true)
+  vim.api.nvim_buf_delete(fbuf, { force = true })
 end
 
 -- ── teardown: completion.reset + bridge.close + server stop ─────────────────────

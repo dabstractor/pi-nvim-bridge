@@ -4,7 +4,9 @@
 --   InsertEnter / TextChangedI / CursorMovedI
 --     → require("pi-editor.completion").refresh(buf)   (fire-and-forget; wired via the
 --                                                         ftplugin's no-op-safe `dispatch`)
---     → debounce (~25 ms via `vim.defer_fn`)
+--     → debounce (TRIGGER-AWARE via `compute_debounce`: 0 ms for slash/typing, the
+--        configured window — default 20 — for @/#/attachment context; mirrors pi's TUI
+--        `getAutocompleteDebounceMs` editor.ts:2214) via `vim.defer_fn`
 --     → read buffer lines + cursor (api-safe inside the defer cb)
 --     → convert to pi coords via the COMPLETE S29 `coords.nvim_to_pi_coords`
 --     → issue `getSuggestions` over the COMPLETE S26 `bridge.request`
@@ -73,10 +75,37 @@
 --    `bridge.cancel`). (bridge ids are `tostring(next_id)` numeric strings; gen is a
 --    Lua int.)
 --
+--  * S40 — TRIGGER-AWARE DEBOUNCE (mirrors pi's TUI `getAutocompleteDebounceMs`,
+--    editor.ts:2214): pi does NOT apply a flat debounce. It computes the window PER
+--    request from the text before the cursor:
+--      • explicitTab || force              → 0 ms (IMMEDIATE) — already correct in the
+--        plugin via `force_fetch` (S33, the 0-debounce Tab sibling).
+--      • file/attachment context (`@…` / `#…`, incl. the `@"…"` quoted-path-with-spaces
+--        case, editor.ts:247 `buildDebouncePattern`) → ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS
+--        = 20 ms (editor.ts:236).
+--      • else (slash commands `/model`, plain typing) → 0 ms (IMMEDIATE).
+--    S40 closes this gap: `M.is_attachment_context(text)` (pure, exported — the coords.lua
+--    style) + `compute_debounce(lines, cursorLine, cursorCol)` (0 or the configured
+--    window), and `M.refresh(buf)` reads the cursor line + computes the window BEFORE
+--    `vim.defer_fn` (so the window reflects the text at refresh time, exactly like pi).
+--    The default `debounce_ms` is now 20 (was 25; pi's constant). `debounce_ms` is now
+--    semantically "the file/attachment-context window" (slash/typing use 0 ms —
+--    NOT separately configurable; pi hardcodes 0).
+--  * `vim.defer_fn(fn, 0)` is STILL ASYNC + CANCELLABLE (research §2): N rapid
+--    cancel_timer()+defer_fn(0) calls collapse to EXACTLY ONE callback (the cancel path
+--    collapses them, NOT the duration). => the existing slash `/mod` collapse tests STILL
+--    PASS at 0 ms. Do NOT add a "0 ms = call do_refresh synchronously" path (it would
+--    re-introduce the re-entrancy/loop risks this header warns of); keep defer_fn (the
+--    free coalescing of the TextChangedI+CursorMovedI pair a keystroke emits is desirable).
+--  * SUPERSESSION IS TRIGGER-AGNOSTIC (research §6): the two-layer supersession keys on
+--    a monotonic `gen` int, NOT the trigger char. The trigger-aware debounce does NOT
+--    weaken it — a fast-typed @sr→@src still bumps gen + drops the stale @sr at the
+--    gen-guard. Do NOT add trigger-awareness to the gen-guard. (See S40 tests.)
+--
 --  * PI-FAITHFUL "ASK ON EVERY CHANGE" MODEL (PRD §7.4): "the simplest correct approach
 --    is to ask the provider on every change and let IT decide." So refresh re-fetches on
 --    TextChangedI AND CursorMovedI (pi's provider returns `null` when the cursor is not
---    in a completable position); the ~25 ms debounce naturally collapses the
+--    in a completable position); the trigger-aware debounce naturally collapses the
 --    TextChangedI+CursorMovedI pair a single keystroke emits into ONE fetch. NO
 --    CursorMovedI special-case (it would diverge from pi's TUI; nvim-cmp's re-filter-only
 --    CursorMovedI handling is a source-level optimization that does not apply to a
@@ -243,14 +272,71 @@ local force_fetch -- (buf, pi, opts, on_items) — S33: the IMMEDIATE (0-debounc
 ---@type fun(buf:integer, items:pi-editor.AutocompleteItem[], prefix:string)|nil
 M.on_results = nil
 
---- Resolve the debounce ms from config (self-sufficient if setup() was never called —
---- mirrors bridge.lua's `((cfg.config or cfg.defaults) or {}).rpc_timeout_ms or 2000`).
----@return integer ms The debounce window (default 25).
-local function debounce_ms()
+--- Detect whether `text_before_cursor` is a file/attachment context that pi would
+--- DEBOUNCE (mirror of pi's `buildDebouncePattern(["@","#"])` `autocompleteDebouncePattern`,
+--- editor.ts:247). Returns `true` iff the last whitespace-delimited token before the
+--- cursor starts with `@` or `#`, OR the cursor is inside an UNCLOSED `@"..."` quoted
+--- mention (pi's `@(?:"[^"]*|[^\s]*)` arm). Lua has no regex `|`/`(?:...)`, so this is
+--- explicit logic (NOT a single Lua pattern) — the coords.lua pure-tested style.
+---
+--- PURE: no nvim API, no state, no side effects → directly unit-testable (coords_spec
+--- round-trip shape). The `@`/`#`/`"`/space checks are all ASCII, so a UTF-8 BYTE slice
+--- of the cursor line is CORRECT here (NO coords conversion — coords is for the RPC
+--- params, which `do_refresh` already does).
+---
+---@param text_before_cursor string? The cursor line from col 0 to the cursor (UTF-8 byte slice).
+---@return boolean is_attachment true iff pi would DEBOUNCE here (attachment/file context).
+M.is_attachment_context = function(text_before_cursor)
+  local t = text_before_cursor or ""
+  if t == "" then return false end
+  -- (1) UNCLOSED @"...  quoted-path-with-spaces case (pi @(?:"[^"]*|...)).
+  --     Find the LAST '@"' (forward plain search), then count '"' AFTER it; EVEN (incl. 0)
+  --     = unclosed → we are inside a quoted mention → attachment context. (Forward scan
+  --     avoids the reverse()-on-UTF-8 question entirely; the '@"' needle is ASCII so
+  --     string.find plain search is byte-safe.)
+  local last_atq
+  local i = 1
+  while true do
+    local s = t:find('@"', i, true)        -- plain search (4th arg = literal); ASCII needle, byte-safe
+    if not s then break end
+    last_atq = s
+    i = s + 2
+  end
+  if last_atq then
+    local after = t:sub(last_atq + 2)
+    local _, nq = after:gsub('"', '"')
+    if nq % 2 == 0 then return true end      -- EVEN quotes after the last @" (incl. 0) → the
+                                               -- opening " is UNCLOSED → inside the mention
+  end
+  -- (2) PLAIN token: the trailing non-whitespace run starts with '@' or '#'.
+  local last = t:match("[%S]+$") or ""
+  if last ~= "" then
+    local c = last:sub(1, 1)
+    if c == "@" or c == "#" then return true end
+  end
+  return false
+end
+
+--- Compute the per-refresh debounce window (mirror of pi's `getAutocompleteDebounceMs`,
+--- editor.ts:2214). Returns `0` for non-attachment context (slash/typing — pi-faithful
+--- IMMEDIATE), else the configured attachment window (`config.debounce_ms`, default 20 =
+--- pi's `ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS`). Tab/force NEVER reach here (`force_fetch`
+--- is the separate 0-debounce path; S33). Clamps + falls back defensively (the existing
+--- `debounce_ms()` discipline; fallback 25→20).
+---
+---@param lines      string[] The buffer lines (as `nvim_buf_get_lines` returns).
+---@param cursorLine integer The 0-based pi cursor line (nvim row - 1).
+---@param cursorCol  integer The 0-based BYTE col (`nvim_win_get_cursor`[2]).
+---@return integer ms The debounce window (0 or the configured attachment window).
+local function compute_debounce(lines, cursorLine, cursorCol)
+  local line = (type(lines) == "table") and (lines[cursorLine + 1] or "") or "" -- pi 0-based → Lua 1-based
+  local byte_end = cursorCol                              -- 0-based BYTE col; ASCII @/#/"/space checks → byte slice is correct
+  local before = line:sub(1, byte_end)
+  if not M.is_attachment_context(before) then return 0 end
   local cfg = require("pi-editor")
   local ms = ((cfg.config or cfg.defaults) or {}).debounce_ms
-  if type(ms) ~= "number" or ms < 0 then return 25 end
-  return ms
+  if type(ms) ~= "number" or ms < 0 then ms = 20 end     -- fallback 20 (pi constant; was 25)
+  return math.max(0, math.floor(ms))
 end
 
 --- Cancel + free the debounce timer (stop+close — the LIVE-VERIFIED leak fix). A fired
@@ -398,19 +484,37 @@ end
 --- The autocmd entry point (InsertEnter/TextChangedI/CursorMovedI; wired buffer-local
 --- by the ftplugin S22 via its no-op-safe `dispatch`). Fire-and-forget (the autocmd
 --- callback ignores the return value). Debounces: cancels any pending debounce timer
---- (`stop()`+`close()` — the LIVE-VERIFIED leak fix; NEVER `stop()`-only), schedules
---- `do_refresh(buf)` after `config.debounce_ms` (default 25). Re-fetches on EVERY change
---- (pi-faithful — PRD §7.4; the provider returns null when not completable; the debounce
---- collapses a TextChangedI+CursorMovedI pair into one fetch). Never throws; silent
---- degrade if the bridge is absent/disconnected (checked in `do_refresh`).
+--- (`stop()`+`close()` — the LIVE-VERIFIED leak fix; NEVER `stop()`-only), then computes
+--- the TRIGGER-AWARE window from the CURRENT cursor line (S40 — mirror of pi's
+--- `getAutocompleteDebounceMs`, editor.ts:2214: 0 ms for slash/typing, `debounce_ms`
+--- for @/#/attachment context incl. the `@"..."` quoted-path case), and schedules
+--- `do_refresh(buf)` after that window (0 or `config.debounce_ms`, default 20). Re-fetches
+--- on EVERY change (pi-faithful — PRD §7.4; the provider returns null when not completable;
+--- the debounce collapses a TextChangedI+CursorMovedI pair into one fetch). Never throws;
+--- silent degrade if the bridge is absent/disconnected (checked in `do_refresh`).
 ---
 ---@param buf integer The pi-prompt buffer handle (from the autocmd; NOT 0).
 function M.refresh(buf)
   if type(buf) ~= "number" then return end -- never-throws (per-keystroke + autocmd contract)
   state.buf = buf
   cancel_timer()                           -- stop+close the prior pending defer (leak fix)
+  -- S40: compute the TRIGGER-AWARE window from the cursor line at refresh time (mirrors pi
+  -- computing debounceMs at requestAutocomplete entry from the *current* state). pcall-wrapped
+  -- (a wiped buf / odd state degrades silently to the 0-ms default — never throws). The line
+  -- may change DURING the debounce window; do_refresh re-reads it FRESH for the RPC params.
+  local ms = 0
+  pcall(function()
+    if buf ~= vim.api.nvim_get_current_buf() then return end -- one buf/session (unchanged guard)
+    local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, -1, false)
+    if not ok or type(lines) ~= "table" then return end
+    local cur
+    ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
+    if not ok or type(cur) ~= "table" then return end
+    local row, byte_col = cur[1], cur[2]
+    ms = compute_debounce(lines, row - 1, byte_col) -- row 1-based → pi 0-based; byte_col is 0-based byte
+  end)
   -- SCHEDULE (the cb is api-safe — main loop; research §5; NO vim.schedule needed).
-  state.debounce_timer = vim.defer_fn(function() do_refresh(buf) end, debounce_ms())
+  state.debounce_timer = vim.defer_fn(function() do_refresh(buf) end, ms)
 end
 
 --- Teardown: cancel the debounce timer (`stop()`+`close()`) + any in-flight request;

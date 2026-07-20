@@ -950,14 +950,14 @@
               "type": "Task",
               "id": "P3.M10.T25",
               "title": "Timing refinement — debounce, timeout, supersession tuning",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Refine the debounce, RPC timeout, and stale-request supersession to match pi's timing semantics and ensure responsive but not spammable completion.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P3.M10.T25.S40",
                   "title": "Configurable debounce, RPC timeout, and stale-response supersession",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M7.T18.S30",

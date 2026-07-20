@@ -1000,4 +1000,168 @@ describe("pi-editor.completion", function()
       vim.api.nvim_buf_delete(buf, { force = true })
     end)
   end)
+
+  -- =====================================================================
+  -- S40: TRIGGER-AWARE DEBOUNCE — mirrors pi's TUI `getAutocompleteDebounceMs`
+  -- (editor.ts:2214): slash/typing fire IMMEDIATELY (0 ms), @/#/attachment context
+  -- (incl. the @"..." quoted-path case) debounce by `debounce_ms` (default 20). The
+  -- two-layer supersession stays TRIGGER-AGNOSTIC (a fast @sr→@src still drops the
+  -- stale @sr at the gen-guard). Covers: direct is_attachment_context unit cases
+  -- (the §3 table), the @-window, slash-0ms-collapse, @"... detection, mid-word
+  -- foo@bar NOT-detected, + a file-context stale-result supersession case.
+  -- (research/notes.md §2/§3/§6.)
+  -- =====================================================================
+  describe("S40: trigger-aware debounce (pi getAutocompleteDebounceMs)", function()
+    -- (a) DIRECT unit cases — the research/notes.md §3 table (pi-faithful).
+    describe("is_attachment_context (direct unit cases)", function()
+      it("@src/comp → true (attachment context)", function()
+        assert.is_true(completion.is_attachment_context("@src/comp"))
+      end)
+      it("#tag → true (attachment context)", function()
+        assert.is_true(completion.is_attachment_context("#tag"))
+      end)
+      it("quoted-path UNCLOSED arm -> true", function()
+        assert.is_true(completion.is_attachment_context('@"my dir'))
+      end)
+      it("quoted-path CLOSED -> false", function()
+        assert.is_false(completion.is_attachment_context('@"my dir"'))
+      end)
+      it("/model → false (slash = 0 ms immediate)", function()
+        assert.is_false(completion.is_attachment_context("/model"))
+      end)
+      it("hello world → false (plain typing)", function()
+        assert.is_false(completion.is_attachment_context("hello world"))
+      end)
+      it("foo@bar → false (mid-token @ — NOT at a whitespace boundary)", function()
+        assert.is_false(completion.is_attachment_context("foo@bar"))
+      end)
+      it("empty string → false", function()
+        assert.is_false(completion.is_attachment_context(""))
+        assert.is_false(completion.is_attachment_context(nil))
+      end)
+      it("@日 → true (multibyte after @; proves the byte-slice path is correct)", function()
+        assert.is_true(completion.is_attachment_context("@日"))
+      end)
+      it("quoted-path multibyte UNCLOSED -> true", function()
+        assert.is_true(completion.is_attachment_context('hello @"src/日'))
+      end)
+      it("a leading-@ path after other text → true (@ at a whitespace boundary)", function()
+        assert.is_true(completion.is_attachment_context("see @sr"))
+      end)
+    end)
+
+    -- (b) refresh("/mod") fires at 0 ms (next event-loop tick); 3 rapid refreshes STILL
+    --     collapse to exactly 1 request (the cancel path collapses them, NOT the
+    --     duration — research §2; guards against a regression to "0ms = N requests").
+    it("slash /mod refresh fires at 0 ms (no full debounce wait); 3 rapid still collapse to 1", function()
+      local fake = fake_bridge({ auto_cancel_fires = false }) -- do NOT let cancel() mutate fake.requests
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mod" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.api.nvim_win_set_cursor(win, { 1, 4 })
+      local n0 = #fake.requests
+      -- a SINGLE slash refresh should fire on the next tick WITHOUT a long debounce wait.
+      -- (slash → 0 ms; a short 60ms budget is ample for defer_fn(0) but proves no ~20ms wait.)
+      completion.refresh(buf)
+      wait_for(60, function() return #fake.requests >= n0 + 1 end)
+      assert.are.equals(n0 + 1, #fake.requests, "slash refresh must fire at 0 ms (no debounce window)")
+      -- reset state so the prior inflight doesn't get cancelled (which would mutate fake.requests)
+      completion.reset()
+      -- now 3 RAPID refreshes collapse to exactly 1 MORE request (cancel path, not duration)
+      local n1 = #fake.requests
+      completion.refresh(buf); completion.refresh(buf); completion.refresh(buf)
+      wait_for(60, function() return #fake.requests >= n1 + 1 end)
+      assert.are.equals(n1 + 1, #fake.requests, "3 rapid slash refreshes must STILL collapse to 1 (defer_fn(0))")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (c) refresh("@sr") debounces by debounce_ms (set 10 in this case) — a request is
+    --     issued ONLY after the window. Proves @-context uses the window, not 0.
+    it("@sr refresh debounces by debounce_ms (a request issues only after the window)", function()
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "@sr" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      if pi.config then pi.config.debounce_ms = 10 end
+      local n0 = #fake.requests
+      completion.refresh(buf)
+      -- inside a SHORT window (3ms < 10ms): NO request yet (the debounce is respected)
+      wait_for(3, function() return false end)
+      assert.are.equals(n0, #fake.requests, "@sr must NOT issue before the debounce window elapses")
+      -- after the 10ms window + a tick: the request issues
+      wait_for(200, function() return #fake.requests >= n0 + 1 end)
+      assert.are.equals(n0 + 1, #fake.requests, "@sr must issue exactly 1 request after the window")
+      assert.are.equals("getSuggestions", fake.requests[#fake.requests].method)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (d) refresh('@"my dir') is detected as attachment context (uses the window, not 0).
+    it("quoted-path refresh is detected as attachment context (debounced)", function()
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '@"my dir' })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 8 }) -- EOL of '@"my dir'
+      if pi.config then pi.config.debounce_ms = 10 end
+      local n0 = #fake.requests
+      completion.refresh(buf)
+      wait_for(3, function() return false end) -- inside the window
+      assert.are.equals(n0, #fake.requests, "quoted-path must NOT issue before the window (debounced)")
+      wait_for(200, function() return #fake.requests >= n0 + 1 end)
+      assert.are.equals(n0 + 1, #fake.requests, "quoted-path must issue 1 request after the window")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (e) FILE-CONTEXT SUPERSESSION: typing @sr (slow) → @src drops the stale @sr at the
+    --     gen-guard (layer 2) AND bridge.cancel(prev_id) was recorded (layer 1). Only
+    --     the latest (@src) result lands. Mirrors the S30 (4) two-layer test for the
+    --     @-context path (proves the supersession is still trigger-agnostic). research §6.
+    it("file-context supersession: a stale @sr result is dropped when @src supersedes it", function()
+      local fake = fake_bridge({ auto_cancel_fires = false }) -- drive cbs manually
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "@sr" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      if pi.config then pi.config.debounce_ms = 10 end
+      -- 1st refresh (@sr) -> request 1 (slow; do not resolve yet)
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 1 end)
+      local id1 = fake.requests[1].id
+      local stale_cb = fake.requests[1].cb
+      -- user types '@src' (buffer + cursor advance) -> a 2nd refresh cancels req 1 + bumps gen
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "@src" })
+      vim.api.nvim_win_set_cursor(win, { 1, 4 })
+      local seam = 0
+      completion.on_results = function() seam = seam + 1 end
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 2 end)
+      -- layer 1: cancel(prev_id) was called for the @sr request
+      assert.is_true(#fake.cancels >= 1, "cancel(prev_id) must be called on @-context supersede")
+      assert.are.equals(id1, fake.cancels[1])
+      -- layer 2: resolve the STALE (@sr) cb with a result → on_results must NOT fire
+      vim.schedule_wrap(stale_cb)(nil, { items = { { value = "@sr/stale", label = "stale" } }, prefix = "@sr" })
+      wait_for(100, function() return false end) -- let the scheduled stale cb settle (a no-op)
+      assert.are.equals(0, seam, "a stale @sr response must NOT fire on_results (gen-guard)")
+      assert.is_nil(completion.current(), "last_result must be untouched by the stale @sr response")
+      -- now resolve the 2nd (@src, current-gen) cb → on_results fires + stores
+      local items2 = { { value = "@src/comp.lua", label = "comp.lua" } }
+      vim.schedule_wrap(fake.requests[2].cb)(nil, { items = items2, prefix = "@src" })
+      wait_for(200, function() return seam >= 1 end)
+      assert.are.equals(1, seam, "the latest (@src) response must fire on_results")
+      assert.are.same(items2, completion.current().items)
+      assert.are.equals("@src", completion.current().prefix)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+  end)
 end)
