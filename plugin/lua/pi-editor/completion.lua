@@ -90,6 +90,53 @@
 --    on_dismiss) stay absent — the ftplugin's `dispatch` returns false → feedkey
 --    fall-through (Tab indents, CR inserts a newline). CORRECT for S30's scope.
 --
+--  * S32 — accept(item) + on_enter(buf): the PRD §7.4 5-step applyCompletion flow (the
+--    ACCEPT half of completion). accept(item) reads the selected item + prefix + buf
+--    from the COMPLETE menu module (S31), reads the CURRENT buffer lines + cursor,
+--    converts nvim→pi via coords (S29), issues `applyCompletion` over the bridge (S26)
+--    with params {lines, cursorLine, cursorCol, item, prefix} (the EXACT mirror of
+--    extension/protocol.ts ApplyCompletionParams), and in the ASYNC cb (schedule_wrap'd
+--    by bridge → nvim main loop, api-safe) converts pi→nvim via coords + replaces the
+--    WHOLE buffer via nvim_buf_set_lines(buf, 0, -1, false, nv.lines) + positions the
+--    cursor via nvim_win_set_cursor(0, {nv.row, nv.col}) (NO `-1` — coords.lua's
+--    exact-UTF-16 + 0-based-byte-cursor-API design SUPERSEDES PRD §7.4's `bytecol - 1`;
+--    it would nudge the cursor one byte LEFT on every accept, worst on multibyte lines)
+--    + closes the menu via menu.close(). on_enter(buf) is the `<CR>` handler the
+--    ftplugin ALREADY dispatches (S22) — returns true (CR CONSUMED) iff buf is
+--    valid+current AND the menu is open with a table selected item → accept(item).
+--
+--    nvim INSERT-MODE accept semantics (LIVE-VERIFIED, research §5):
+--      (a) nvim_buf_set_lines is an API mutation — it does NOT fire TextChangedI
+--          (`:help TextChangedI` — only TYPED input does; b:changedtick DOES increment,
+--          but do NOT key refresh off changedtick). => accept's buffer-replace CANNOT
+--          re-trigger the refresh autocmd; NO re-entrancy guard is REQUIRED. Do NOT
+--          route the edit through feedkeys ("to trigger refresh") — that WOULD fire
+--          TextChangedI + risk a loop.
+--      (b) nvim_win_set_cursor moves the VISIBLE cursor in Insert + scrolls into view
+--          (`:help nvim_win_set_cursor`) WITHOUT firing CursorMovedI and WITHOUT a
+--          redraw/feedkeys nudge. `:help mode()` — API mutations do NOT change mode()
+--          ⇒ the user STAYS in Insert (no `<Esc>`/`<i>` dance). The sequence is TWO
+--          API calls in order (set_lines THEN set_cursor) — model on blink.cmp's
+--          accept/init.lua (NOT nvim-cmp's feedkeys/<C-g>U confirm path).
+--      (c) insertion is PI'S JOB. applyCompletion returns the COMPLETE new lines[] +
+--          cursor (pi computes trailing space / dir-vs-file / quotes / cursor
+--          reposition). S32 applies result.lines WHOLESALE via nvim_buf_set_lines — it
+--          NEVER string-replaces the prefix in-place (that would diverge from the TUI).
+--
+--    ONE-SHOT user action — NO generation-id supersession guard (unlike getSuggestions).
+--    Capture buf in the closure; in the cb the accept result is AUTHORITATIVE (the user
+--    explicitly accepted; overwriting interim typing is pi-faithful). The bridge's
+--    TWO-LAYER pending map holds applyCompletion + getSuggestions separately (they
+--    never mis-drop each other). on_enter returns true as soon as the RPC is ISSUED
+--    (CR consumed); the buffer mutation is async in the cb (< rpc_timeout_ms).
+--    cb error ("rpc error …"/"request timeout"/"connection closed") → DEGRADE: leave
+--    the buffer UNTOUCHED + menu.close() (silent; S39's job to notify once). A
+--    non-table result (a null/malformed response) → same degrade. accept reads the
+--    bridge/menu/coords FRESH at call time (same rule as do_refresh — handshake
+--    resolves async + tests swap fakes after require). accept/on_enter NEVER throw
+--    (pcall every nvim call; type-guard; bad args → false). on_enter is now SHIPPED
+--    (S32); on_tab/on_next/on_prev/on_dismiss are still forward contracts (S33/S36/S37).
+--
 -- Node builtins analog: pure Lua + the COMPLETE in-tree bridge (`require("pi-editor").bridge`)
 -- + coords (`require("pi-editor.coords")`) + config (`require("pi-editor")`). No sockets
 -- of its own — the smoke's fake luv server is the integration surface. Singleton state
@@ -267,6 +314,94 @@ function M.current()
   local r = state.last_result
   if not r then return nil end
   return { items = r.items, prefix = r.prefix }
+end
+
+-- ===========================================================================
+-- S32: accept(item) + on_enter(buf) — the PRD §7.4 accept flow (the ACCEPT half).
+-- The 5-step applyCompletion flow: read current lines+cursor → convert nvim→pi →
+-- bridge.request("applyCompletion", {lines,cursorLine,cursorCol,item,prefix}, cb) →
+-- in the async cb: convert pi→nvim + nvim_buf_set_lines (whole buffer) +
+-- nvim_win_set_cursor (NO -1) + menu.close. on_enter gates on buf/menu + delegates.
+-- ===========================================================================
+
+--- The pi→nvim result of a successful `applyCompletion` (mirror of
+--- `extension/protocol.ts` `ApplyCompletionResult`). pi returns the COMPLETE new buffer
+--- + cursor; S32 applies it wholesale via `nvim_buf_set_lines`. Delivered as the
+--- `result` arg of the `bridge.request` cb (cb(nil, result)).
+---@class pi-editor.ApplyCompletionResult
+---@field lines      string[] The COMPLETE new line array (replace buf wholesale).
+---@field cursorLine integer 0-indexed pi line (coords.pi_to_nvim_coords adds +1).
+---@field cursorCol  integer 0-indexed UTF-16 offset (coords.pi_to_nvim_coords → 0-based byte; NO -1).
+
+--- The 5-step PRD §7.4 accept flow. Reads the selected item's prefix + buf from the
+--- COMPLETE menu module (S31) + the CURRENT buffer lines + cursor, converts nvim→pi via
+--- coords (S29), issues `applyCompletion` over the bridge (S26), and in the ASYNC cb
+--- (schedule_wrap'd by bridge → api-safe) converts pi→nvim + replaces the WHOLE buffer
+--- + sets the cursor (NO -1) + closes the menu. NEVER reimplements insertion (pi does
+--- it — returns the whole new lines[]). Returns true iff the RPC was issued (the cb is
+--- fire-and-forget). Never throws (pcall-wrapped nvim + bridge/menu/coords read FRESH).
+--- cb error → degrade (buffer untouched + menu.close). (research/notes.md §2/§3/§5/§6.)
+---
+---@param item pi-editor.AutocompleteItem The selected item (from menu.get_selected()) — forwarded VERBATIM.
+---@return boolean issued true iff the applyCompletion RPC was accepted by the bridge.
+function M.accept(item)
+  if type(item) ~= "table" then return false end                    -- defensive (on_enter pre-checks; direct callers may not)
+  -- READ bridge/menu/coords FRESH (handshake resolves async + test mocks swap in after require).
+  local bridge = require("pi-editor").bridge
+  if not bridge
+     or type(bridge.is_connected) ~= "function"
+     or not bridge.is_connected() then
+    return false                                                    -- silent degrade (S39 notifies once)
+  end
+  local menu = require("pi-editor.menu")
+  local buf  = menu.get_buf()
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
+  if buf ~= vim.api.nvim_get_current_buf() then return false end    -- one buf/session; cursor is the current win's
+  local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, -1, false)
+  if not ok or type(lines) ~= "table" then return false end
+  local cur
+  ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
+  if not ok or type(cur) ~= "table" then return false end
+  local coords = require("pi-editor.coords")
+  local pi = coords.nvim_to_pi_coords(lines, cur[1], cur[2])        -- {lines, cursorLine, cursorCol(UTF-16)}
+  local params = {
+    lines      = pi.lines,
+    cursorLine = pi.cursorLine,
+    cursorCol  = pi.cursorCol,
+    item       = item,                                              -- forwarded VERBATIM (the whole AutocompleteItem table)
+    prefix     = (menu.get_prefix() or ""),                        -- default "" (menu always has a string; defensive)
+  }
+  -- ONE-SHOT user action — NO gen-guard (capture buf in the closure; cb validates nothing
+  -- else — the accept result is AUTHORITATIVE). pcall bridge.request so a bridge bug never throws.
+  pcall(bridge.request, "applyCompletion", params, function(err, result)
+    -- async, schedule_wrap'd by bridge → nvim main loop (api-safe; NO extra vim.schedule).
+    if err then pcall(menu.close); return end                       -- DEGRADE: buffer UNTOUCHED
+    if type(result) ~= "table" then pcall(menu.close); return end   -- malformed/null → degrade
+    local nv = coords.pi_to_nvim_coords(result.lines, result.cursorLine, result.cursorCol)
+    pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, nv.lines)  -- replace WHOLE buffer (NOT TextChangedI)
+    pcall(vim.api.nvim_win_set_cursor, 0, { nv.row, nv.col })       -- col 0-based BYTE (NO -1); Insert-safe
+    pcall(menu.close)                                               -- clear state (+ no-op render until S34)
+  end)
+  return true                                                       -- bridge accepted the request (fire-and-forget cb)
+end
+
+--- The `<CR>` handler (accept-or-newline; the ftplugin ALREADY dispatches on_enter).
+--- Returns true (CR CONSUMED) iff buf is valid+current AND the menu is open with a table
+--- selected item → calls M.accept(item). Otherwise returns false (the ftplugin's
+--- `feedkey("<CR>")` inserts a NEWLINE — PRD §7.4: no Enter-to-submit in the external
+--- editor; quitting submits). Never throws (the dispatch is pcall-wrapped in the ftplugin
+--- + accept is defensive).
+---
+---@param buf integer The pi-prompt buffer handle (from the buffer-local <CR> keymap dispatch).
+---@return boolean handled true iff CR was consumed (accept issued); false to fall through to a newline.
+function M.on_enter(buf)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
+  if buf ~= vim.api.nvim_get_current_buf() then return false end    -- one buf/session
+  local menu = require("pi-editor.menu")
+  if not menu.is_open() or not menu.has_items() then return false end
+  local item = menu.get_selected()
+  if type(item) ~= "table" then return false end
+  return M.accept(item) == true                                     -- true iff RPC issued (CR consumed)
 end
 
 return M

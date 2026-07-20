@@ -736,14 +736,14 @@
               "type": "Task",
               "id": "P2.M7.T19",
               "title": "Accept flow via applyCompletion",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the acceptance logic that sends applyCompletion to the bridge with the selected item and prefix, receives the new full buffer lines and cursor, replaces the buffer, and positions the cursor with correct byte conversion.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M7.T19.S32",
                   "title": "Accept — applyCompletion RPC, replace buffer, set cursor, close menu",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M7.T18.S31",
