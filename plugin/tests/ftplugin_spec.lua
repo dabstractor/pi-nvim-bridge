@@ -50,11 +50,11 @@ describe("pi-editor ftplugin/pi-prompt", function()
     end
   end)
 
-  it("registers completion autocmds (InsertEnter/TextChangedI/CursorMovedI)", function()
+  it("registers completion autocmds (InsertEnter/TextChangedI/CursorMovedI/InsertLeave/BufLeave)", function()
     local b = fresh_prompt_buf()
     local evs = {}
     for _, a in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-editor" })) do evs[a.event] = true end
-    for _, ev in ipairs({ "InsertEnter", "TextChangedI", "CursorMovedI" }) do
+    for _, ev in ipairs({ "InsertEnter", "TextChangedI", "CursorMovedI", "InsertLeave", "BufLeave" }) do
       assert.is_true(evs[ev], "missing autocmd " .. ev)
     end
   end)
@@ -82,6 +82,14 @@ describe("pi-editor ftplugin/pi-prompt", function()
     assert.has_no.errors(function()
       vim.api.nvim_exec_autocmds("TextChangedI", { buffer = b })
       vim.api.nvim_exec_autocmds("InsertEnter", { buffer = b })
+    end)
+  end)
+
+  it("does not throw when firing InsertLeave/BufLeave with completion.lua absent", function()
+    local b = fresh_prompt_buf()
+    assert.has_no.errors(function()
+      vim.api.nvim_exec_autocmds("InsertLeave", { buffer = b })
+      vim.api.nvim_exec_autocmds("BufLeave", { buffer = b })
     end)
   end)
 

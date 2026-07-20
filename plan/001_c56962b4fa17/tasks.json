@@ -789,7 +789,7 @@
           "type": "Milestone",
           "id": "P2.M8",
           "title": "Floating Completion Menu (menu.lua)",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Implement the dependency-free floating completion popup that renders suggestion items in two columns (label, description), handles navigation keys, and auto-positions near the cursor with window-edge clamping.",
           "tasks": [
             {
@@ -834,7 +834,7 @@
               "type": "Task",
               "id": "P2.M8.T22",
               "title": "menu.lua — navigation, key handling & lifecycle",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement menu navigation (next/prev/select/dismiss), key handling while the menu is open, and auto-close behavior on InsertLeave or cursor movement out of the completion prefix.",
               "subtasks": [
                 {
@@ -856,7 +856,7 @@
                   "type": "Subtask",
                   "id": "P2.M8.T22.S37",
                   "title": "Auto-close on InsertLeave, CursorMoved out of prefix, buffer change",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M8.T22.S36"

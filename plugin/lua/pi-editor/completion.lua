@@ -83,12 +83,17 @@
 --    single central provider).
 --
 --  * FORWARD CONTRACTS (do NOT implement in S30; just expose the seams):
---      M.on_results   → S31 (menu population) registers it; fires on the latest success.
---      M.current()    → S32 (accept) / S33 (Tab) read the latest items without menu coupling.
---      M.reset()      → S37 (auto-close on InsertLeave/CursorMoved-out) calls it for teardown.
+--      M.on_results         → S31 (menu population) registers it; fires on the latest success.
+--      M.current()          → S32 (accept) / S33 (Tab) read the latest items without menu coupling.
+--      M.reset()            → the cleanup seam for tests + the S37 InsertLeave/BufLeave teardown.
+--      M.on_insert_leave    → S37 (InsertLeave autocmd → hide + cancel pending refresh).
+--      M.on_buf_leave       → S37 (BufLeave autocmd → same teardown on buffer switch).
 --    S30 implements `refresh` ONLY. The 6 keymaps (on_tab/on_enter/on_next/on_prev/
 --    on_dismiss) are now ALL SHIPPED (on_tab S33, on_enter S32, on_next/on_prev/
---    on_dismiss S36).
+--    on_dismiss S36). The 2 auto-close AUTOCMD handlers (on_insert_leave/on_buf_leave)
+--    are now SHIPPED (S37). The third auto-close trigger ("CursorMoved out of prefix") is
+--    OWNED pi-faithfully by S30's EXISTING CursorMovedI→refresh→re-fetch→empty→close
+--    path (research/notes.md §3 — NO local prefix detector).
 --
 --  * S32 — accept(item) + on_enter(buf): the PRD §7.4 5-step applyCompletion flow (the
 --    ACCEPT half of completion). accept(item) reads the selected item + prefix + buf
@@ -411,8 +416,9 @@ end
 --- Teardown: cancel the debounce timer (`stop()`+`close()`) + any in-flight request;
 --- clear `last_result`; reset the generation counter. Idempotent + never throws
 --- (pcall-wrapped; safe to call when never activated — mirrors `bridge.on_exit`).
---- The cleanup seam for tests + the future S37 InsertLeave/CursorMoved-out wiring (S30
---- does NOT modify the ftplugin; `reset()` is called by S37 once it lands).
+--- The cleanup seam for tests + the S37 InsertLeave/BufLeave auto-close wiring
+--- (S37's `on_insert_leave`/`on_buf_leave` call `M.reset()` AFTER `menu.close()` —
+--- research/notes.md §1/§6).
 function M.reset()
   cancel_timer()
   local b = require("pi-editor").bridge
@@ -660,6 +666,45 @@ function M.on_dismiss(buf)
   if not menu.is_open() then return false end                       -- has_items implied by open()'s contract
   menu.dismiss()
   return true
+end
+
+-- ===========================================================================
+-- S37: on_insert_leave(buf) / on_buf_leave(buf) — the AUTOCMD-driven auto-close handlers
+-- (the complement to S36's KEY handlers). The ftplugin dispatches InsertLeave→on_insert_leave +
+-- BufLeave→on_buf_leave (buffer-local, the "pi-editor" augroup). Each hides the menu + CANCELS the
+-- pending debounced refresh so a stale do_refresh cannot re-open the menu in normal mode (THE race
+-- fix — research/notes.md §1; reset()'s docstring promised it for S37). The "CursorMoved out of
+-- prefix" trigger is OWNED by the EXISTING CursorMovedI→refresh→re-fetch→empty→close path (S30,
+-- COMPLETE — research §3; no local prefix detector). Fire-and-forget (autocmd; return value ignored);
+-- never throws (pcall; type-guard; nvim_buf_is_valid). Read menu FRESH (require at call time).
+-- Does NOT detach the menu (M.reset is completion's, not menu's) — re-entry re-populates w/o re-attach.
+-- ===========================================================================
+
+--- The shared S37 teardown: hide the window FIRST (immediate UX), then cancel the pending debounce +
+--- in-flight RPC + clear completion state (M.reset sets state.gen=0 → a stale getSuggestions cb's
+--- gen-guard drops it → the stale on_results never fires → no normal-mode re-open). Never throws
+--- (menu.close + M.reset are both idempotent + pcall-safe). (research/notes.md §1/§6.)
+local function hide_and_cancel()
+  pcall(function() require("pi-editor.menu").close() end)   -- hide the floating window FIRST
+  M.reset()                                                  -- cancel_timer + cancel inflight + gen=0 + clear state
+end
+
+--- InsertLeave handler (autocmd-fired by the ftplugin). Hides the menu + cancels the pending refresh
+--- so a stale do_refresh cannot re-open the menu in normal mode. No-op when the menu is closed +
+--- nothing pending (menu.close/M.reset are idempotent + never throw). Never throws.
+---@param buf integer The pi-prompt buffer handle (from the buffer-local InsertLeave autocmd).
+function M.on_insert_leave(buf)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
+  hide_and_cancel()
+end
+
+--- BufLeave handler (autocmd-fired by the ftplugin). Same teardown as on_insert_leave; clearing
+--- state.buf/last_result is correct since we left the buffer (the next refresh on a future pi-prompt
+--- buffer rebuilds). Never throws. (research/notes.md §4/§6.)
+---@param buf integer The pi-prompt buffer handle (from the buffer-local BufLeave autocmd).
+function M.on_buf_leave(buf)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
+  hide_and_cancel()
 end
 
 return M

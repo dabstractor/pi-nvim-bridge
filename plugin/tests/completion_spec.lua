@@ -838,4 +838,166 @@ describe("pi-editor.completion", function()
       assert.is_false(completion.on_dismiss(buf), "wiped buf → false")
     end)
   end)
+
+  -- =====================================================================
+  -- S37: on_insert_leave(buf) / on_buf_leave(buf) — the AUTOCMD-driven
+  -- auto-close handlers. Each hides the menu + cancels the pending refresh so a
+  -- stale do_refresh cannot re-open the menu in normal mode (THE race fix —
+  -- research/notes.md §1). Fire-and-forget (NO bool return). Never throws.
+  -- Reuses the S32 populated_menu helper. (research/notes.md §6.)
+  -- =====================================================================
+  describe("S37: on_insert_leave / on_buf_leave", function()
+    -- (a) populated menu → on_insert_leave(buf) → menu closed + last_result cleared
+    it("on_insert_leave hides the menu + clears last_result (reset)", function()
+      local _, buf = populated_menu("/mo", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      assert.is_not_nil(completion.current())
+      completion.on_insert_leave(buf)
+      assert.is_false(menu.is_open(), "on_insert_leave must close the menu")
+      assert.is_nil(completion.current(), "on_insert_leave must clear last_result (reset)")
+      assert.is_nil(menu._state.win, "on_insert_leave must nil the window handle")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (b) populated menu → on_buf_leave(buf) → same teardown
+    it("on_buf_leave hides the menu + clears last_result (same teardown)", function()
+      local _, buf = populated_menu("/mo", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      completion.on_buf_leave(buf)
+      assert.is_false(menu.is_open(), "on_buf_leave must close the menu")
+      assert.is_nil(completion.current(), "on_buf_leave must clear last_result")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (c) THE RACE FIX: refresh-then-immediately-leave does NOT re-open + no new RPC
+    it("RACE FIX: refresh then on_insert_leave cancels the stale do_refresh (no re-open, no new RPC)", function()
+      local fake, buf = populated_menu("/mo", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      local reqs_before = #fake.requests
+      -- shrink the debounce so the would-be stale defer window is provably elapsed in the wait
+      if pi.config then pi.config.debounce_ms = 10 end
+      completion.refresh(buf)               -- schedules a NEW debounce (do_refresh NOT yet issued)
+      completion.on_insert_leave(buf)       -- InsertLeave: hide + cancel the pending debounce
+      wait_for(120, function() return false end) -- let the would-be 10ms defer elapse
+      assert.is_false(menu.is_open(), "a stale do_refresh must NOT re-open the menu in normal mode")
+      assert.are.equals(reqs_before, #fake.requests, "no new getSuggestions issued (debounce cancelled)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (d) inflight supersession: a stale cb resolved AFTER on_insert_leave is dropped (gen-guard)
+    it("INFLIGHT SUPERSESSION: a stale cb resolved after on_insert_leave does NOT re-open (gen-guard)", function()
+      local fake = fake_bridge({ auto_cancel_fires = false }) -- drive cbs manually
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mo" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      menu.attach()
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 1 end)
+      -- a pending in-flight req is now stored; on_insert_leave resets state.gen=0 (drops it)
+      completion.on_insert_leave(buf)
+      assert.is_false(menu.is_open())
+      -- NOW resolve the stale (old-gen) cb with items → on_results must NOT fire (gen-guard)
+      vim.schedule_wrap(fake.requests[1].cb)(nil, { items = { { value = "/model", label = "model" } }, prefix = "/mo" })
+      wait_for(120, function() return false end) -- let the scheduled stale cb settle (a no-op)
+      assert.is_false(menu.is_open(), "a stale in-flight cb must NOT re-open the menu (gen-guard)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (e) closed menu / nothing pending → harmless no-op (no throw)
+    it("closed-menu / nothing-pending → on_insert_leave / on_buf_leave are harmless no-ops", function()
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mo" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      menu.attach()
+      assert.is_false(menu.is_open())
+      assert.has_no.errors(function()
+        completion.on_insert_leave(buf)
+        completion.on_buf_leave(buf)
+      end)
+      assert.is_false(menu.is_open(), "no-op handlers must not open the menu")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (f) never-throws on nil / string / wiped buf
+    it("never throws on nil / string / wiped buf", function()
+      assert.has_no.errors(function()
+        completion.on_insert_leave(nil)
+        completion.on_insert_leave("x")
+        completion.on_buf_leave(nil)
+        completion.on_buf_leave("x")
+      end)
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_delete(buf, { force = true })
+      assert.has_no.errors(function()
+        completion.on_insert_leave(buf)
+        completion.on_buf_leave(buf)
+      end)
+    end)
+
+    -- (g) does NOT detach the menu: re-entry re-populates with NO re-attach
+    it("does NOT detach the menu: re-entry re-populates without re-attach", function()
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mo" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      menu.attach()
+      local seam = completion.on_results          -- the seam menu.attach wired
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 1 end)
+      fake.resolve_last(nil, { items = { { value = "/model", label = "model" } }, prefix = "/mo" })
+      wait_for(200, function() return menu.is_open() end)
+      completion.on_insert_leave(buf)              -- hide + reset (does NOT detach)
+      assert.is_false(menu.is_open())
+      assert.are.equals(seam, completion.on_results, "the on_results seam must stay wired (NOT detached)")
+      -- re-entry WITHOUT menu.attach()
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 2 end)
+      fake.resolve_last(nil, { items = { { value = "/model", label = "model" } }, prefix = "/mo" })
+      wait_for(200, function() return menu.is_open() end)
+      assert.is_true(menu.is_open(), "re-entry re-populates the menu with NO re-attach")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+  end)
+
+  -- =====================================================================
+  -- S37: CursorMoved-out-of-prefix closes via the EXISTING refresh path (§3).
+  -- PROOF the third trigger is OWNED by S30's refresh (no local prefix detector).
+  -- =====================================================================
+  describe("S37: CursorMoved-out-of-prefix closes via refresh", function()
+    it("populated menu → cursor to a non-completable line → refresh → empty → menu.close()", function()
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mo", "" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      menu.attach()
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 1 end)
+      fake.resolve_last(nil, { items = { { value = "/model", label = "model" } }, prefix = "/mo" })
+      wait_for(200, function() return menu.is_open() end)
+      assert.is_true(menu.is_open())
+      -- move cursor OUT of the prefix (to the blank line 2)
+      vim.api.nvim_win_set_cursor(win, { 2, 0 })
+      completion.refresh(buf)                       -- CursorMovedI -> refresh
+      wait_for(200, function() return #fake.requests >= 2 end)
+      fake.resolve_last(nil, { items = {}, prefix = "" }) -- pi returns empty (not completable)
+      wait_for(200, function() return not menu.is_open() end)
+      assert.is_false(menu.is_open(), "CursorMoved-out -> refresh -> empty -> menu.close() (the S30 path)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+  end)
 end)

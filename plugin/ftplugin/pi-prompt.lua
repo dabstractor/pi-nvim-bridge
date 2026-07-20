@@ -23,12 +23,19 @@
 ---     on_prev(buf)  -> truthy    -- <S-Tab>/<C-P>/<Up>: prev item (S36).
 ---     on_dismiss(buf)-> truthy   -- <C-E>: dismiss the menu (S36 — the KEY handler; S37 is the
 ---                                auto-close AUTOCMDS).
+---     on_insert_leave(buf)       -- InsertLeave autocmd → hide + cancel pending refresh (S37).
+---     on_buf_leave(buf)          -- BufLeave autocmd → same teardown on buffer switch (S37).
 ---   require("pi-editor.bridge"):                       (connection: S24; on_exit body: S38)
 ---     on_exit(buf)              -- VimLeavePre/ExitPre: autosave-if-modified + send bye + close.
 --- A keymap dispatch returns `true` ONLY if the module exists AND its function returned
 --- truthy; otherwise the keymap falls through to its default (see |feedkeys()| below).
 --- <C-Y> REUSES on_enter (NO on_accept): accept if the menu is open, else fall through
 --- to :help i_CTRL-Y (research/notes.md §6).
+---
+--- S37 auto-close ownership: InsertLeave + BufLeave are autocmd-fired (above). The third
+--- trigger ("CursorMoved out of prefix") is OWNED pi-faithfully by the EXISTING
+--- CursorMovedI→refresh→re-fetch→empty→close path (S30, COMPLETE — NO local prefix
+--- detector; research/notes.md §3).
 ---
 --- pi-specific <CR> behavior (PRD §2.1 / §7.4): there is NO Enter-to-submit in the
 --- external editor — pi reads the temp file only AFTER the editor EXITS. So `<CR>` inserts
@@ -124,6 +131,24 @@ for _, ev in ipairs({ "InsertEnter", "TextChangedI", "CursorMovedI" }) do
     buffer = buf,
     desc = "pi-editor: completion refresh (" .. ev .. ")",
     callback = function() dispatch("pi-editor.completion", "refresh", buf) end,
+  })
+end
+
+-- ── S37: auto-close the menu when the user leaves the completion context (PRD §7.5) ─────────────
+-- InsertLeave covers <Esc>/<C-\><C-n>; BufLeave covers :bnext/:e/split-to-another-buffer. Each hides
+-- the menu + cancels the pending refresh so a stale do_refresh cannot re-open the menu in normal mode
+-- (research §1). The "CursorMoved out of prefix" trigger is owned pi-faithfully by the EXISTING
+-- CursorMovedI→refresh→re-fetch→empty→close path above (S30, COMPLETE; no local prefix detector — §3).
+-- Fire-and-forget (autocmd; dispatch's bool return is ignored here — used only for the no-op-safe-
+-- absent-module guarantee). Buffer-local + the SHARED "pi-editor" group + clear=false (idempotent via
+-- the nvim_clear_autocmds line above).
+for _, ev in ipairs({ "InsertLeave", "BufLeave" }) do
+  local fn = (ev == "InsertLeave") and "on_insert_leave" or "on_buf_leave"
+  vim.api.nvim_create_autocmd(ev, {
+    group = group,
+    buffer = buf,
+    desc = "pi-editor: auto-close completion menu on " .. ev,
+    callback = function() dispatch("pi-editor.completion", fn, buf) end,
   })
 end
 
