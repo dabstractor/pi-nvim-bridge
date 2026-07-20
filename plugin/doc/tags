@@ -1,0 +1,17 @@
+pi-editor	pi-editor.txt	/*pi-editor*
+pi-editor-api	pi-editor.txt	/*pi-editor-api*
+pi-editor-autocmds	pi-editor.txt	/*pi-editor-autocmds*
+pi-editor-autosave	pi-editor.txt	/*pi-editor-autosave*
+pi-editor-checkhealth	pi-editor.txt	/*pi-editor-checkhealth*
+pi-editor-commands	pi-editor.txt	/*pi-editor-commands*
+pi-editor-completion	pi-editor.txt	/*pi-editor-completion*
+pi-editor-config	pi-editor.txt	/*pi-editor-config*
+pi-editor-contents	pi-editor.txt	/*pi-editor-contents*
+pi-editor-env	pi-editor.txt	/*pi-editor-env*
+pi-editor-filetype	pi-editor.txt	/*pi-editor-filetype*
+pi-editor-intro	pi-editor.txt	/*pi-editor-intro*
+pi-editor-keymaps	pi-editor.txt	/*pi-editor-keymaps*
+pi-editor-quickstart	pi-editor.txt	/*pi-editor-quickstart*
+pi-editor-requirements	pi-editor.txt	/*pi-editor-requirements*
+pi-editor-troubleshooting	pi-editor.txt	/*pi-editor-troubleshooting*
+pi-editor.txt	pi-editor.txt	/*pi-editor.txt*

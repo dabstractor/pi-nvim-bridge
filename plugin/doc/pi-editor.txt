@@ -1,0 +1,381 @@
+*pi-editor.txt*	For Nvim 0.11+.	Last change: 2025 Jul 20
+
+          NVIM PORT — pi-editor.nvim
+          Bring pi's in-prompt completion into the Neovim instance pi
+          launches as $EDITOR.
+
+          This help file documents the SHIPPED plugin. The companion pi
+          extension (pi-editor-bridge) and this nvim plugin are both
+          complete; the optional blink.cmp / nvim-cmp engine sources are
+          forthcoming (see |pi-editor-config| `engine`).
+
+          License:  MIT
+
+==============================================================================
+CONTENTS                                        *pi-editor* *pi-editor-contents*
+
+	1. Introduction ........................... |pi-editor-intro|
+	2. Requirements ........................... |pi-editor-requirements|
+	3. Quick start ............................ |pi-editor-quickstart|
+	4. Configuration ......................... |pi-editor-config|
+	5. Commands .............................. |pi-editor-commands|
+	6. Keymaps ............................... |pi-editor-keymaps|
+	7. Autocmds / events ..................... |pi-editor-autocmds|
+	8. Completion behavior ................... |pi-editor-completion|
+	9. Filetype .............................. |pi-editor-filetype|
+	10. Environment .......................... |pi-editor-env|
+	11. Lua API (for integrators) ............ |pi-editor-api|
+	12. Health ............................... |pi-editor-checkhealth|
+	13. Troubleshooting / FAQ ................ |pi-editor-troubleshooting|
+	Autosave (how your prompt persists) ...... |pi-editor-autosave|
+
+==============================================================================
+1. Introduction                                  *pi-editor-intro*
+
+`pi-editor.nvim` renders pi's in-prompt completion inside the Neovim
+instance pi launches as `$EDITOR` — slash commands (`/model`, `/compact`,
+`/skill:...`), prompt templates, extension commands, command-argument
+completion, `@file` mentions, and filesystem paths — through a
+dependency-free floating menu.
+
+It is one half of a two-component design:
+
+  • `pi-editor-bridge` — a pi EXTENSION (TypeScript) that captures pi's live
+    `AutocompleteProvider` and serves it over a local Unix socket.
+
+  • `pi-editor.nvim` (THIS plugin) — a Neovim (Lua) plugin that activates ONLY
+    inside a pi-launched editor session, connects to the bridge, and renders
+    completion through Neovim's own UI.
+
+DORMANT BY DESIGN ~
+This plugin is INERT in every ordinary Neovim session. It activates only when pi
+spawned the editor with the `PI_EDITOR_BRIDGE` environment variable set (see
+|pi-editor-env|). If nothing happens when you open nvim normally, that is
+expected — see |pi-editor-troubleshooting|.
+
+Because acceptance delegates back to pi's own `applyCompletion` (see
+|pi-editor-completion|), insertion behavior (trailing space for files, no space
+for directories, quote handling, `/cmd ` for commands) is byte-for-byte
+identical to pi's TUI.
+
+==============================================================================
+2. Requirements                                  *pi-editor-requirements*
+
+  • Neovim >= 0.11. (NOT 0.10 — the exact-UTF-16 cursor conversion in
+    `coords.lua` needs the 3-arg `vim.str_utfindex` overload added in 0.11.
+    `:checkhealth pi-editor` enforces this; see |pi-editor-checkhealth|.)
+  • The `pi-editor-bridge` pi extension installed and enabled (`pi list` shows
+    `pi-editor-bridge`). It writes `PI_EDITOR_BRIDGE` when pi starts an editor.
+  • `fd` (OPTIONAL) — enables pi's fuzzy `@file` search. Without it `@file`
+    silently returns nothing, but path completion (directory listing) still
+    works. Debian/Ubuntu ship it as `fdfind` (`apt-get install fd-find`).
+
+==============================================================================
+3. Quick start                                   *pi-editor-quickstart*
+
+Install the bridge extension (pi side): >
+    pi install git:github.com/<owner>/pi-nvim-bridge
+    pi list      # shows "pi-editor-bridge"
+<
+Install this plugin (lazy.nvim) — NOTE `lazy = false` so the startup shim
+sources BEFORE the VimEnter event that triggers activation: >
+    {
+      "<owner>/pi-editor.nvim",
+      lazy = false,
+      config = function() require("pi-editor").setup({}) end,
+    }
+<
+Tell pi to use Neovim as its external editor — any ONE of: >
+    export EDITOR=nvim        # or:
+    export VISUAL=nvim        # or, in pi settings.json (takes precedence):
+    { "externalEditor": "nvim" }
+<
+Then in pi, press `Ctrl+G` (the `app.editor.external` keybinding) to open the
+external editor. Completion appears as you type. Submit by SAVE + QUIT (pi
+re-reads the temp file after the editor exits) — see |pi-editor-autosave|.
+
+==============================================================================
+4. Configuration                                 *pi-editor-config*
+
+Call `setup()` once from your config. Options are merged over the shipped
+defaults (so you only set what you want to change): >
+    require("pi-editor").setup({
+      menu      = { max_height = 20, border = "rounded" },
+      debounce_ms      = 20,   -- file/attachment-context window
+      rpc_timeout_ms   = 2000, -- MUST exceed the bridge fd-abort (1500)
+      autosave_on_exit = true,
+      engine   = "builtin",    -- "builtin" (shipped) | "blink"|
+                              -- "cmp" (forthcoming)
+      env_var  = "PI_EDITOR_BRIDGE",
+    })
+<
+DEFAULTS (mirror `lua/pi-editor/init.lua` `M.defaults`) ~
+
+    menu.max_height    12         Max visible rows in the popup.
+    menu.border        "rounded"  |nvim_open_win| border:
+                                  "none"|"single"|"double"|"rounded"|
+                                  "solid"|"shadow"|string[].
+    debounce_ms        20         File/attachment (@.../#...) debounce.
+                                  Slash/typing use 0 ms (pi-faithful).
+    rpc_timeout_ms     2000       Ms before an RPC is stale. MUST exceed
+                                  the bridge fd-abort (1500); a WARN fires
+                                  at setup if <= 1500 (cuts off @file
+                                  client-side).
+    autosave_on_exit   true       Write the pi temp file on |VimLeavePre|
+                                  if modified (see |pi-editor-autosave|).
+    engine             "builtin"  "builtin" = the floating menu (shipped).
+                                  "blink"/"cmp" are FORTHCOMING (Phase 4).
+    env_var            "PI_EDITOR_BRIDGE"  Override the descriptor env var
+                                  name (applied as a fallback at activation;
+                                  read from config.env_var, defaulting to
+                                  "PI_EDITOR_BRIDGE" when unset).
+
+The seven keys above are the full public configuration surface. `setup()`
+returns the resolved config and also stores it as
+`require("pi-editor").config`.
+
+==============================================================================
+5. Commands                                      *pi-editor-commands*
+
+This plugin defines NO `:UserCommand`s. You drive it with built-in Neovim
+commands: >
+    :help pi-editor                 Open this help file (after :helptags).
+    :helptags <rtp>/doc             (Re)generate the help tag index.
+    :checkhealth pi-editor          Diagnostics: version / env / socket / fd
+                                    (see |pi-editor-checkhealth|).
+    :messages                       Read the one-time
+                                    "completion unavailable" notify.
+    :lua print(vim.env.PI_EDITOR_BRIDGE)
+                                    Inspect the process-local bridge descriptor.
+<
+
+==============================================================================
+6. Keymaps                                       *pi-editor-keymaps*
+
+These are BUFFER-LOCAL, INSERT-mode mappings installed only in `pi-prompt`
+buffers (see |pi-editor-filetype|) by `ftplugin/pi-prompt.lua`. They do not leak
+into other buffers. Each falls through to its normal insert-mode default when
+completion is inactive or signals "not handled" (e.g. `<Tab>` still indents,
+`<CR>` still inserts a newline, when the bridge is not connected).
+
+    <Tab>     Trigger or accept the menu (pi-faithful Tab). With the menu open +
+              an item selected → accept. With the menu closed → trigger file
+              completion (respects pi's `shouldTriggerFileCompletion`) or, on a
+              bare `/cmd`, slash completion.
+    <S-Tab>   Previous completion item.
+    <C-N>     Next completion item.
+    <Down>    Next completion item (mirrors <C-N>).
+    <C-P>     Previous completion item.
+    <Up>      Previous completion item (mirrors <C-P>).
+    <C-Y>     Accept if the menu is open; otherwise fall through to |i_CTRL-Y|.
+    <C-E>     Dismiss the completion menu.
+    <CR>      Accept if the menu is open; OTHERWISE INSERT A NEWLINE. There is
+              NO Enter-to-submit in the external editor — the prompt submits on
+              SAVE + QUIT, not Enter. See |pi-editor-autosave|.
+
+==============================================================================
+7. Autocmds / events                             *pi-editor-autocmds*
+
+The buffer-local `pi-editor` augroup (installed by `ftplugin/pi-prompt.lua`):
+
+  Refresh (fire-and-forget): >
+    InsertEnter, TextChangedI, CursorMovedI  →  completion refresh
+<
+  Auto-close the menu: >
+    InsertLeave, BufLeave             →  hide menu + cancel refresh
+<
+  Autosave + bridge teardown (when `autosave_on_exit ~= false`, the default): >
+    VimLeavePre, ExitPre              →  autosave-if-modified,
+                                       send `bye`, close socket
+<
+The "cursor moved out of prefix" auto-close is owned pi-faithfully by the
+existing refresh→re-fetch→empty→close path (no local prefix detector).
+
+==============================================================================
+8. Completion behavior                           *pi-editor-completion*
+
+Completion is produced by pi's LIVE `AutocompleteProvider` (captured by the
+bridge extension) — not a reimplementation. So what you get is exactly what the
+TUI gets:
+
+  • Slash commands: `/model`, `/compact`, `/skill:<name>` (when skill commands
+    are on), plus prompt templates (`.pi/prompts`, ...) and registered extension
+    commands (`pi.registerCommand(...)`), each with a description
+    + argument hint.
+  • Command-argument completion where pi supports it (e.g.
+    `/model <provider/id>`, `/login <provider>`).
+  • `@file` mention completion: pi's exact fuzzy/`fd` logic (gitignore-aware,
+    scored, scoped). Needs `fd` (|pi-editor-requirements|).
+  • Path completion: bare paths, `./...`, `~/...`, `/abs/...` — identical to pi.
+  • `<Tab>` to force file completion, matching pi's
+    `shouldTriggerFileCompletion`.
+
+DEBOUNCE ~
+Pi does not apply a flat debounce. The window is computed per request: slash
+commands and plain typing use 0 ms (immediate); `@...`/`#...` attachment context
+uses `debounce_ms` (default 20). This mirrors pi's TUI
+`getAutocompleteDebounceMs`.
+
+ACCEPTANCE ~
+When you accept an item, the plugin delegates to pi's `applyCompletion`, which
+returns the NEW full buffer lines + the final cursor. The plugin replaces the
+buffer + positions the cursor. Insertion rules (trailing space for files, no
+space for directories, quote handling, `/cmd ` for commands) are therefore
+identical to the TUI — the plugin never reimplements them.
+
+==============================================================================
+9. Filetype                                      *pi-editor-filetype*
+
+When activation succeeds (|pi-editor-env| present + valid), the buffer's
+filetype is set to `pi-prompt`, which auto-sources `ftplugin/pi-prompt.lua`.
+That sets: >
+    formatoptions  -= t      (stop insert-time auto-wrap)
+    textwidth       = 0
+    wrap            (window-local)
+    spell  = false   (window-local)
+<
+The buffer is otherwise plain markdown (the temp file is
+`pi-editor-<ts>.pi.md`).
+
+==============================================================================
+10. Environment                                  *pi-editor-env*
+
+The bridge extension writes a single-line JSON descriptor to the process
+environment INSIDE pi: >
+    PI_EDITOR_BRIDGE = {
+      "transport": "unix",
+      "path": "/tmp/pi-editor-bridge-<uuid>.sock",
+      "token": "<32-byte hex>",
+      "pid": 12345,
+      "cwd": "/your/project",
+      "fdAvailable": true,
+      "serverVersion": "0.1.0"
+    }
+<
+The child `$EDITOR` pi spawns INHERITS this var; THIS PLUGIN keys activation
+on it (|pi-editor-intro| dormant-by-design).
+
+NOTE: `echo $PI_EDITOR_BRIDGE` in your shell shows NOTHING — the variable is
+written to `process.env` INSIDE pi and is only visible to the child editor. This
+is the #1 install confusion; it is not a bug. Inspect it from inside the
+launched Neovim: >
+    :lua print(vim.env.PI_EDITOR_BRIDGE)
+<
+SECURITY: the `token` is the real auth boundary (PRD §12). NEVER paste the live
+descriptor — especially `token` — into a bug report.
+
+OPTIONAL — minimal-config startup optimization ~
+For faster editor launch you may keep a tiny Neovim config at
+`~/.config/pi-editor/` and have the bridge set `NVIM_APPNAME=pi-editor` so the
+editor instance loads ONLY `pi-editor.nvim`. This is OPTIONAL (Phase 4); the
+plugin works with your full config.
+
+==============================================================================
+11. Lua API (for integrators)                    *pi-editor-api*
+
+The plugin exposes its modules so optional completion-engine sources (blink/cmp,
+forthcoming) and user code can issue RPCs.
+
+`require("pi-editor")` ~
+    .setup(opts)    Merge opts over defaults; store as .config
+                    (|pi-editor-config|).
+    .config         The resolved config (nil until setup()).
+    .defaults       The shipped defaults table (read by :checkhealth + tests).
+    .bridge         The bridge module table; nil until the hello
+                    handshake succeeds (stays nil in dormant sessions
+                    + on handshake failure → completion auto-bails →
+                    degrade to a plain buffer).
+    .descriptor     The parsed PI_EDITOR_BRIDGE descriptor; nil if dormant.
+    .activate()     The VimEnter entry point (called automatically by
+                    the startup shim; you do not normally call it).
+
+`require("pi-editor.bridge")` ~
+    .version            "0.1.0" (mirrors package.json + the extension
+                        BRIDGE_VERSION).
+    .server_info        {serverVersion, cwd, fdAvailable}; nil until handshake.
+    .is_connected()     true between connect-success and teardown.
+    .request(method, params, on_result) -> id|nil
+                        Generic JSON-RPC. on_result(err, result) resolved once.
+    .cancel(id)         Local supersession cleanup (fires cb("cancelled")).
+    .on_notification(method, handler)
+                        handler(params) on a server notification
+                        (v1: "commandsChanged").
+    .on_disconnect(handler)
+                        handler(reason) when the pipe drops (process death /
+                        dropped connection post-handshake).
+  (Transport: .connect/.send/.handshake/.close/.on_exit — see the source.)
+
+`require("pi-editor.coords")` ~
+    .byte_to_utf16(line, byte_idx)            nvim byte col -> pi UTF-16 col.
+    .utf16_to_byte(line, utf16_idx)           pi UTF-16 col -> nvim byte col.
+    .nvim_to_pi_coords(lines, row, byte_col)
+                                        full (lines, cursorLine, cursorCol) map.
+    .pi_to_nvim_coords(lines, cursorLine, cursorCol)
+                                        inverse.
+
+==============================================================================
+12. Health                                       *pi-editor-checkhealth*
+
+Run >
+    :checkhealth pi-editor
+<
+for a never-throwing diagnostic with four sections: the plugin version + a
+Neovim >= 0.11 gate; the bridge ENVIRONMENT (dormant vs active); the bridge
+CONNECTION (`is_connected()` + the handshake result + the socket file); and the
+external `fd` tool (optional — WARN, not error). A missing `PI_EDITOR_BRIDGE` is
+reported as INFO "dormant" (the expected normal-session state), not an error.
+
+==============================================================================
+13. Troubleshooting / FAQ                        *pi-editor-troubleshooting*
+
+Q: "I installed it and nothing happens in nvim." ~
+A: EXPECTED. The plugin is dormant unless pi launched the editor. Run
+   `:checkhealth pi-editor` (it will say "dormant" if the env var is unset).
+
+Q: "Completion doesn't appear when pi opens nvim." ~
+A: Check, in order: (1) the bridge extension loaded — `pi list` shows
+   `pi-editor-bridge`; (2) EDITOR/VISUAL/`externalEditor` is `nvim`; (3) this
+   plugin is installed with `lazy = false`; (4) read `:messages` for the
+   one-time "completion unavailable" notify (connect refused / bad token /
+   timeout).
+
+Q: "`@file` finds nothing." ~
+A: Install `fd` (Debian: `fdfind`). Without it `@file` is empty, but path
+   completion (directory listing) still works. The bridge may still have `fd`
+   in pi's bin dir even if it is not on your `$PATH` — see
+   |pi-editor-checkhealth|.
+
+Q: "I typed, then `:q`, and lost my prompt." ~
+A: pi reads the temp file only after the editor exits with status 0. The plugin
+   AUTOSAVES on |VimLeavePre| when modified (`autosave_on_exit`, default true —
+   see |pi-editor-autosave|). To be safe, `:w` before `:q`, or quit with
+   `:x`/`ZZ`.
+
+Q: "I ran `/reload` while the editor was open." ~
+A: The bridge re-captures the provider + re-advertises the descriptor; your open
+   connection stays valid, and a `commandsChanged` notification refreshes it.
+
+Q: "Another extension's custom trigger (e.g. `#issues`) doesn't complete." ~
+A: KNOWN LIMITATION. The bridge captures the provider at its own registration
+   time, so wrappers registered AFTER it do not appear. The BASE provider —
+   slash commands, `/skill:`, templates, paths — is always captured.
+
+Q: "Nothing happens in non-interactive mode (`pi -p`)." ~
+A: Correct. `openExternalEditor` is TUI-only, so the bridge no-ops outside TUI.
+
+Q: "I set `rpc_timeout_ms` to 1000 and got a warning." ~
+A: It must EXCEED the bridge's fd-abort (1500). Setting it lower would cut off
+   `@file` searches client-side. Leave it at 2000 (default).
+
+==============================================================================
+AUTOSAVE                                         *pi-editor-autosave*
+
+Pi re-reads the temp file ONLY after the editor exits with status 0, trimming
+one trailing newline. There is no live sync. So if you type and quit without
+saving, you silently lose your prompt. The plugin prevents this by autosaving
+the buffer on |VimLeavePre|/|ExitPre| when `autosave_on_exit` is true (the
+default) — a plain UTF-8 + `\n` write that matches pi's wire format and does
+NOT run user BufWritePre/Post autocmds (no formatter risk on prompt text). It
+also sends a best-effort `bye` RPC + closes the socket on the same events.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

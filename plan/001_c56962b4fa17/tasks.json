@@ -1040,7 +1040,7 @@
                   "type": "Subtask",
                   "id": "P3.M11.T28.S43",
                   "title": "Write doc/pi-editor.txt vimdoc with commands, options, keymaps, troubleshooting",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M9.T23.S38",
