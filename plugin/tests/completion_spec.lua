@@ -1164,4 +1164,186 @@ describe("pi-editor.completion", function()
       vim.api.nvim_buf_delete(buf, { force = true })
     end)
   end)
+
+  -- =====================================================================
+  -- S41: on_commands_changed(buf?) — react to the `commandsChanged` server→client
+  -- notification (PRD §5.4 / §13 step 13 / §11). The mechanism is DONE (S27's
+  -- on_notification dispatches it; init.lua M.activate() registers the handler). THIS
+  -- describe block covers the BEHAVIOR: clear the cache (last_result + menu's own
+  -- items) + bump gen (drop a late stale cb) + conditionally re-query iff the menu
+  -- WAS open (the "actively completing" signal) + buf valid+current. PRESERVES
+  -- state.buf (contrast reset()). Reuses the populated_menu + reset helpers. Idempotent.
+  -- (PRP P3.M10.T26.S41; research/notes.md §5.)
+  -- =====================================================================
+  describe("on_commands_changed", function()
+    -- (a) surface: exposes on_commands_changed as a function
+    it("exposes on_commands_changed as a function", function()
+      assert.are.equals("function", type(completion.on_commands_changed))
+    end)
+
+    -- (b) clears last_result + closes the stale menu
+    it("clears last_result + closes the stale menu", function()
+      local _, buf = populated_menu("/mod", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      assert.is_not_nil(completion.current())
+      completion.on_commands_changed(buf)
+      assert.is_nil(completion.current(), "on_commands_changed must clear last_result (the cache)")
+      assert.is_false(menu.is_open(), "on_commands_changed must close the stale menu")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (c) cancels the in-flight getSuggestions + bumps gen → a LATE stale cb does NOT repopulate
+    it("cancels the in-flight request + bumps gen so a late stale cb is dropped", function()
+      local fake = fake_bridge({ auto_cancel_fires = false }) -- drive cbs manually
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mod" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      menu.attach()
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 1 end)
+      local stale_cb = fake.requests[1].cb
+      local stale_id = fake.requests[1].id
+      -- fire on_commands_changed → cancels inflight + bumps gen + clears cache + closes menu
+      completion.on_commands_changed(buf)
+      assert.is_true(#fake.cancels >= 1, "on_commands_changed must cancel the in-flight request")
+      assert.are.equals(stale_id, fake.cancels[#fake.cancels])
+      assert.is_nil(completion.current(), "cache cleared")
+      assert.is_false(menu.is_open(), "menu closed")
+      -- a LATE stale cb with OLD items must NOT repopulate the cache / reopen the menu (gen-guard)
+      local seam = 0
+      completion.on_results = function() seam = seam + 1 end
+      vim.schedule_wrap(stale_cb)(nil, { items = { { value = "/stale", label = "stale" } }, prefix = "/mo" })
+      wait_for(120, function() return false end) -- let the scheduled stale cb settle (a no-op)
+      assert.are.equals(0, seam, "a late stale cb must NOT fire on_results (gen-guard)")
+      assert.is_nil(completion.current(), "a late stale cb must NOT repopulate the cache")
+      assert.is_false(menu.is_open(), "a late stale cb must NOT reopen the menu")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (d) RE-QUERIES when was_open: a fresh getSuggestions is issued; on success the menu reopens with NEW items
+    it("re-queries (fresh getSuggestions) when the menu WAS open + buf current", function()
+      local fake, buf = populated_menu("/mod", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      local n0 = #fake.requests
+      completion.on_commands_changed(buf)
+      -- a FRESH getSuggestions was issued (the re-query against the rebuilt provider)
+      wait_for(200, function() return #fake.requests > n0 end)
+      assert.are.equals(n0 + 1, #fake.requests, "on_commands_changed must issue a fresh getSuggestions when was_open")
+      assert.are.equals("getSuggestions", fake.requests[#fake.requests].method)
+      -- the cache was cleared first (the re-query has not yet resolved)
+      assert.is_nil(completion.current())
+      -- resolve the fresh request with NEW items → the menu reopens with them
+      local new_items = { { value = "/model-new", label = "model-new" } }
+      fake.resolve_last(nil, { items = new_items, prefix = "/mo" })
+      wait_for(200, function() return menu.is_open() end)
+      assert.is_true(menu.is_open(), "the menu must reopen with the fresh items")
+      assert.are.same(new_items, completion.current().items, "the cache holds the NEW items")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (e) does NOT re-query when the menu was CLOSED (no spurious pop)
+    it("does NOT re-query when the menu was CLOSED (no fresh request)", function()
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mod" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      menu.attach()
+      -- refresh + resolve with EMPTY items so the menu is closed but last_result was set
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 1 end)
+      fake.resolve_last(nil, { items = {}, prefix = "" })
+      wait_for(200, function() return completion.current() ~= nil end)
+      assert.is_false(menu.is_open(), "pre: menu closed (empty result)")
+      assert.is_not_nil(completion.current(), "pre: last_result was set")
+      local n0 = #fake.requests
+      completion.on_commands_changed(buf)
+      wait_for(120, function() return false end) -- let any deferred re-query fire (none)
+      assert.are.equals(n0, #fake.requests, "on_commands_changed must NOT re-query when the menu was closed")
+      assert.is_nil(completion.current(), "the cache was still cleared")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (f) does NOT re-query when buf isn't current (even if was_open)
+    it("does NOT re-query when buf isn't the current buffer (even if was_open)", function()
+      local fake, buf = populated_menu("/mod", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      -- switch the window to a 2nd buffer so `buf` is no longer current
+      local other = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), other)
+      local n0 = #fake.requests
+      completion.on_commands_changed(buf)
+      wait_for(120, function() return false end)
+      assert.are.equals(n0, #fake.requests, "on_commands_changed must NOT re-query when buf != current")
+      vim.api.nvim_buf_delete(buf, { force = true })
+      vim.api.nvim_buf_delete(other, { force = true })
+    end)
+
+    -- (g) preserves state.buf (contrast reset() — reset() nils it)
+    it("preserves state.buf (the re-query re-opens the menu; reset() would nil state.buf)", function()
+      local fake, buf = populated_menu("/mod", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      local n0 = #fake.requests
+      completion.on_commands_changed(buf)
+      -- on_commands_changed PRESERVES state.buf: the internal re-query (M.refresh(buf))
+      -- re-fetches + re-opens the menu. Contrast reset(), which nils state.buf → a
+      -- subsequent refresh would have nothing targeting the pi-prompt buffer.
+      wait_for(200, function() return #fake.requests > n0 end)
+      assert.are.equals(n0 + 1, #fake.requests, "a fresh re-query issued (state.buf was preserved)")
+      local new_items = { { value = "/model2", label = "model2" } }
+      fake.resolve_last(nil, { items = new_items, prefix = "/mo" })
+      wait_for(200, function() return menu.is_open() end)
+      assert.is_true(menu.is_open(), "the preserved state.buf let the re-query re-open the menu")
+      assert.are.same(new_items, completion.current().items)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (h) never throws on bad state (nil/wiped buf, absent bridge)
+    describe("never-throws on bad state", function()
+      it("on_commands_changed(nil) with nil state.buf never throws", function()
+        assert.has_no.errors(function() completion.on_commands_changed(nil) end)
+      end)
+
+      it("on_commands_changed() with a wiped buf never throws", function()
+        local buf = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_buf_delete(buf, { force = true })
+        assert.has_no.errors(function() completion.on_commands_changed(buf) end)
+      end)
+
+      it("on_commands_changed() with pi.bridge == nil never throws + still clears cache", function()
+        pi.bridge = nil
+        local buf = vim.api.nvim_create_buf(true, false)
+        assert.has_no.errors(function() completion.on_commands_changed(buf) end)
+        -- the cache clear path runs even with no bridge (cancel is guarded)
+        assert.is_nil(completion.current())
+        vim.api.nvim_buf_delete(buf, { force = true })
+      end)
+    end)
+
+    -- (i) idempotent: call twice; no throw; cache cleared; the debounce coalesces
+    -- (the 2nd call's cancel_timer cancels the 1st's pending re-query defer + sees the
+    -- menu closed → no 2nd re-query; at most ONE fresh re-query ever issues).
+    it("is idempotent (twice → no throw; cache cleared; at most ONE fresh re-query)", function()
+      local fake, buf = populated_menu("/mod", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      local n0 = #fake.requests
+      assert.has_no.errors(function()
+        completion.on_commands_changed(buf)
+        completion.on_commands_changed(buf)
+      end)
+      wait_for(200, function() return false end) -- let any deferred re-query settle
+      -- the 2nd call cancels the 1st's pending defer + sees menu closed → at most ONE re-query
+      assert.is_true(#fake.requests - n0 <= 1, "a double-call must issue at most ONE fresh re-query (got " .. (#fake.requests - n0) .. ")")
+      assert.is_nil(completion.current(), "cache cleared")
+      assert.is_false(menu.is_open(), "menu closed")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+  end)
 end)

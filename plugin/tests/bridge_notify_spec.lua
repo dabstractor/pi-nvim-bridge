@@ -387,4 +387,37 @@ describe("pi-editor.bridge on_notification", function()
       assert.is_true(result.ok)
       stop()
     end))
+
+  -- (14) S41 WIRING — registering the S41 handler via on_notification runs it on the
+  --      REAL commandsChanged notification (the dispatch S27 + the behavior S41 compose).
+  --      Observable: a populated menu is closed by on_commands_changed. (Most behavior
+  --      stays in completion_spec — this proves the wire-up over a real socket.)
+  it("S41 wiring: the on_notification-registered handler closes a stale menu on commandsChanged",
+    with_handshaken_server({ mode = "notify" }, function(path, _opts, stop)
+      local completion = require("pi-editor.completion")
+      local menu = require("pi-editor.menu")
+      -- populate the menu via the REAL seam (so is_open()==true before the notification)
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mod" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      menu.attach()
+      -- drive the result→menu seam directly so the menu OPENS (the server's notify mode
+      -- doesn't echo getSuggestions; menu.on_results is the S31 consumer of completion's seam).
+      -- This sets up the observable "stale menu open" state for the S41 handler to close.
+      menu.on_results(buf, { { value = "/model", label = "model" } }, "/mo")
+      vim.wait(200, function() return menu.is_open() end, 5)
+      assert.is_true(menu.is_open(), "pre: the menu must be open before the notification")
+      -- register the S41 handler (exactly as init.lua M.activate() does)
+      bridge.on_notification("commandsChanged", function(_params)
+        pcall(function() require("pi-editor.completion").on_commands_changed() end)
+      end)
+      -- the server pushes the REAL commandsChanged notification (mode=notify → after hello)
+      vim.wait(500, function() return not menu.is_open() end, 5)
+      assert.is_false(menu.is_open(), "the S41 handler must close the stale menu on the real notification")
+      vim.api.nvim_buf_delete(buf, { force = true })
+      stop()
+    end))
 end)

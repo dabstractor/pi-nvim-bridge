@@ -174,6 +174,16 @@ function M.activate()
           "pi-editor: bridge connection lost — completion disabled")
       end)
     end
+    -- S41: clear caches + re-query on `commandsChanged` (the server rebuilt the provider
+    -- on /reload/new/resume/fork — PRD §11 / §13 step 13). Registered AFTER handshake()
+    -- (handshake() runs M.close() at its start which clears notification_handlers —
+    -- GOTCHA D). schedule_wrap'd by on_notification (api-safe; can touch buffers/menus).
+    -- Never throws (pcall-wrapped body; on_commands_changed is itself never-throws).
+    if type(br.on_notification) == "function" then
+      br.on_notification("commandsChanged", function(_params)
+        pcall(function() require("pi-editor.completion").on_commands_changed() end)
+      end)
+    end
   end)
   -- S31: wire completion results -> menu population (forward-contract no-op-safe,
   -- mirrors the bridge.handshake pcall above). menu.attach() registers

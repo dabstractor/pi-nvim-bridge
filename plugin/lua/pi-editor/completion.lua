@@ -811,4 +811,58 @@ function M.on_buf_leave(buf)
   hide_and_cancel()
 end
 
+-- ===========================================================================
+-- S41: on_commands_changed(buf?) — react to the `commandsChanged` server→client
+-- notification (PRD §5.4 / §13 step 13 / §11). The MECHANISM is DONE: S27's
+-- `bridge.on_notification("commandsChanged", handler)` (schedule_wrap'd → api-safe)
+-- routes the notification to the handler `init.lua` registers in `M.activate()`.
+-- THIS fn is the BEHAVIOR: clear the completion cache (the menu's rendered items were
+-- computed against the OLD command set + may now be stale — a command added/removed/
+-- renamed, a new prompt template) + close the stale menu, then CONDITIONALLY re-query
+-- via `M.refresh(buf)` so a *live* menu reflects the rebuilt provider — WITHOUT
+-- spuriously popping a menu when the user is not actively completing (PRD §11: "Reload
+-- during an open editor … The open editor's existing connection stays valid.").
+--
+-- WHY `was_open` (NOT vim.fn.mode()): menu.is_open() is the PRECISE "actively completing
+-- with visible suggestions" signal + is trivially observable in a headless plenary test
+-- (via populated_menu). vim.fn.mode() is fiddly to drive deterministically headless.
+-- WHY BUMP gen (NOT zero — contrast reset() which zeroes + nils buf): the gen-guard
+-- idiom (`gen ~= state.gen` → drop) is shared with do_refresh/force_fetch. Bumping
+-- (forward) is clearer than zeroing; both drop a late stale cb whose captured gen is
+-- now stale. We PRESERVE `state.buf` so the re-query can target the pi-prompt buffer
+-- (reset() nils it → the re-query would have nothing to target).
+-- WHY the provider gates context itself: pi's getSuggestions returns null (→ empty →
+-- menu.close) for non-trigger cursor positions, so a re-query never spuriously re-opens
+-- the menu. (The empty-result non-refresh edge does NOT re-query — accepted minor; the
+-- next keystroke fetches fresh; PRD §11 "existing connection stays valid" is satisfied.)
+--
+-- NEVER throws (out-of-band event; pcall every external call). Idempotent (safe to fire
+-- twice). Called by init.lua's `commandsChanged` registration. (research/notes.md §5.)
+-- ===========================================================================
+
+--- S41 — Clear the completion cache + close the stale menu; iff a menu WAS open (actively
+--- completing) + `buf` valid+current, re-query so the menu reflects the rebuilt provider.
+--- Called by init.lua's `commandsChanged` registration (S41; consumes S27's on_notification).
+--- Idempotent + never throws (out-of-band event; pcall every external call). PRESERVES
+--- `state.buf` (contrast `M.reset()`, which nils it) so the re-query can target the pi-prompt buf.
+---@param buf integer? The pi-prompt buffer (defaults to state.buf).
+function M.on_commands_changed(buf)
+  buf = buf or state.buf
+  local was_open = false
+  pcall(function() was_open = require("pi-editor.menu").is_open() end) -- capture BEFORE close (the "actively completing" signal)
+  cancel_timer()                                              -- stop()+close() the pending defer (leak fix; NEVER stop-only)
+  local b = require("pi-editor").bridge                       -- READ FRESH (handshake async; test mocks swap in after require)
+  if state.inflight_id and b and type(b.cancel) == "function" then
+    pcall(b.cancel, state.inflight_id)                        -- supersede layer 1 (cancel the in-flight getSuggestions)
+  end
+  state.inflight_id = nil
+  state.last_result = nil                                     -- CLEAR THE CACHE (the stale items)
+  state.gen = state.gen + 1                                   -- supersede layer 2 (drop a late stale cb via the gen-guard)
+  pcall(function() require("pi-editor.menu").close() end)     -- clear the menu's OWN stale items (menu holds its own copy)
+  if not was_open then return end                             -- not actively completing → next keystroke fetches fresh
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
+  if buf ~= vim.api.nvim_get_current_buf() then return end    -- one buf/session (PRD §11)
+  pcall(M.refresh, buf)                                       -- re-query (debounced; the provider gates non-trigger context itself)
+end
+
 return M

@@ -46,6 +46,7 @@ srv:bind(path)
 local srv_rx, srv_conn
 local seen = {}     -- every decoded client request the server saw (order-preserving)
 local hello_replied = false
+local gs_replies = {}  -- per-call getSuggestions reply override (S41 smoke pushes onto this)
 srv_rx = jreader.new(function(req)
   -- ALWAYS reply to `hello` with a valid HelloResult so the handshake succeeds.
   if req.method == "hello" then
@@ -65,9 +66,14 @@ srv_rx = jreader.new(function(req)
   end
   seen[#seen + 1] = req
   if req.method == "getSuggestions" then
-    -- reply with an empty result (null) so completion's cb resolves cleanly
+    -- reply: a queued per-call override (S41 smoke), else the default empty (null) result
+    local reply = table.remove(gs_replies, 1)
     if srv_conn and not srv_conn:is_closing() then
-      srv_conn:write(vim.json.encode({ jsonrpc = "2.0", id = req.id, result = vim.NIL }) .. "\n")
+      if reply then
+        srv_conn:write(vim.json.encode({ jsonrpc = "2.0", id = req.id, result = reply }) .. "\n")
+      else
+        srv_conn:write(vim.json.encode({ jsonrpc = "2.0", id = req.id, result = vim.NIL }) .. "\n")
+      end
     end
   end
 end)
@@ -165,6 +171,49 @@ if pi.bridge == bridge then
   end
   vim.api.nvim_win_close(fwin, true)
   vim.api.nvim_buf_delete(fbuf, { force = true })
+
+  -- ── S41: commandsChanged → clear cache + re-query + reopen with NEW items ─────
+  -- End-to-end drive of on_commands_changed: populate a menu (server replies items),
+  -- drive commandsChanged (call on_commands_changed directly), assert the cache cleared
+  -- + a fresh getSuggestions re-fired + the menu reopened with the NEW items.
+  if pi.config then pi.config.debounce_ms = 5 end -- shrink so vim.wait drives it quickly
+  local menu = require("pi-editor.menu")
+  local sbuf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_lines(sbuf, 0, -1, false, { "/mod" })
+  local swin = vim.api.nvim_open_win(sbuf, true, {
+    relative = "editor", row = 1, col = 1, width = 40, height = 4, border = "none",
+  })
+  vim.wo[swin].virtualedit = "onemore"
+  vim.api.nvim_win_set_cursor(swin, { 1, 3 }) -- cursor mid "/mod"
+  menu.attach()
+  -- queue the FIRST getSuggestions reply (OLD items) so the menu opens
+  table.insert(gs_replies, { items = { { value = "/model-old", label = "model-old" } }, prefix = "/mo" })
+  local sn0 = #seen
+  completion.refresh(sbuf)
+  vim.wait(500, function() return #seen > sn0 end, 5)
+  vim.wait(120) -- let the reply round-trip + menu open
+  check(menu.is_open(), "pre: the menu must be open with the OLD items")
+  check(completion.current() ~= nil, "pre: last_result was set")
+  if completion.current() then
+    check(completion.current().items[1].value == "/model-old", "pre: cache holds the OLD item")
+  end
+  -- queue the SECOND getSuggestions reply (NEW items) for the re-query on_commands_changed issues
+  table.insert(gs_replies, { items = { { value = "/model-new", label = "model-new" } }, prefix = "/mo" })
+  local sn1 = #seen
+  -- drive commandsChanged (call on_commands_changed directly — the S27 handler would call this)
+  check(pcall(function() completion.on_commands_changed(sbuf) end), "on_commands_changed never throws")
+  -- the cache was cleared immediately
+  check(completion.current() == nil, "on_commands_changed must clear the cache")
+  -- a FRESH getSuggestions re-fired (was_open=true + buf current)
+  vim.wait(500, function() return #seen > sn1 end, 5)
+  check(#seen == sn1 + 1, "on_commands_changed must re-fire exactly one getSuggestions (got " .. (#seen - sn1) .. ")")
+  vim.wait(150) -- let the NEW-items reply round-trip + menu reopen
+  check(menu.is_open(), "the menu must reopen with the NEW items")
+  if completion.current() then
+    check(completion.current().items[1].value == "/model-new", "the cache must hold the NEW item after the re-query")
+  end
+  vim.api.nvim_win_close(swin, true)
+  vim.api.nvim_buf_delete(sbuf, { force = true })
 end
 
 -- ── teardown: completion.reset + bridge.close + server stop ─────────────────────
