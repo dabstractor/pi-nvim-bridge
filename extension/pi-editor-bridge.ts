@@ -288,6 +288,29 @@ export const BRIDGE_ENV = "PI_EDITOR_BRIDGE";
  */
 export const GET_SUGGESTIONS_TIMEOUT_MS = 1500;
 
+/**
+ * The standard Neovim env var the spawned `$EDITOR` (Neovim) reads to pick its config
+ * dir (replaces the `nvim` segment in every `stdpath()` path — see `:help $NVIM_APPNAME`).
+ * Exported so tests + the manual-alternative docs reference the NAME (not a hardcoded
+ * string) and a future rename is one-line.
+ */
+export const NVIM_APPNAME_ENV = "NVIM_APPNAME";
+
+/**
+ * The opt-in env var THIS extension reads for the minimal-config optimization
+ * (PRD §10.4). Absent ⇒ feature OFF (zero behavior change). Set to `""` / `"1"` /
+ * `"true"` / `"yes"` / `"on"` (case-insensitive) ⇒ use {@link DEFAULT_NVIM_APPNAME}.
+ * Any other non-empty string ⇒ that literal appname. Exported for the same reasons
+ * as {@link BRIDGE_ENV}.
+ */
+export const NVIM_APPNAME_OPTIN_ENV = "PI_EDITOR_NVIM_APPNAME";
+
+/**
+ * Default appname when the opt-in is a truthy sentinel (PRD §10.4: "pi-editor").
+ * The user maintains a tiny `~/.config/pi-editor/` that loads only `pi-editor.nvim`.
+ */
+export const DEFAULT_NVIM_APPNAME = "pi-editor";
+
 /** The session's cwd (stored from `ctx.cwd` on `session_start`). Read via
  *  {@link getCwd}; used by {@link makeHelloHandler} for `HelloResult.cwd` and (later)
  *  by S16's `PI_EDITOR_BRIDGE` descriptor. */
@@ -362,6 +385,87 @@ function isExecutableFile(p: string): boolean {
 }
 
 /**
+ * SAVE/RESTORE state for {@link NVIM_APPNAME_ENV} (GOTCHA #1). `nvimAppnameApplied` is
+ * true iff the bridge currently has an override active; `nvimAppnameBaseline` is the
+ * user's pre-bridge value (string) or `undefined` (the user had none). Both are mutated
+ * ONLY by {@link applyNvimAppname} / {@link restoreNvimAppname}. Exposed to tests via
+ * {@link __resetNvimAppnameStateForTest} (NOT re-exported as `let` — jiti does not
+ * live-bind `export let` reassignment; GOTCHA #5).
+ */
+let nvimAppnameApplied = false;
+let nvimAppnameBaseline: string | undefined;
+
+/**
+ * Pure resolver for the opt-in. Reads {@link NVIM_APPNAME_OPTIN_ENV} and returns:
+ *  - `undefined`          → opt-in OFF (`applyNvimAppname` does nothing) — the default.
+ *  - {@link DEFAULT_NVIM_APPNAME} (`"pi-editor"`) → empty / `1` / `true` / `yes` / `on`.
+ *  - `<literal>`          → any other non-empty string (custom appname).
+ *
+ * PURE — no caching: it re-reads `process.env` each call (the opt-in can be changed
+ * between sessions, and it is called at most once per `startBridge`). Exported so the
+ * value table is unit-testable without `startBridge`. See research §1.3 for the table.
+ */
+export function resolveNvimAppname(): string | undefined {
+	const raw = process.env[NVIM_APPNAME_OPTIN_ENV];
+	if (raw === undefined) return undefined; // opt-in OFF (default — GOTCHA #2)
+	const trimmed = raw.trim();
+	if (trimmed === "" || /^(1|true|yes|on)$/i.test(trimmed)) {
+		return DEFAULT_NVIM_APPNAME;
+	}
+	return trimmed; // custom appname literal
+}
+
+/**
+ * Apply the {@link NVIM_APPNAME_ENV} opt-in (if enabled) by capturing the current
+ * baseline and overriding it with the resolved appname. NO-OP when the opt-in is off
+ * (GOTCHA #2 — guarantees byte-identical behavior to today when
+ * {@link NVIM_APPNAME_OPTIN_ENV} is unset). Called at the END of `startBridge`, AFTER
+ * the `PI_EDITOR_BRIDGE` descriptor write.
+ *
+ * CAPTURE ORDER (GOTCHA #3): `startBridge`'s first line is `stopBridge()`, which calls
+ * {@link restoreNvimAppname} (writing the baseline back / deleting the override). So by
+ * the time this reads `process.env[NVIM_APPNAME_ENV]`, any prior bridge override is
+ * already gone and the value is the genuine environment baseline. Two `startBridge`
+ * calls therefore capture the SAME baseline both times (verified — research §3). Do
+ * NOT move the capture above `stopBridge` or you'll re-capture the bridge's own prior
+ * override.
+ */
+function applyNvimAppname(): void {
+	const appname = resolveNvimAppname();
+	if (appname === undefined) return; // opt-in OFF → touch nothing
+	// startBridge's first line is stopBridge() → restoreNvimAppname(), so any prior
+	// override is already gone and THIS reads the genuine environment baseline (GOTCHA #3).
+	nvimAppnameBaseline = process.env[NVIM_APPNAME_ENV];
+	process.env[NVIM_APPNAME_ENV] = appname; // string only (GOTCHA #4)
+	nvimAppnameApplied = true;
+}
+
+/**
+ * Restore the {@link NVIM_APPNAME_ENV} baseline captured by {@link applyNvimAppname}.
+ * NO-OP when no override is active (safe to call unconditionally — the common
+ * opt-in-OFF case). Writes the baseline back, or DELETES the var if the baseline was
+ * `undefined` (GOTCHA #1 — NEVER clobber a pre-existing user value; a plain
+ * `delete process.env.NVIM_APPNAME` would PERMANENTLY CLOBBER a user's global like
+ * `NVIM_APPNAME=work` for the rest of the pi process). Called from `stopBridge`.
+ */
+function restoreNvimAppname(): void {
+	if (!nvimAppnameApplied) return; // safe no-op when opt-in was off / nothing applied
+	if (nvimAppnameBaseline === undefined) {
+		delete process.env[NVIM_APPNAME_ENV]; // user had none → leave it absent
+	} else {
+		process.env[NVIM_APPNAME_ENV] = nvimAppnameBaseline; // RESTORE the user's value
+	}
+	nvimAppnameApplied = false;
+	nvimAppnameBaseline = undefined;
+}
+
+/** Test seam: zero the apply/restore state (parallels {@link __setFdAvailableForTest}). */
+export function __resetNvimAppnameStateForTest(): void {
+	nvimAppnameApplied = false;
+	nvimAppnameBaseline = undefined;
+}
+
+/**
  * Tear down the bridge server: close the server, unlink the socket file, reset state.
  * IDEMPOTENT — safe to call when already stopped (all guards swallow no-op failures).
  *
@@ -390,6 +494,7 @@ export function stopBridge(): void {
 	socketPath = undefined;
 	token = undefined;
 	delete process.env[BRIDGE_ENV]; // symmetric: clears the advertisement (no-op if absent)
+	restoreNvimAppname(); // restore the user's pre-bridge NVIM_APPNAME baseline (no-op if not applied — GOTCHA #1)
 }
 
 /**
@@ -466,6 +571,29 @@ export function startBridge(ctx: ExtensionContext): void {
 		fdAvailable: getFdAvailable(), // REAL resolver — consistent with hello/ping (GOTCHA #2)
 		serverVersion: BRIDGE_VERSION, // "0.1.0" — NOT "0.0.1" (GOTCHA #1)
 	} satisfies BridgeDescriptor); // compile-time guard against the `version` typo
+	/**
+	 * [Mode A] Optional NVIM_APPNAME opt-in — minimal-config optimization (PRD §10.4).
+	 *
+	 * When the user sets {@link NVIM_APPNAME_OPTIN_ENV} (`""` / `"1"` / `"true"` /
+	 * `"yes"` / `"on"` ⇒ default `"pi-editor"`; any other non-empty string ⇒ that
+	 * appname), override `process.env[NVIM_APPNAME_ENV]` so the pi-spawned `$EDITOR`
+	 * (Neovim) boots with a tiny dedicated config (`~/.config/<appname>/`) instead of
+	 * the user's full `~/.config/nvim/` — dramatically faster editor startup.
+	 *
+	 * DISCOVERY: same `process.env`-inheritance seam as `PI_EDITOR_BRIDGE` above — pi
+	 * spawns the editor with `stdio:"inherit"` and no `env:` override (interactive-mode.ts),
+	 * so the child Neovim sees this value. SAVE/RESTORE: unlike `PI_EDITOR_BRIDGE`
+	 * (which pi owns and `stopBridge` plainly `delete`s), `NVIM_APPNAME` is a STANDARD
+	 * Neovim var the user may already export globally (e.g. `NVIM_APPNAME=work`); we
+	 * capture the baseline in `applyNvimAppname()` and `restoreNvimAppname()` (called
+	 * from `stopBridge`) writes it back — we NEVER clobber a pre-existing user value
+	 * (GOTCHA #1). OFF by default: `resolveNvimAppname()` returns `undefined` when the
+	 * opt-in var is unset ⇒ this is a pure no-op (GOTCHA #2). Placement inside
+	 * `startBridge` (not a separate `session_start` hook) inherits the TUI guard
+	 * (GOTCHA #8); capture runs AFTER `startBridge`'s first-line `stopBridge` so the
+	 * baseline is the genuine environment (GOTCHA #3).
+	 */
+	applyNvimAppname();
 }
 
 /**

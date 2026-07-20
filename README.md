@@ -82,10 +82,50 @@ Then in pi, press <kbd>Ctrl+G</kbd> (the `app.editor.external` keybinding) to
 open the external editor. The bridge advertises `PI_EDITOR_BRIDGE` to the Neovim
 process pi spawns, which the companion plugin keys on.
 
-> **Optional startup optimization:** for a faster editor launch you may keep a
-> minimal Neovim config at `~/.config/pi-editor/` and set
-> `NVIM_APPNAME=pi-editor` in pi's environment so the editor instance loads only
-> `pi-editor.nvim`. This is optional, not required.
+### Optional startup optimization
+
+A heavy daily-driver Neovim config (LSP servers, lazy-loaded plugins, plugin-
+manager boot) can add hundreds of milliseconds-to-seconds to every `Ctrl+G`
+launch. You can keep a tiny dedicated config that loads **only** `pi-editor.nvim`
+so the external-editor round-trip feels instant. Two ways to opt in:
+
+**Recommended — the bridge opt-in (`PI_EDITOR_NVIM_APPNAME`):**
+
+```bash
+export PI_EDITOR_NVIM_APPNAME=1
+```
+
+The extension sets `NVIM_APPNAME` inside pi's process for the session (so the
+pi-spawned Neovim boots from `~/.config/pi-editor/` instead of
+`~/.config/nvim/`) and **restores your prior value on exit** — so a global
+`NVIM_APPNAME`, if you have one, is left untouched. Value table:
+
+| `PI_EDITOR_NVIM_APPNAME` | resulting `NVIM_APPNAME` |
+| --- | --- |
+| _(unset)_ | _(feature off — nothing changes)_ |
+| `""`, `1`, `true`, `yes`, `on` (case-insensitive) | `pi-editor` (default) |
+| _any other non-empty string_ | that literal appname |
+
+**The minimal config** (any of the opt-in paths above) — create
+`~/.config/pi-editor/init.lua` that loads only `pi-editor.nvim` (stock Neovim,
+no plugin manager required):
+
+```lua
+-- ~/.config/pi-editor/init.lua
+require("pi-editor").setup({})
+```
+
+Neovim starts cleanly even before you create this file (it just has no user
+config), so the opt-in is safe to enable first and configure at your leisure.
+
+> ⚠️ The appname must be a **simple directory name** (no `/`). Neovim rejects an
+> appname containing a path separator; we don't validate it in the bridge — nvim
+> surfaces a clear error in the launched editor.
+
+**Manual alternative:** users who prefer not to use the extension opt-in can
+`export NVIM_APPNAME=pi-editor` in the shell that launches pi — the child editor
+inherits it the same way (note: unlike the bridge opt-in, this does not restore
+a prior value because pi never owned the var).
 
 ## How it works
 

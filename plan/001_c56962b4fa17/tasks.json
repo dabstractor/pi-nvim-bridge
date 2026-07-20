@@ -1091,14 +1091,14 @@
       "type": "Phase",
       "id": "P4",
       "title": "Optional Integrations",
-      "status": "Planned",
+      "status": "Complete",
       "description": "Implement optional completion-engine integrations (blink.cmp source, nvim-cmp source) for users who prefer their existing completion plugin over the built-in menu, plus the NVIM_APPNAME minimal-config optimization.",
       "milestones": [
         {
           "type": "Milestone",
           "id": "P4.M12",
           "title": "Completion Engine Sources & Optimization",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Ship opt-in modules that integrate with blink.cmp and nvim-cmp, reusing the same bridge + applyCompletion path. Document the NVIM_APPNAME optimization for faster Neovim startup.",
           "tasks": [
             {
@@ -1156,14 +1156,14 @@
               "type": "Task",
               "id": "P4.M12.T31",
               "title": "NVIM_APPNAME minimal-config optimization",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Document and optionally implement the NVIM_APPNAME optimization where the bridge extension sets process.env.NVIM_APPNAME to a minimal Neovim config that loads only pi-editor.nvim for faster startup.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P4.M12.T31.S47",
                   "title": "Document & implement optional NVIM_APPNAME env var in bridge extension",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P1.M3.T8.S16"
