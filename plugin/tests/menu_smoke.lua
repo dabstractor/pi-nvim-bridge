@@ -111,11 +111,17 @@ if pi.bridge == bridge then
   -- prime the server reply + refresh
   next_reply = { items = { { value = "/model", label = "model" } }, prefix = "/mo" }
   local n_before = #seen
+  local wins_before = #vim.api.nvim_list_wins() -- S34: snapshot BEFORE the popup opens
   completion.refresh(buf)
   -- drive the debounce + the request round-trip + the menu population
   vim.wait(500, function() return #seen > n_before end, 5)
   vim.wait(500, function() return menu.is_open() end, 5)
   check(menu.is_open(), "menu must be open after a non-empty getSuggestions reply")
+  -- S34: a non-empty reply must CREATE a floating window (a NEW window beyond `win`)
+  local wins_open = #vim.api.nvim_list_wins()
+  check(wins_open > wins_before, "a non-empty reply must CREATE a floating window (before=" .. wins_before .. ", after=" .. wins_open .. ")")
+  local mwin = menu._state and menu._state.win
+  check(type(mwin) == "number" and vim.api.nvim_win_is_valid(mwin), "menu._state.win must be a valid window after open")
   check(menu.get_items()[1] ~= nil and menu.get_items()[1].value == "/model",
     "menu.get_items()[1].value == '/model' (got " .. tostring(menu.get_items()[1] and menu.get_items()[1].value) .. ")")
   check(menu.get_selected() ~= nil and menu.get_selected().value == "/model",
@@ -132,6 +138,10 @@ if pi.bridge == bridge then
   vim.wait(500, function() return not menu.is_open() end, 5)
   check(not menu.is_open(), "menu must be CLOSED after an empty getSuggestions reply")
   check(not menu.has_items(), "menu.has_items() is false after close")
+  -- S34: an empty reply must CLOSE the floating window (count returns to before)
+  local wins_closed = #vim.api.nvim_list_wins()
+  check(wins_closed == wins_before, "an empty reply must CLOSE the floating window (before=" .. wins_before .. ", after=" .. wins_closed .. ")")
+  check(menu._state and menu._state.win == nil, "menu._state.win must be nil after close")
 
   vim.api.nvim_win_close(win, true)
   vim.api.nvim_buf_delete(buf, { force = true })

@@ -803,7 +803,7 @@
                   "type": "Subtask",
                   "id": "P2.M8.T21.S34",
                   "title": "Floating window creation with cursor-relative positioning & edge clamping",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M4.T11.S19"

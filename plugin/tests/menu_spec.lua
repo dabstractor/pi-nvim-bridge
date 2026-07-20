@@ -312,10 +312,11 @@ describe("pi-editor.menu", function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
-  -- (18) no nvim_open_win/nvim_create_buf/nvim_buf_set_lines in the module (state only)
-  --      — verified structurally by the open/close/get_* surface above (no window args).
-  --      This case asserts the menu never opened a window during the full flow.
-  it("does not create a floating window during the full flow (state-only — S34's job)", function()
+  -- (18) FLIPPED for S34: the full flow now CREATES a floating window (S34 implements
+  --      render). A non-empty getSuggestions reply must add a NEW floating window beyond
+  --      the test's pi-prompt window; an empty reply must remove it. Asserts window COUNT +
+  --      validity only (GOTCHA A: never assert cfg.relative=="cursor"; border is a table).
+  it("FLIPPED (S34): the full flow CREATES a floating window on a non-empty reply", function()
     local wins_before = vim.api.nvim_list_wins()
     local fake = fake_bridge()
     pi.bridge = fake
@@ -332,7 +333,130 @@ describe("pi-editor.menu", function()
     fake.resolve_last(nil, { items = { { value = "/model", label = "model" } }, prefix = "/mo" })
     wait_for(200, function() return menu.is_open() end)
     local wins_after = vim.api.nvim_list_wins()
-    assert.are.equals(#wins_before, #wins_after, "S31 must NOT create a floating window (S34's job)")
+    assert.is_true(#wins_after > #wins_before, "S34 render must CREATE a floating window")
+    -- the menu's window handle must be a valid float
+    local mwin = menu._state.win
+    assert.is_number(mwin, "state.win must be set after open")
+    assert.is_true(vim.api.nvim_win_is_valid(mwin), "the menu window must be valid")
+
+    -- the menu buffer shows the label-only line (S34 content; S35 widens to two-column)
+    local mbuf = menu._state.menu_buf
+    assert.is_number(mbuf, "state.menu_buf must be set")
+    assert.is_true(vim.api.nvim_buf_is_valid(mbuf), "the scratch buffer must be valid")
+    local lines = vim.api.nvim_buf_get_lines(mbuf, 0, -1, false)
+    assert.are.equals(1, #lines, "one item ⇒ one line")
+    assert.are.equals("model", lines[1]:match("^%s*(.-)%s*$"), "the line shows the label")
+
+    -- an empty reply CLOSES the window (count returns to before)
+    completion.refresh(buf)
+    wait_for(200, function() return #fake.requests >= 2 end)
+    fake.resolve_last(nil, { items = {}, prefix = "/zz" })
+    wait_for(200, function() return not menu.is_open() end)
+    local wins_closed = vim.api.nvim_list_wins()
+    assert.are.equals(#wins_before, #wins_closed, "an empty reply must CLOSE the menu window")
+    assert.is_nil(menu._state.win, "state.win must be nil after close")
     vim.api.nvim_buf_delete(buf, { force = true })
+  end)
+
+  -- (19) DIRECT open(items) creates a valid floating window showing the labels
+  it("open(items) directly creates a valid floating window showing the labels", function()
+    menu.open({
+      { value = "/model", label = "/model" },
+      { value = "/mood", label = "/mood" },
+    })
+    assert.is_true(menu.is_open())
+    local mwin = menu._state.win
+    assert.is_number(mwin, "state.win set by open")
+    assert.is_true(vim.api.nvim_win_is_valid(mwin), "window must be valid")
+    -- width tracks the max label display width (strdisplaywidth): '/model' = 6 cells.
+    -- With border='rounded' the nvim_win_get_config width == content width (border is extra).
+    local cfg = vim.api.nvim_win_get_config(mwin)
+    assert.are.equals(6, cfg.width, "width == max label display width ('/model'=6)")
+    assert.are.equals(2, cfg.height, "height == #items")
+    -- border is a TABLE in get_config even when 'rounded' was passed (GOTCHA A)
+    assert.is_table(cfg.border, "border is a table in get_config (GOTCHA A)")
+    -- the buffer shows the label-only lines
+    local lines = vim.api.nvim_buf_get_lines(menu._state.menu_buf, 0, -1, false)
+    assert.are.equals(2, #lines)
+    assert.are.equals("/model", lines[1]:match("^%s*(.-)%s*$"))
+    assert.are.equals("/mood", lines[2]:match("^%s*(.-)%s*$"))
+  end)
+
+  -- (20) close() closes the window (validity==false) + nils state.win
+  it("close() closes the floating window + nils state.win", function()
+    menu.open({ { value = "/x", label = "/x" } })
+    local mwin = menu._state.win
+    assert.is_true(vim.api.nvim_win_is_valid(mwin))
+    menu.close()
+    assert.is_false(vim.api.nvim_win_is_valid(mwin), "close() must close the window")
+    assert.is_nil(menu._state.win, "close() must nil state.win")
+  end)
+
+  -- (21) a second open() REUSES the scratch buffer + repositions the window in place
+  --      (no flicker, no buffer leak) — the blink.cmp lifecycle pattern.
+  it("a 2nd open() reuses the scratch buffer + repositions the same window in place", function()
+    menu.open({ { value = "/a", label = "/a" } }) -- label width 2
+    local mwin1 = menu._state.win
+    local mbuf = menu._state.menu_buf
+    assert.is_true(vim.api.nvim_win_is_valid(mwin1))
+    assert.is_true(vim.api.nvim_buf_is_valid(mbuf))
+
+    -- close (window goes away, buffer survives)
+    menu.close()
+    assert.is_nil(menu._state.win)
+    assert.is_true(vim.api.nvim_buf_is_valid(mbuf), "the scratch buffer must SURVIVE close")
+    assert.are.equals(mbuf, menu._state.menu_buf, "state.menu_buf unchanged across close")
+
+    -- reopen: same buffer handle reused; a NEW window created reusing it
+    menu.open({ { value = "/abcdefgh", label = "/abcdefgh" } }) -- label width 9
+    local mwin2 = menu._state.win
+    assert.is_true(vim.api.nvim_win_is_valid(mwin2), "window recreated on 2nd open")
+    assert.are.equals(mbuf, menu._state.menu_buf, "2nd open REUSES the scratch buffer (no leak)")
+    local cfg = vim.api.nvim_win_get_config(mwin2)
+    assert.are.equals(9, cfg.width, "2nd open width tracks the NEW max label (repositioned)")
+
+    -- a THIRD open while the window stays open repositions IN PLACE (same window id)
+    menu.open({ { value = "/zz", label = "/zz" } }) -- label width 3
+    assert.are.equals(mwin2, menu._state.win, "3rd open repositions the SAME window in place")
+    assert.is_true(vim.api.nvim_win_is_valid(mwin2))
+    local cfg2 = vim.api.nvim_win_get_config(mwin2)
+    assert.are.equals(3, cfg2.width, "3rd open resized in place to the new width")
+  end)
+
+  -- (22) open({}) does NOT create a window (render's hide path)
+  it("open({}) does NOT create a window (render hide path)", function()
+    assert.is_nil(menu._state.win, "pre: no window")
+    menu.open({})
+    assert.is_false(menu.is_open(), "open({}) must not open")
+    assert.is_nil(menu._state.win, "open({}) must not create a window")
+  end)
+
+  -- (23) reset() closes the window + nils win AND menu_buf (teardown)
+  it("reset() closes the window + nils state.win / state.menu_buf", function()
+    menu.open({ { value = "/a", label = "/a" } })
+    local mwin = menu._state.win
+    assert.is_true(vim.api.nvim_win_is_valid(mwin))
+    assert.is_not_nil(menu._state.menu_buf)
+    menu.reset()
+    assert.is_false(vim.api.nvim_win_is_valid(mwin), "reset must close the window")
+    assert.is_nil(menu._state.win, "reset must nil state.win")
+    assert.is_nil(menu._state.menu_buf, "reset must nil state.menu_buf")
+  end)
+
+  -- (24) render never throws when window creation would fail (defensive degrade)
+  it("menu.open/close/reset never throw (render is pcall-safe by construction)", function()
+    assert.has_no.errors(function() menu.open({ { value = "/a", label = "/a" } }) end)
+    assert.has_no.errors(function() menu.open({ { value = "/bb", label = "/bb" } }) end)
+    assert.has_no.errors(function() menu.close() end)
+    assert.has_no.errors(function() menu.reset() end)
+  end)
+
+  -- (25) geometry: compute_geometry is exposed + matches the verified 7-case table
+  --      (the pure-helper smoke — render can't test clamping headlessly: screenrow()=1)
+  it("exposes _compute_geometry returning the verified case-1 (below caret) geometry", function()
+    assert.are.equals("function", type(menu._compute_geometry))
+    -- ui_lines=24, ui_cols=80, border='rounded' ⇒ bv=2,bh=2; caret (1,1) ⇒ below
+    local g = menu._compute_geometry(1, 1, 24, 80, 40, 3, 12, "rounded")
+    assert.are.same({ anchor = "NW", row = 1, col = 0, width = 40, height = 3 }, g)
   end)
 end)
