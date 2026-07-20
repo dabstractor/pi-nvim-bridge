@@ -919,7 +919,7 @@
           "type": "Milestone",
           "id": "P3.M10",
           "title": "Resilience & UX Polish",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Make the plugin robust against all failure modes: missing socket, bad handshake, pi process death, fd not installed, and configuration errors. Ensure silent degradation never blocks startup.",
           "tasks": [
             {
@@ -1001,14 +1001,14 @@
               "type": "Task",
               "id": "P3.M10.T27",
               "title": ":checkhealth pi-editor module",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement a health check module that verifies Neovim version, PI_EDITOR_BRIDGE presence, bridge connectivity, fd availability, and reports helpful diagnostics.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P3.M10.T27.S42",
                   "title": "health.lua — version, env, socket, fd checks",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/external_deps.md, checkhealth uses `vim.health.start()`, `vim.health.ok()`, `vim.health.warn()`, `vim.health.error()`. The module must be at `lua/pi-editor/health.lua` and export a `check()` function. Run via `:checkhealth pi-editor`.\n2. INPUT: Neovim version, PI_EDITOR_BRIDGE env var, config values.\n3. LOGIC: Create `plugin/lua/pi-editor/health.lua` with `M.check()` that: (a) checks Neovim version >= 0.10 (ok/warn), (b) checks if PI_EDITOR_BRIDGE is set (if set, parse and show transport/path; if not, warn that plugin is dormant), (c) if env var is set, verify the socket path exists, (d) check if bridge is connected, (e) report fdAvailable from descriptor (warn if false — @file completion won't work), (f) check that vim.uv is available.\n4. OUTPUT: `:checkhealth pi-editor` shows a diagnostic report.\n5. DOCS: [Mode A] The health.lua IS the documentation for this subtask.",
