@@ -1131,14 +1131,14 @@
               "type": "Task",
               "id": "P4.M12.T30",
               "title": "nvim-cmp source module",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement an nvim-cmp source that bridges pi's getSuggestions into nvim-cmp's completion pipeline.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P4.M12.T30.S46",
                   "title": "cmp_source.lua — source.new, get_trigger_characters, complete",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M5.T16.S26",
