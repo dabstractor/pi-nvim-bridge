@@ -702,7 +702,7 @@
                   "type": "Subtask",
                   "id": "P2.M7.T18.S30",
                   "title": "Trigger scheduling with debounce via vim.defer_fn",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M5.T16.S26",
