@@ -1105,14 +1105,14 @@
               "type": "Task",
               "id": "P4.M12.T29",
               "title": "blink.cmp source module",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement a blink.cmp source that bridges pi's getSuggestions into blink's completion pipeline, mapping AutocompleteItems to LSP CompletionItems and using applyCompletion for acceptance.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P4.M12.T29.S45",
                   "title": "blink_source.lua — source.new, get_trigger_characters, get_completions",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M5.T16.S26",
