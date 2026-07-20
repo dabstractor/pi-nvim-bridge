@@ -49,7 +49,7 @@
 --    `nvim_win_get_cursor`/`nvim_buf_get_lines` is a FALSE-NEGATIVE RACE (the buffer
 --    may legitimately advance past the request position for a VALID latest result).
 --    So `on_results` routes on the PAYLOAD ONLY (`buf`/`items`/`prefix` are cb args) +
---    an `nvim_buf_is_valid(buf)` WIPE guard (a buffer wiped during the 25ms debounce).
+--    an `nvim_buf_is_valid(buf)` WIPE guard (a buffer wiped during the 20ms debounce).
 --  * S30 ALREADY NORMALIZES null: the S30 do_refresh cb normalizes a null `getSuggestions`
 --    result to `{items={}, prefix=""}` BEFORE firing `on_results`. So `on_results`
 --    ALWAYS receives a valid `items` array (possibly empty) + a string `prefix`. Do NOT
@@ -491,7 +491,7 @@ end
 ---@param prefix string                       The completion prefix (for get_prefix/S32).
 function M.on_results(buf, items, prefix)
   -- WIPE guard (the ONLY nvim-state read here — NOT a staleness re-derive): a buffer may
-  -- be wiped during the 25ms debounce. Silent no-op, never throw.
+  -- be wiped during the 20ms debounce. Silent no-op, never throw.
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
   state.buf = buf
   state.prefix = (type(prefix) == "string") and prefix or "" -- defensive (S30 sends a string)

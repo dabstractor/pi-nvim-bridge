@@ -185,7 +185,7 @@
 --    handled inside _route_or_accept via accept's prefix_override.
 --    (A) 0-DEBOUNCE: pi's getAutocompleteDebounceMs (editor.ts:2214) returns 0 for
 --        explicitTab/force → force_fetch is IMMEDIATE (NO vim.defer_fn — unlike
---        do_refresh's 25ms). force_fetch DUPLICATES do_refresh's supersession block
+--        do_refresh's 20ms). force_fetch DUPLICATES do_refresh's supersession block
 --        INTENTIONALLY (additive over refactor — the codebase pattern; do_refresh is
 --        exhaustively S30-tested). It SHARES state.gen/inflight_id/debounce_timer so
 --        refresh↔Tab supersession is CORRECT (a refresh after Tab supersedes the Tab
@@ -358,7 +358,7 @@ end
 -- ===========================================================================
 do_refresh = function(buf)
   -- GUARD: buf validity (a wipe during the debounce) + still-current (a switch during
-  -- the 25ms window — the cursor is for the current window; if buf isn't current the
+  -- the 20ms window — the cursor is for the current window; if buf isn't current the
   -- read is wrong; silent no-op, not a fetch on stale state).
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
   if buf ~= vim.api.nvim_get_current_buf() then return end
@@ -417,7 +417,7 @@ end
 --
 -- WHY A SEPARATE FUNCTION (NOT a refactor of do_refresh): pi's getAutocompleteDebounceMs
 -- (editor.ts:2214) returns 0 for explicitTab/force, so Tab is IMMEDIATE. do_refresh
--- DEBOUNCES ~25ms (the natural-typing path); reusing it would add a Tab lag + diverge
+-- DEBOUNCES ~20ms (the natural-typing path); reusing it would add a Tab lag + diverge
 -- from the TUI. force_fetch DUPLICATES do_refresh's few-line supersession block
 -- INTENTIONALLY (additive over refactor — the codebase pattern; do_refresh is
 -- exhaustively S30-tested). It SHARES state.gen / state.inflight_id / state.debounce_timer

@@ -76,7 +76,8 @@
  *     field + a 3-line success-branch close check (backward compatible — no existing
  *     handler sets the flag). `protocol.ts` UNCHANGED (all wire types pre-existed in
  *     §C). `getPid()` (`process.pid`) is added for ping + S16's reuse. Domain-error
- *     wrapping remains S15's TODO.
+ *     wrapping remains S15's TODO. (UPDATE: S15 is DONE — see the S15 error-wrapping
+ *     note in the file header and `extension/tests/error-wrapping.test.ts`.)
  *
  * STATUS (P1.M1.T1.S3): TUI mode guard added.
  *   - session_start: guarded by `if (ctx.mode !== "tui") return;` at the very
@@ -100,7 +101,9 @@
  *     (autocomplete.ts:269 has the `?`), so the handler uses optional chaining `?.` +
  *     nullish coalescing `?? true` (pi's documented default: absent method ⇒ ALLOW
  *     file completion) — byte-identical to pi's own tests/docs/examples. ping/bye/
- *     getCommands (S14) and domain-error wrapping (S15) remain TODO.
+ *     getCommands (S14) and domain-error wrapping (S15) remain TODO. (UPDATE: S14
+ *     and S15 are DONE — see their STATUS blocks below; domain-error wrapping is
+ *     covered by `toBridgeRpcError` + `extension/tests/error-wrapping.test.ts`.)
  *     `connection.ts` and `protocol.ts` UNCHANGED.
  *
  * STATUS (P1.M2.T6.S12): `applyCompletion` handler registered (DONE).
@@ -112,7 +115,9 @@
  *     supersession, NO timeout, NO closure state — plain delegation. The MethodHandler
  *     union (`Promise<unknown> | unknown`) accommodates the sync return; handleLine's
  *     `await` is a no-op on a non-Promise. shouldTriggerFileCompletion (S13),
- *     ping/bye/getCommands (S14), and domain-error wrapping (S15) remain TODO.
+ *     ping/bye/getCommands (S14), and domain-error wrapping (S15) remain TODO. (UPDATE:
+ *     S14 and S15 are DONE — see their STATUS blocks below; domain-error wrapping is
+ *     covered by `toBridgeRpcError` + `extension/tests/error-wrapping.test.ts`.)
  *     `connection.ts` and `protocol.ts` UNCHANGED.
  *
  * STATUS (P1.M2.T6.S11): `getSuggestions` handler registered (DONE).
