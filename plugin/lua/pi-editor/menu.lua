@@ -18,7 +18,9 @@
 -- table). S35 (COMPLETE) enhanced `render()` to a TWO-COLUMN layout (label + gap +
 -- description, ellipsis-truncated) + 3-layer highlights (base `Pmenu` + desc `Comment` +
 -- selected-row `PmenuSel`, applied LAST-WINS — neovim#8449; research/notes.md §2/§3 +
--- highlight-layering.md §1/§2). S36's next/prev/dismiss + S37's auto-close call
+-- highlight-layering.md §1/§2). S36 (COMPLETE) added the navigation mutators
+-- `M.next`/`M.prev`/`M.dismiss` (bump `state.selected` 1-based wraparound then call the
+-- LOCAL `render(state)` — research/notes.md §1/§2/§3); S37's auto-close calls
 -- open()/close()/reset(). The `completion → menu` data path drives a visible popup
 -- showing pi's live AutocompleteItems.
 --
@@ -99,10 +101,10 @@
 --      M.get_selected()  → S32 (accept) reads it WITHOUT coupling to the window.
 --      M.get_items()     → S34 (rendering) reads the items array (shallow copy).
 --      render(state)     → S34 (window) IMPLEMENTED (show/hide floating window).
---      M.next/prev/dismiss → S36 (navigation) set `selected` + call `render()`.
+--      M.next/prev/dismiss → S36 (navigation) IMPLEMENTED: bump `selected` + call `render()`.
 --      M.reset()/close() → S37 (auto-close on InsertLeave/CursorMoved-out) calls them.
 --    S31 implements attach/detach/on_results/open/close/get_*/reset ONLY. NO accept
---    (S32), NO Tab-force (S33), NO window (S34), NO navigation (S36), NO auto-close (S37).
+--    (S32), NO Tab-force (S33), NO window (S34), NO auto-close (S37). S36 is COMPLETE.
 --
 -- Node builtins analog: pure Lua + the COMPLETE in-tree completion seam
 -- (`require("pi-editor.completion")`). No sockets of its own — the smoke's fake luv
@@ -542,6 +544,41 @@ function M.close()
   state.selected = 0
   state.open = false
   render(state)                                     -- S34: close the floating window.
+end
+
+-- ===========================================================================
+-- S36: navigation mutators (next/prev/dismiss). Each is a thin STATE change that calls
+-- the LOCAL render(state) — render re-applies render_lines (same items) +
+-- apply_highlights (new PmenuSel row) + set_config (in-place, no flicker). next/prev
+-- bump state.selected (1-based wraparound); dismiss forwards to close(). The completion
+-- handlers on_next/on_prev/on_dismiss gate + delegate to these. NEVER throws (guards
+-- first; render is pcall-safe). (research/notes.md §1–§3.)
+-- ===========================================================================
+
+--- Advance the selection to the NEXT item (1-indexed wraparound), re-rendering in
+--- place. No-op (never throws) when the menu is closed/empty. The cursor does NOT move
+--- (the handler consumes the key), so render's set_config repositions to the SAME place
+--- — no flicker. (research/notes.md §1/§2.)
+function M.next()
+  if not state.open or #state.items == 0 then return end          -- guard (never throws)
+  state.selected = (state.selected % #state.items) + 1            -- 1→2→…→n→1 (1-indexed wrap)
+  render(state)                                                   -- LOCAL render: repaint PmenuSel in place
+end
+
+--- Retreat the selection to the PREVIOUS item (1-indexed wraparound), re-rendering in
+--- place. No-op (never throws) when the menu is closed/empty. (research/notes.md §1/§2.)
+function M.prev()
+  if not state.open or #state.items == 0 then return end
+  state.selected = (state.selected == 1) and #state.items or (state.selected - 1)  -- 1→n→…→2→1
+  render(state)
+end
+
+--- Dismiss the menu (hide + clear the candidate list). Forwards to M.close() (identical
+--- semantics in the pi-faithful "ask on every change" model — the next keystroke
+--- re-fetches). Does NOT clear state.buf/state.prefix (only reset() does). Never throws.
+--- (research/notes.md §3.)
+function M.dismiss()
+  M.close()                                                        -- items={}; selected=0; open=false; render hide
 end
 
 --- The selected item (`items[selected]`), or `nil`. For S32 accept to read WITHOUT

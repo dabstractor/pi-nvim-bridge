@@ -87,8 +87,8 @@
 --      M.current()    → S32 (accept) / S33 (Tab) read the latest items without menu coupling.
 --      M.reset()      → S37 (auto-close on InsertLeave/CursorMoved-out) calls it for teardown.
 --    S30 implements `refresh` ONLY. The 6 keymaps (on_tab/on_enter/on_next/on_prev/
---    on_dismiss) stay absent — the ftplugin's `dispatch` returns false → feedkey
---    fall-through (Tab indents, CR inserts a newline). CORRECT for S30's scope.
+--    on_dismiss) are now ALL SHIPPED (on_tab S33, on_enter S32, on_next/on_prev/
+--    on_dismiss S36).
 --
 --  * S32 — accept(item) + on_enter(buf): the PRD §7.4 5-step applyCompletion flow (the
 --    ACCEPT half of completion). accept(item) reads the selected item + prefix + buf
@@ -136,7 +136,7 @@
 --    resolves async + tests swap fakes after require). accept/on_enter NEVER throw
 --    (pcall every nvim call; type-guard; bad args → false). on_enter is now SHIPPED
 --    (S32); on_tab is now SHIPPED (S33 — see the on_tab block below);
---    on_next/on_prev/on_dismiss are still forward contracts (S36/S37).
+--    on_next/on_prev/on_dismiss are now SHIPPED (S36).
 --
 --  * S33 — on_tab(buf) + force_fetch + _route_or_accept + the accept prefix_override:
 --    pi's `handleTabCompletion` replication (the THIRD keymap handler; the ftplugin
@@ -604,6 +604,62 @@ function M.on_tab(buf)
       force_fetch(buf, pi, { force = true }, _route_or_accept(buf, true))
     end)
   return true                                                       -- Tab CONSUMED
+end
+
+-- ===========================================================================
+-- S36: on_next(buf) / on_prev(buf) / on_dismiss(buf) — the navigation/dismiss keymap
+-- handlers. The ftplugin ALREADY dispatches <C-N>/<Down>→on_next, <S-Tab>/<C-P>/<Up>→on_prev,
+-- <C-E>→on_dismiss. Each gates like on_enter/on_tab (buf valid+current + menu state) and
+-- delegates to menu.next/prev/dismiss. Returns true (key CONSUMED) only when the menu is
+-- open; false → the ftplugin feeds the literal key (normal insert-mode behavior). Never
+-- throws (type-guards + nvim_buf_is_valid; the ftplugin's dispatch is also pcall-wrapped).
+-- Read menu FRESH (require at call time — handshake async + test fakes + /reload).
+-- API-safe (main loop — same contract as on_enter/on_tab/do_refresh). (research/notes.md §4.)
+-- ===========================================================================
+
+--- The `<C-N>`/`<Down>` handler (the ftplugin ALREADY dispatches on_next). Returns true (key
+--- consumed) iff buf is valid+current AND the menu is open with items → menu.next().
+--- Otherwise false (the key falls through to its default). Never throws.
+---
+---@param buf integer The pi-prompt buffer handle (from the buffer-local keymap dispatch).
+---@return boolean handled true iff the key was consumed (selection advanced).
+function M.on_next(buf)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
+  if buf ~= vim.api.nvim_get_current_buf() then return false end    -- one buf/session (PRD §11)
+  local menu = require("pi-editor.menu")                            -- READ FRESH
+  if not menu.is_open() or not menu.has_items() then return false end
+  menu.next()
+  return true                                                       -- key CONSUMED (cursor does NOT move)
+end
+
+--- The `<S-Tab>`/`<C-P>`/`<Up>` handler. Symmetric to on_next → menu.prev(). Never throws.
+---
+---@param buf integer The pi-prompt buffer handle.
+---@return boolean handled true iff the key was consumed (selection retreated).
+function M.on_prev(buf)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
+  if buf ~= vim.api.nvim_get_current_buf() then return false end
+  local menu = require("pi-editor.menu")
+  if not menu.is_open() or not menu.has_items() then return false end
+  menu.prev()
+  return true
+end
+
+--- The `<C-E>` handler (the ftplugin ALREADY dispatches on_dismiss). Returns true (key
+--- consumed) iff buf is valid+current AND the menu is open → menu.dismiss(). Otherwise
+--- false (C-E falls through to :help i_CTRL-E insert-char-below). Never throws.
+--- (on_dismiss is S36 — the KEY handler; the auto-close AUTOCMDS are S37.
+--- research/notes.md §7.)
+---
+---@param buf integer The pi-prompt buffer handle.
+---@return boolean handled true iff the key was consumed (menu dismissed).
+function M.on_dismiss(buf)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
+  if buf ~= vim.api.nvim_get_current_buf() then return false end
+  local menu = require("pi-editor.menu")
+  if not menu.is_open() then return false end                       -- has_items implied by open()'s contract
+  menu.dismiss()
+  return true
 end
 
 return M

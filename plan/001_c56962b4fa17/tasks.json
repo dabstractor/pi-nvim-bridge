@@ -841,7 +841,7 @@
                   "type": "Subtask",
                   "id": "P2.M8.T22.S36",
                   "title": "Navigation & key handling — C-N/C-P/Up/Down, C-E dismiss, Tab/C-Y/CR accept",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M8.T21.S35"

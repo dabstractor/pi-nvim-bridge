@@ -38,11 +38,11 @@ describe("pi-editor ftplugin/pi-prompt", function()
     assert.is_false(vim.wo[0].spell)
   end)
 
-  it("registers the 6 insert keymaps with 'pi-editor:' desc", function()
+  it("registers the 9 insert keymaps with 'pi-editor:' desc", function()
     local b = fresh_prompt_buf()
     local kms = {}
     for _, m in ipairs(vim.api.nvim_buf_get_keymap(b, "i")) do kms[m.lhs] = m.desc end
-    for _, k in ipairs({ "<Tab>", "<S-Tab>", "<C-N>", "<C-P>", "<C-E>", "<CR>" }) do
+    for _, k in ipairs({ "<Tab>", "<S-Tab>", "<C-N>", "<C-P>", "<C-E>", "<CR>", "<Down>", "<Up>", "<C-Y>" }) do
       -- NOTE: use `sub` not `find("^pi-editor:")` — `-` is a Lua pattern metachar so the
       -- anchored find silently fails. `sub(1,11) == "pi-editor: " is literal & robust.
       assert.is_truthy(kms[k], "missing keymap " .. k)

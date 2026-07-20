@@ -18,14 +18,17 @@
 ---   require("pi-editor.completion"):                    (S30+)
 ---     refresh(buf)              -- InsertEnter/TextChangedI/CursorMovedI; fire-and-forget.
 ---     on_tab(buf)   -> truthy    -- <Tab>: trigger / accept the menu (S33); truthy == handled.
----     on_enter(buf) -> truthy    -- <CR>: accept if menu open else insert newline (S32).
----     on_next(buf)  -> truthy    -- <C-N>: next item (S36).
----     on_prev(buf)  -> truthy    -- <S-Tab>/<C-P>: prev item (S36).
----     on_dismiss(buf)-> truthy   -- <C-E>: dismiss the menu (S37).
+---     on_enter(buf) -> truthy    -- <CR>/<C-Y>: accept if menu open else insert newline (S32).
+---     on_next(buf)  -> truthy    -- <C-N>/<Down>: next item (S36). <Up>/<Down> mirror <C-P>/<C-N>.
+---     on_prev(buf)  -> truthy    -- <S-Tab>/<C-P>/<Up>: prev item (S36).
+---     on_dismiss(buf)-> truthy   -- <C-E>: dismiss the menu (S36 — the KEY handler; S37 is the
+---                                auto-close AUTOCMDS).
 ---   require("pi-editor.bridge"):                       (connection: S24; on_exit body: S38)
 ---     on_exit(buf)              -- VimLeavePre/ExitPre: autosave-if-modified + send bye + close.
 --- A keymap dispatch returns `true` ONLY if the module exists AND its function returned
 --- truthy; otherwise the keymap falls through to its default (see |feedkeys()| below).
+--- <C-Y> REUSES on_enter (NO on_accept): accept if the menu is open, else fall through
+--- to :help i_CTRL-Y (research/notes.md §6).
 ---
 --- pi-specific <CR> behavior (PRD §2.1 / §7.4): there is NO Enter-to-submit in the
 --- external editor — pi reads the temp file only AFTER the editor EXITS. So `<CR>` inserts
@@ -99,8 +102,12 @@ map_dispatch("i", "<Tab>",   "pi-editor.completion", "on_tab")     -- trigger / 
 map_dispatch("i", "<S-Tab>", "pi-editor.completion", "on_prev")    -- previous completion item (S36)
 map_dispatch("i", "<C-N>",   "pi-editor.completion", "on_next")    -- next completion item (S36)
 map_dispatch("i", "<C-P>",   "pi-editor.completion", "on_prev")    -- previous completion item (S36)
-map_dispatch("i", "<C-E>",   "pi-editor.completion", "on_dismiss") -- dismiss the completion menu (S37)
+map_dispatch("i", "<C-E>",   "pi-editor.completion", "on_dismiss") -- dismiss the completion menu (S36)
 map_dispatch("i", "<CR>",    "pi-editor.completion", "on_enter")   -- accept-or-newline (S32); no Enter-to-submit (PRD §7.4)
+-- S36: the PRD §7.5 full key set — arrows navigate; <C-Y> accepts (reuses on_enter).
+map_dispatch("i", "<Down>",  "pi-editor.completion", "on_next")    -- next completion item (S36; mirrors <C-N>)
+map_dispatch("i", "<Up>",    "pi-editor.completion", "on_prev")    -- previous completion item (S36; mirrors <C-P>)
+map_dispatch("i", "<C-Y>",   "pi-editor.completion", "on_enter")   -- accept (S36; reuses on_enter's accept-or-fall-through)
 
 -- ── Autocmds (buffer-local, shared "pi-editor" group; GOTCHA C: clear=false) ────
 -- The "pi-editor" augroup is SHARED with S20's VimEnter autocmd. Creating it here with

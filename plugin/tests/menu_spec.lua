@@ -606,4 +606,137 @@ describe("pi-editor.menu", function()
       assert.is_true(g0b.PmenuSel == true, "PmenuSel repainted")
     end)
   end)
+
+  -- ══ S36: navigation mutators (next/prev/dismiss) ═════════════════════════════
+  -- next/prev bump state.selected (1-based wraparound) then call the LOCAL render —
+  -- apply_highlights repaints PmenuSel on the new row (assert via extmarks, NOT
+  -- screenattr) + render's set_config branch keeps the window id UNCHANGED (in-place
+  -- no-flicker proof). dismiss forwards to close() (state.win nil'd). All guards are
+  -- no-op + never-throw. (research/notes.md §1/§2/§3.)
+  describe("S36: navigation", function()
+    local function sel_row(mbuf, namespace) -- 0-based row carrying PmenuSel, or nil
+      for r = 0, 9 do
+        local groups = hl_groups_on_row(mbuf, namespace, r)
+        if groups.PmenuSel == true then return r end
+      end
+      return nil
+    end
+
+    -- (32) next() advances selected + moves PmenuSel to the new row IN PLACE (win unchanged)
+    it("next() advances selected + moves PmenuSel to the new row (window UNCHANGED)", function()
+      with_cursor_window(function()
+        menu.open({
+          { value = "/a", label = "/a", description = "Aaa" },
+          { value = "/b", label = "/b", description = "Bbb" },
+          { value = "/c", label = "/c", description = "Ccc" },
+        })
+        local mbuf = menu._state.menu_buf
+        local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+        assert.are.equals(1, menu._state.selected)
+        assert.are.equals(0, sel_row(mbuf, ns))
+        local win0 = menu._state.win
+
+        -- next 1→2: PmenuSel to row 1; row 0 REVERTS to base Pmenu only; win UNCHANGED
+        menu.next()
+        assert.are.equals(2, menu._state.selected, "next: selected==2")
+        assert.are.equals(1, sel_row(mbuf, ns), "next: PmenuSel moved to row 1")
+        assert.are.equals(win0, menu._state.win, "next: window id UNCHANGED (in-place)")
+        local g0 = hl_groups_on_row(mbuf, ns, 0)
+        assert.is_nil(g0.PmenuSel, "row 0 reverted (no longer selected)")
+        assert.is_true(g0.Pmenu == true, "row 0 still has base Pmenu")
+
+        -- next 2→3
+        menu.next()
+        assert.are.equals(3, menu._state.selected, "next: selected==3")
+        assert.are.equals(2, sel_row(mbuf, ns), "next: PmenuSel@row2")
+      end)
+    end)
+
+    -- (33) next() wraparound 3→1
+    it("next() wraps around 3→1 (1-indexed cyclic)", function()
+      with_cursor_window(function()
+        menu.open({
+          { value = "/a", label = "/a" },
+          { value = "/b", label = "/b" },
+          { value = "/c", label = "/c" },
+        })
+        local mbuf = menu._state.menu_buf
+        local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+        menu.next(); menu.next() -- 1→2→3
+        assert.are.equals(3, menu._state.selected)
+        menu.next()             -- 3→1 (wrap)
+        assert.are.equals(1, menu._state.selected, "next wrap: selected==1")
+        assert.are.equals(0, sel_row(mbuf, ns), "next wrap: PmenuSel@row0")
+      end)
+    end)
+
+    -- (34) prev() wraparound 1→3 + retreat 3→2
+    it("prev() wraps around 1→3 then retreats 3→2", function()
+      with_cursor_window(function()
+        menu.open({
+          { value = "/a", label = "/a" },
+          { value = "/b", label = "/b" },
+          { value = "/c", label = "/c" },
+        })
+        local mbuf = menu._state.menu_buf
+        local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+        menu.prev()             -- 1→3 (wrap)
+        assert.are.equals(3, menu._state.selected, "prev wrap: selected==3")
+        assert.are.equals(2, sel_row(mbuf, ns), "prev wrap: PmenuSel@row2")
+        menu.prev()             -- 3→2
+        assert.are.equals(2, menu._state.selected, "prev: selected==2")
+        assert.are.equals(1, sel_row(mbuf, ns), "prev: PmenuSel@row1")
+      end)
+    end)
+
+    -- (35) n=1: next()/prev() keep selected==1 (no movement, no throw)
+    it("n=1: next()/prev() keep selected==1 (no movement, no throw)", function()
+      with_cursor_window(function()
+        menu.open({ { value = "/x", label = "/x" } })
+        assert.are.equals(1, menu._state.selected)
+        assert.has_no.errors(function() menu.next() end)
+        assert.are.equals(1, menu._state.selected, "n=1 next: stays 1")
+        assert.has_no.errors(function() menu.prev() end)
+        assert.are.equals(1, menu._state.selected, "n=1 prev: stays 1")
+      end)
+    end)
+
+    -- (36) dismiss() closes the menu + window + resets selected to 0
+    it("dismiss() closes the menu + window + resets selected to 0", function()
+      with_cursor_window(function()
+        menu.open({ { value = "/a", label = "/a" }, { value = "/b", label = "/b" } })
+        local mwin = menu._state.win
+        assert.is_true(vim.api.nvim_win_is_valid(mwin))
+        menu.dismiss()
+        assert.is_false(menu.is_open(), "dismiss must close the menu")
+        assert.are.equals(0, menu._state.selected, "dismiss: selected==0")
+        assert.is_false(menu.has_items(), "dismiss clears items")
+        assert.is_nil(menu.get_selected(), "dismiss: get_selected nil")
+        assert.is_false(vim.api.nvim_win_is_valid(mwin), "dismiss closes the window")
+        assert.is_nil(menu._state.win, "dismiss nils state.win")
+      end)
+    end)
+
+    -- (37) next/prev/dismiss when CLOSED → no-op, no throw, no window created
+    it("next/prev/dismiss when CLOSED are no-ops + never throw (no window created)", function()
+      assert.is_nil(menu._state.win, "pre: no window")
+      assert.has_no.errors(function()
+        menu.next(); menu.prev(); menu.dismiss()
+      end)
+      assert.is_false(menu.is_open(), "closed nav no-ops must not open the menu")
+      assert.is_nil(menu._state.win, "closed nav no-ops must not create a window")
+      assert.are.equals(0, menu._state.selected, "selected stays 0")
+    end)
+
+    -- (38) open({}) then next/prev → no-op, no throw (open guards)
+    it("next/prev on open({}) (defensive) are no-ops + never throw", function()
+      with_cursor_window(function()
+        menu.open({})
+        assert.is_false(menu.is_open(), "open({}) must not open")
+        assert.has_no.errors(function() menu.next(); menu.prev() end)
+        assert.is_false(menu.is_open(), "open({}) nav must stay closed")
+        assert.are.equals(0, menu._state.selected, "open({}) nav: selected stays 0")
+      end)
+    end)
+  end)
 end)

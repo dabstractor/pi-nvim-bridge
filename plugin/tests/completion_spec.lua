@@ -734,4 +734,108 @@ describe("pi-editor.completion", function()
       vim.api.nvim_buf_delete(buf, { force = true })
     end)
   end)
+
+  -- =====================================================================
+  -- S36: on_next(buf) / on_prev(buf) / on_dismiss(buf) — the navigation/dismiss
+  -- keymap handlers. Each gates like on_enter (buf valid+current + menu state) and
+  -- delegates to menu.next/prev/dismiss. Returns true (key CONSUMED) only when the
+  -- menu is open (+has_items for next/prev); false → fall-through. Never throws.
+  -- Reuses the S32 populated_menu + the S33 closed_menu helpers. (research/notes.md §4.)
+  -- =====================================================================
+  describe("on_next/on_prev/on_dismiss", function()
+    -- (1) on_next: open menu → true + menu.next() advances selected (1→2)
+    it("on_next returns true + advances menu.selected when the menu is open (1→2)", function()
+      local _, buf = populated_menu("/mo", 3, {
+        { value = "/model", label = "model" },
+        { value = "/mood", label = "mood" },
+      }, "/mo")
+      assert.are.equals(1, menu._state.selected)
+      local handled = completion.on_next(buf)
+      assert.is_true(handled, "on_next returns true (key consumed)")
+      assert.are.equals(2, menu._state.selected, "on_next advanced selected 1→2")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (2) on_prev: open menu → true + menu.prev() retreats (1→2→1 wrap)
+    it("on_prev returns true + retreats menu.selected (2→1 via prev from 1 wraps to n)", function()
+      local _, buf = populated_menu("/mo", 3, {
+        { value = "/a", label = "a" },
+        { value = "/b", label = "b" },
+        { value = "/c", label = "c" },
+      }, "/mo")
+      assert.are.equals(1, menu._state.selected)
+      -- prev from 1 wraps to 3
+      assert.is_true(completion.on_prev(buf) == true)
+      assert.are.equals(3, menu._state.selected, "on_prev wrap: 1→3")
+      -- prev 3→2
+      assert.is_true(completion.on_prev(buf) == true)
+      assert.are.equals(2, menu._state.selected, "on_prev: 3→2")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (3) on_dismiss: open menu → true + menu.dismiss() closes
+    it("on_dismiss returns true + closes the menu", function()
+      local _, buf = populated_menu("/mo", 3, { { value = "/model", label = "model" } }, "/mo")
+      assert.is_true(menu.is_open())
+      local handled = completion.on_dismiss(buf)
+      assert.is_true(handled, "on_dismiss returns true (key consumed)")
+      assert.is_false(menu.is_open(), "on_dismiss closed the menu")
+      assert.are.equals(0, menu._state.selected, "on_dismiss reset selected to 0")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (4) closed menu: all three return false (fall-through)
+    it("returns false on all three when the menu is CLOSED (fall-through)", function()
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mo" })
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { 1, 3 })
+      menu.attach()
+      assert.is_false(menu.is_open(), "pre: menu closed")
+      assert.is_false(completion.on_next(buf), "on_next false when closed")
+      assert.is_false(completion.on_prev(buf), "on_prev false when closed")
+      assert.is_false(completion.on_dismiss(buf), "on_dismiss false when closed")
+      assert.is_false(menu.is_open(), "closed handlers must not open the menu")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (5) non-current buf → false on all three
+    it("returns false when buf is not the current buffer", function()
+      local _, buf = populated_menu("/mo", 3, { { value = "/a", label = "a" } }, "/mo")
+      -- switch the window to a 2nd buffer so `buf` is no longer current
+      local other = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), other)
+      assert.is_false(completion.on_next(buf), "on_next false when buf != current")
+      assert.is_false(completion.on_prev(buf), "on_prev false when buf != current")
+      assert.is_false(completion.on_dismiss(buf), "on_dismiss false when buf != current")
+      vim.api.nvim_buf_delete(buf, { force = true })
+      vim.api.nvim_buf_delete(other, { force = true })
+    end)
+
+    -- (6) never-throws on bad args (nil/wiped buf/non-number)
+    it("never throws on nil/string/wiped buf (returns false)", function()
+      assert.has_no.errors(function()
+        completion.on_next(nil)
+        completion.on_next("x")
+        completion.on_prev(nil)
+        completion.on_prev("x")
+        completion.on_dismiss(nil)
+        completion.on_dismiss("x")
+      end)
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_delete(buf, { force = true })
+      assert.has_no.errors(function()
+        completion.on_next(buf)
+        completion.on_prev(buf)
+        completion.on_dismiss(buf)
+      end)
+      assert.is_false(completion.on_next(buf), "wiped buf → false")
+      assert.is_false(completion.on_prev(buf), "wiped buf → false")
+      assert.is_false(completion.on_dismiss(buf), "wiped buf → false")
+    end)
+  end)
 end)
