@@ -459,4 +459,151 @@ describe("pi-editor.menu", function()
     local g = menu._compute_geometry(1, 1, 24, 80, 40, 3, 12, "rounded")
     assert.are.same({ anchor = "NW", row = 1, col = 0, width = 40, height = 3 }, g)
   end)
+
+  -- ══ S35: two-column content + highlight decorations ════════════════════════════
+  -- A real cursor window so the cursor-relative popup has a context (the e2e pattern).
+  -- Asserts the BUFFER line content (two-column) + the DECORATIONS via get_extmarks
+  -- (screenattr()=0 headlessly — research/notes.md §5).
+  local function with_cursor_window(fn)
+    local cbuf = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_buf_set_lines(cbuf, 0, -1, false, { "/mo" })
+    local cwin = vim.api.nvim_open_win(cbuf, true, {
+      relative = "editor", row = 1, col = 1, width = 60, height = 6, border = "none",
+    })
+    vim.wo[cwin].virtualedit = "onemore"
+    vim.api.nvim_win_set_cursor(cwin, { 1, 3 })
+    local ok, err = pcall(fn)
+    pcall(vim.api.nvim_win_close, cwin, true)
+    pcall(vim.api.nvim_buf_delete, cbuf, { force = true })
+    assert.is_true(ok, err)
+  end
+
+  --- Collect the hl_group names on a (0-based) row via nvim_buf_get_extmarks. The
+  --- headless-safe decoration assertion (screenattr()=0 — assert the mechanism, not pixels).
+  local function hl_groups_on_row(buf, namespace, row0)
+    local marks = vim.api.nvim_buf_get_extmarks(buf, namespace, { row0, 0 }, { row0, -1 }, { details = true })
+    local groups = {}
+    for _, mk in ipairs(marks) do
+      if mk[4] and mk[4].hl_group then groups[mk[4].hl_group] = true end
+    end
+    return groups
+  end
+
+  -- (26) two-column content: open(items WITH descriptions) renders label + gap + desc
+  it("S35: open(items with descriptions) renders a two-column buffer (label + gap + desc)", function()
+    with_cursor_window(function()
+      menu.open({
+        { value = "/model", label = "/model", description = "Switch the model" },
+        { value = "/mood", label = "/mood", description = "Mood" },
+      })
+      assert.is_true(menu.is_open())
+      local mbuf = menu._state.menu_buf
+      assert.is_true(vim.api.nvim_buf_is_valid(mbuf))
+      local lines = vim.api.nvim_buf_get_lines(mbuf, 0, -1, false)
+      assert.are.equals(2, #lines)
+      -- row 1: '/model' (6) + pad to label_w(6) (0) + DESC_GAP(2) + 'Switch the model'
+      assert.are.equals("/model", lines[1]:sub(1, 6), "row1 starts with the label")
+      assert.are.equals("  ", lines[1]:sub(7, 8), "DESC_GAP (2 spaces) between label + desc")
+      assert.is_true(lines[1]:find("Switch the model", 9, true) ~= nil,
+        "row1 contains the description text (two-column)")
+      -- width tracks max_label_w(6) + DESC_GAP(2) + max_desc_w(16) = 24
+      local cfg = vim.api.nvim_win_get_config(menu._state.win)
+      assert.are.equals(24, cfg.width, "two-column width == max_label_w + DESC_GAP + max_desc_w")
+    end)
+  end)
+
+  -- (27) two-column CJK: a CJK description renders (no byte-mangling)
+  it("S35: a CJK description renders cell-correctly in the two-column layout", function()
+    with_cursor_window(function()
+      menu.open({ { value = "日本語", label = "日本語", description = "説明" } })
+      local mbuf = menu._state.menu_buf
+      local lines = vim.api.nvim_buf_get_lines(mbuf, 0, -1, false)
+      assert.are.equals(1, #lines)
+      assert.is_true(lines[1]:find("日本語", 1, true) ~= nil, "row has the CJK label")
+      assert.is_true(lines[1]:find("説明", 1, true) ~= nil, "row has the CJK description")
+      -- CJK label 6 + DESC_GAP 2 + CJK desc 4 = 12 cells
+      assert.are.equals(12, vim.fn.strdisplaywidth(lines[1]), "clean 12-cell rectangle")
+    end)
+  end)
+
+  -- (28) highlight decorations: base Pmenu every row + PmenuSel on the selected row +
+  --      Comment on description ranges. Asserts via get_extmarks (NOT screenattr).
+  it("S35: applies Pmenu (base) + Comment (desc) + PmenuSel (selected) decorations", function()
+    with_cursor_window(function()
+      menu.open({
+        { value = "/model", label = "/model", description = "Switch the model" },
+        { value = "/mood", label = "/mood", description = "Mood" },
+      })
+      local mbuf = menu._state.menu_buf
+      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      -- selected row (selected=1 => row 0): Pmenu base + PmenuSel (LAST-wins) + Comment
+      local g0 = hl_groups_on_row(mbuf, ns, 0)
+      assert.is_true(g0.Pmenu == true, "base Pmenu on the selected row 0")
+      assert.is_true(g0.PmenuSel == true, "PmenuSel on the selected row 0 (selected=1)")
+      assert.is_true(g0.Comment == true, "Comment on row 0's description range")
+      -- non-selected row 1: Pmenu base + Comment (NO PmenuSel)
+      local g1 = hl_groups_on_row(mbuf, ns, 1)
+      assert.is_true(g1.Pmenu == true, "base Pmenu on row 1")
+      assert.is_true(g1.Comment == true, "Comment on row 1's description")
+      assert.is_nil(g1.PmenuSel, "row 1 is NOT selected (only row 0 is)")
+    end)
+  end)
+
+  -- (29) the 1-based ↔ 0-indexed trap: open() sets selected=1 ⇒ PmenuSel at ROW 0 (not 1)
+  it("S35: open() selected=1 puts PmenuSel at row 0 (NOT row 1) — the 1-based↔0-indexed trap", function()
+    with_cursor_window(function()
+      menu.open({
+        { value = "/a", label = "/a", description = "Aaa" },
+        { value = "/b", label = "/b", description = "Bbb" },
+      })
+      assert.are.equals(1, menu._state.selected, "selected is 1-based (1 after open)")
+      local mbuf = menu._state.menu_buf
+      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      local g0 = hl_groups_on_row(mbuf, ns, 0)
+      local g1 = hl_groups_on_row(mbuf, ns, 1)
+      assert.is_true(g0.PmenuSel == true, "row 0 (selected-1) has PmenuSel")
+      assert.is_nil(g1.PmenuSel, "row 1 (selected) must NOT have PmenuSel")
+    end)
+  end)
+
+  -- (30) label-only regression: open(items WITHOUT descriptions) renders label-only +
+  --      base Pmenu + PmenuSel, NO Comment anywhere (S34 backward-compat)
+  it("S35: label-only items render label-only lines + base/selected (NO Comment)", function()
+    with_cursor_window(function()
+      menu.open({ { value = "/model", label = "/model" }, { value = "/mood", label = "/mood" } })
+      local mbuf = menu._state.menu_buf
+      local lines = vim.api.nvim_buf_get_lines(mbuf, 0, -1, false)
+      -- label-only: strip whitespace ⇒ the bare label
+      assert.are.equals("/model", lines[1]:match("^%s*(.-)%s*$"))
+      assert.are.equals("/mood", lines[2]:match("^%s*(.-)%s*$"))
+      -- width == max_label_w only (6), NOT two-column
+      local cfg = vim.api.nvim_win_get_config(menu._state.win)
+      assert.are.equals(6, cfg.width, "label-only width == max_label_w (no desc column)")
+      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      local g0 = hl_groups_on_row(mbuf, ns, 0)
+      assert.is_true(g0.Pmenu == true, "label-only still has base Pmenu")
+      assert.is_true(g0.PmenuSel == true, "label-only still has PmenuSel on row 0")
+      assert.is_nil(g0.Comment, "label-only ⇒ NO Comment anywhere")
+    end)
+  end)
+
+  -- (31) namespace is cleared between renders: reopen reuses the scratch buffer but the
+  --      decorations are wiped + repainted (no stale PmenuSel/Comment from the prior render)
+  it("S35: apply_highlights clears the namespace on each render (no stale decorations)", function()
+    with_cursor_window(function()
+      -- open WITH descriptions (Comment decorations applied)
+      menu.open({ { value = "/a", label = "/a", description = "Aaa" } })
+      local mbuf = menu._state.menu_buf
+      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      local g0a = hl_groups_on_row(mbuf, ns, 0)
+      assert.is_true(g0a.Comment == true, "first render has Comment")
+      -- reopen WITHOUT descriptions on the SAME buffer: Comment must be GONE (cleared)
+      menu.open({ { value = "/x", label = "/x" } })
+      assert.are.equals(mbuf, menu._state.menu_buf, "scratch buffer reused")
+      local g0b = hl_groups_on_row(mbuf, ns, 0)
+      assert.is_nil(g0b.Comment, "re-render WITHOUT desc clears the stale Comment")
+      assert.is_true(g0b.Pmenu == true, "base Pmenu repainted")
+      assert.is_true(g0b.PmenuSel == true, "PmenuSel repainted")
+    end)
+  end)
 end)

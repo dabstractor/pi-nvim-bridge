@@ -108,8 +108,9 @@ if pi.bridge == bridge then
   vim.wo[win].virtualedit = "onemore" -- allow cursor at EOL (byte col 3 on '/mo')
   vim.api.nvim_win_set_cursor(win, { 1, 3 }) -- end of "/mo"
 
-  -- prime the server reply + refresh
-  next_reply = { items = { { value = "/model", label = "model" } }, prefix = "/mo" }
+  -- prime the server reply + refresh (S35: the reply item has a description so the
+  -- two-column content is rendered in the real-bridge flow)
+  next_reply = { items = { { value = "/model", label = "model", description = "Switch the model" } }, prefix = "/mo" }
   local n_before = #seen
   local wins_before = #vim.api.nvim_list_wins() -- S34: snapshot BEFORE the popup opens
   completion.refresh(buf)
@@ -129,6 +130,12 @@ if pi.bridge == bridge then
   check(menu.get_prefix() == "/mo", "menu.get_prefix() == '/mo' (got " .. tostring(menu.get_prefix()) .. ")")
   check(menu.get_buf() == buf, "menu.get_buf() == the pi-prompt buffer")
   check(menu.has_items(), "menu.has_items() is true")
+  -- S35: the rendered buffer line contains the description (two-column content)
+  local mbuf = menu._state and menu._state.menu_buf
+  check(type(mbuf) == "number" and vim.api.nvim_buf_is_valid(mbuf), "menu._state.menu_buf must be valid after open")
+  local lines = vim.api.nvim_buf_get_lines(mbuf, 0, -1, false)
+  check(#lines == 1 and lines[1]:find("Switch", 1, true) ~= nil,
+    "the rendered line must contain the description text 'Switch' (two-column): got " .. tostring(lines[1] or "<none>"))
 
   -- ── CASE 2: an empty getSuggestions reply CLOSES the menu ────────────────────
   next_reply = { items = {}, prefix = "/zz" }

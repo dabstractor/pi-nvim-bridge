@@ -15,9 +15,12 @@
 -- S34 implemented the LOCAL `render(state)` seam — a scratch buffer + nvim_open_win /
 -- nvim_win_set_config + cursor-relative positioning + edge clamping (the pure
 -- `compute_geometry` — research/notes.md §3 / positioning-math.md's verified 7-case
--- table). S35 will enhance render to two-column label/description + highlights; S36's
--- next/prev/dismiss + S37's auto-close call open()/close()/reset(). The `completion →
--- menu` data path drives a visible popup showing the item labels.
+-- table). S35 (COMPLETE) enhanced `render()` to a TWO-COLUMN layout (label + gap +
+-- description, ellipsis-truncated) + 3-layer highlights (base `Pmenu` + desc `Comment` +
+-- selected-row `PmenuSel`, applied LAST-WINS — neovim#8449; research/notes.md §2/§3 +
+-- highlight-layering.md §1/§2). S36's next/prev/dismiss + S37's auto-close call
+-- open()/close()/reset(). The `completion → menu` data path drives a visible popup
+-- showing pi's live AutocompleteItems.
 --
 -- [Mode A] header — read before editing:
 --  * ROLE: the windowless menu-STATE consumer of S30's `on_results` seam. Model on
@@ -148,29 +151,97 @@ local state = {
 }
 
 -- ===========================================================================
+-- S35: highlight namespace (cached ONCE — live-verified nvim_create_namespace returns
+-- a stable numeric id — research/notes.md §2 / highlight-layering.md §1) + the
+-- inter-column gap constant (PRD §10.5 lists no config option for it; module-local
+-- constant in v1). Used by apply_highlights + render_lines/compute_width.
+-- ===========================================================================
+local DESC_GAP = 2
+local ns = nil
+do
+  local ok, id = pcall(vim.api.nvim_create_namespace, "pi-editor-menu")
+  if ok and type(id) == "number" then ns = id end -- nil on failure (apply_highlights degrades)
+end
+
+-- ===========================================================================
+-- S35: PURE helpers shared by compute_width + render — column_metrics (the max label
+-- + max description display widths + whether any item has a description) and
+-- _truncate (ellipsis truncation, CJK-correct via strdisplaywidth/strcharpart/strchars).
+-- PURE (no nvim state writes; type-guarded; never throw). Exposed as
+-- M._column_metrics / M._truncate (the M._compute_* / coords' fns test-seam convention).
+-- ===========================================================================
+
+--- Max label + max description display widths + whether any item has a description.
+--- PURE (no nvim state). type-guards each item (never throws). Exposed as M._column_metrics.
+---@param items pi-editor.AutocompleteItem[]
+---@return { max_label_w: integer, max_desc_w: integer, any_desc: boolean }
+local function column_metrics(items)
+  local max_label_w, max_desc_w, any_desc = 0, 0, false
+  if type(items) ~= "table" then return { max_label_w = 0, max_desc_w = 0, any_desc = false } end
+  for _, it in ipairs(items) do
+    if type(it) == "table" then
+      if type(it.label) == "string" then
+        local lw = vim.fn.strdisplaywidth(it.label) -- CJK/double-width aware (NOT #s)
+        if lw > max_label_w then max_label_w = lw end
+      end
+      if type(it.description) == "string" and it.description ~= "" then
+        any_desc = true
+        local dw = vim.fn.strdisplaywidth(it.description)
+        if dw > max_desc_w then max_desc_w = dw end
+      end
+    end
+  end
+  return { max_label_w = max_label_w, max_desc_w = max_desc_w, any_desc = any_desc }
+end
+
+--- Truncate `text` to <= max_w DISPLAY cells, appending "…" when truncated.
+--- PURE. "" when max_w <= 0; the first char alone when only 1 cell of room. Exposed as M._truncate.
+---@param text string
+---@param max_w integer max display width
+---@return string
+local function _truncate(text, max_w)
+  if type(text) ~= "string" or type(max_w) ~= "number" or max_w <= 0 then return "" end
+  if vim.fn.strdisplaywidth(text) <= max_w then return text end
+  local ellipsis = "…"
+  local budget = max_w - vim.fn.strdisplaywidth(ellipsis)
+  if budget <= 0 then
+    -- only 1 cell of room: show the first char alone (no ellipsis fits)
+    return vim.fn.strcharpart(text, 0, 1)
+  end
+  local out, w = "", 0
+  local n = vim.fn.strchars(text)
+  for i = 0, n - 1 do
+    local ch = vim.fn.strcharpart(text, i, 1)
+    local cw = vim.fn.strdisplaywidth(ch)
+    if w + cw > budget then break end
+    out, w = out .. ch, w + cw
+  end
+  return out .. ellipsis
+end
+
+-- ===========================================================================
 -- S34: PURE geometry helpers (no vim.fn.screenrow/col reads here — those live in
 -- render). Module-level locals, exposed on M as M._compute_* for unit-testing (the
 -- codebase convention — pure helpers are unit-tested, like coords_spec's byte_to_utf16).
 -- The clamping algorithm + the 7-case verified table are from
 -- plan/001_c56962b4fa17/P2M5T1S1/research/positioning-math.md (LIVE-VERIFIED prototype,
 -- MENU_VERIFY_PASS 0) + research/notes.md §3. CJK-aware via strdisplaywidth (NOT #s).
+-- S35 WIDENED compute_width to two-column (max_label_w + DESC_GAP + max_desc_w when
+-- any item has a description; collapses to label-only max_label_w when none do — so
+-- every S34 label-only case stays green).
 -- ===========================================================================
 
--- Width = label-only for S34 (S35 widens to label+gap+description). CJK-aware via
--- strdisplaywidth. Clamped to the available screen columns minus border horizontal
--- overhead.
+-- Width = label-only (S34) OR label+gap+description (S35, when any item has a desc).
+-- CJK-aware via strdisplaywidth. Clamped to the available screen columns minus border
+-- horizontal overhead.
 ---@param items pi-editor.AutocompleteItem[] The items to size for.
 ---@param ui_cols integer Full-screen columns (vim.o.columns).
 ---@param border_h_overhead integer Horizontal border overhead in cells (2 for a real border, 0 for "none").
 ---@return integer The content width, >= 1, clamped to fit the screen.
 local function compute_width(items, ui_cols, border_h_overhead)
-  local max_w = 0
-  for _, it in ipairs(items) do
-    local label = (type(it) == "table" and type(it.label) == "string") and it.label or ""
-    local w = vim.fn.strdisplaywidth(label) -- CJK/double-width aware (NOT #s)
-    if w > max_w then max_w = w end
-  end
-  return math.max(1, math.min(max_w, ui_cols - border_h_overhead))
+  local m = column_metrics(items)
+  local w = m.any_desc and (m.max_label_w + DESC_GAP + m.max_desc_w) or m.max_label_w
+  return math.max(1, math.min(w, ui_cols - border_h_overhead))
 end
 
 -- Height = min(#items, max_height); 0 when empty/invalid (render's show guard handles 0).
@@ -260,20 +331,74 @@ local function ensure_menu_buf(state)
   return b
 end
 
---- Build the S34 label-only lines, padded to `width` so the window is a clean
---- rectangle (S35 widens to two-column + highlights). Never throws (type-guarded).
+--- Build the S35 two-column lines: label (right-padded to label_w) + DESC_GAP + the
+--- description truncated to desc_w (right-padded), the whole line padded to a clean
+--- rectangle. When desc_w==0, produces S34-identical label-only padded lines.
+--- Never throws (type-guarded). CJK-aware via strdisplaywidth/strcharpart.
 ---@param state pi-editor.MenuState The menu state (reads state.items).
----@param width integer The content width to pad to.
----@return string[] The padded label lines.
-local function render_lines(state, width)
+---@param label_w integer The label column width.
+---@param desc_w integer The description column width (0 ⇒ label-only).
+---@return string[] The padded two-column (or label-only) lines.
+local function render_lines(state, label_w, desc_w)
+  local total = label_w + (desc_w > 0 and DESC_GAP or 0) + desc_w
   local lines = {}
   for i = 1, #state.items do
     local it = state.items[i]
     local label = (type(it) == "table" and type(it.label) == "string") and it.label or ""
     local lw = vim.fn.strdisplaywidth(label)
-    lines[i] = label .. string.rep(" ", math.max(0, width - lw))
+    local row = label .. string.rep(" ", math.max(0, label_w - lw)) -- label column, right-padded
+    if desc_w > 0 then
+      row = row .. string.rep(" ", DESC_GAP) -- the gap
+      local has_desc = type(it) == "table" and type(it.description) == "string" and it.description ~= ""
+      if has_desc then
+        local dt = _truncate(it.description, desc_w) -- desc, truncated
+        local dw = vim.fn.strdisplaywidth(dt)
+        row = row .. dt .. string.rep(" ", math.max(0, desc_w - dw)) -- desc col, right-padded
+      else
+        row = row .. string.rep(" ", desc_w) -- no desc → blank desc col
+      end
+    end
+    local rw = vim.fn.strdisplaywidth(row)
+    lines[i] = row .. string.rep(" ", math.max(0, total - rw)) -- clean rectangle (CJK-safe)
   end
   return lines
+end
+
+--- S35: apply the 3-layer highlight decoration to the popup's scratch buffer. Called
+--- from render()'s SHOW path AFTER nvim_buf_set_lines. NEVER throws (pcall every nvim
+--- call; type-guards; nvim_buf_is_valid guards; type(ns) guard). Order is load-bearing
+--- (LAST-WINS within a namespace, neovim#8449 — research/notes.md §2):
+---   (a) clear  (b) base Pmenu every row  (c) Comment on desc ranges  (d) PmenuSel selected LAST.
+--- `state.selected` is 1-BASED (S31); nvim rows are 0-BASED → passes `state.selected - 1`.
+---@param state pi-editor.MenuState reads state.items + state.selected (1-based).
+---@param buf integer the scratch buffer (state.menu_buf).
+---@param label_w integer the label column width.
+---@param desc_w integer the description column width (0 ⇒ no desc column).
+local function apply_highlights(state, buf, label_w, desc_w)
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
+  if type(ns) ~= "number" then return end -- namespace create failed → degrade
+  pcall(vim.api.nvim_buf_clear_namespace, buf, ns, 0, -1) -- (a) clear (reused scratch buf)
+  local n = #state.items
+  if n == 0 then return end
+  local desc_start = label_w + DESC_GAP
+  for i = 1, n do -- (b) base Pmenu whole-line (every row)
+    pcall(vim.api.nvim_buf_add_highlight, buf, ns, "Pmenu", i - 1, 0, -1)
+  end
+  if desc_w > 0 then -- (c) Comment on desc ranges (rows w/ desc)
+    for i = 1, n do
+      local it = state.items[i]
+      if type(it) == "table" and type(it.description) == "string" and it.description ~= "" then
+        local dw = math.min(desc_w, vim.fn.strdisplaywidth(it.description))
+        if dw > 0 then
+          pcall(vim.api.nvim_buf_add_highlight, buf, ns, "Comment", i - 1, desc_start, desc_start + dw)
+        end
+      end
+    end
+  end
+  if type(state.selected) == "number" and state.selected >= 1 and state.selected <= n then
+    -- (d) selected LAST → wins (1-based→0-based)
+    pcall(vim.api.nvim_buf_add_highlight, buf, ns, "PmenuSel", state.selected - 1, 0, -1)
+  end
 end
 
 --- S34 render(state): create/show OR close the floating window. Branches on
@@ -318,8 +443,16 @@ local function render(state)
     return
   end
   local g = compute_geometry(sr, sc, ui_lines, ui_cols, width, height, max_height, border)
-  -- set buffer content (label-only for S34; S35 widens to two-column + highlights).
-  pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, render_lines(state, g.width))
+  -- S35: split the FINAL g.width (compute_geometry may have clamped it) into label + desc
+  -- columns. compute_width REQUESTED the two-column width; compute_geometry may clamp it
+  -- further (case 5 over-wide). Recompute the split from the FINAL g.width so the desc
+  -- column fits what actually got painted.
+  local m = column_metrics(state.items)
+  local label_w = m.max_label_w
+  local desc_w  = m.any_desc and math.max(0, g.width - label_w - DESC_GAP) or 0
+  if m.any_desc and desc_w < 3 then desc_w = 0 end -- too thin → label-only (no 1–2 cell sliver)
+  pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, render_lines(state, label_w, desc_w))
+  apply_highlights(state, buf, label_w, desc_w) -- ← THE S35 INSERTION (3-layer highlights)
   local win_cfg = {
     relative = "cursor", anchor = g.anchor, row = g.row, col = g.col,
     width = g.width, height = g.height, style = "minimal", border = border,
@@ -475,5 +608,8 @@ M._compute_width = compute_width
 M._compute_height = compute_height
 M._compute_geometry = compute_geometry
 M._state = state
+-- S35 internal test seams (the pure helpers — mirror coords_spec's byte_to_utf16 convention).
+M._column_metrics = column_metrics
+M._truncate = _truncate
 
 return M

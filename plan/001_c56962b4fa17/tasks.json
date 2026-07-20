@@ -796,7 +796,7 @@
               "type": "Task",
               "id": "P2.M8.T21",
               "title": "menu.lua — popup creation, rendering & positioning",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Create the floating window, render completion items with label/description columns and highlight, and position it relative to the cursor with clamping to screen edges.",
               "subtasks": [
                 {
@@ -818,7 +818,7 @@
                   "type": "Subtask",
                   "id": "P2.M8.T21.S35",
                   "title": "Item rendering — two-column label/description, highlight selected row",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M8.T21.S34"
