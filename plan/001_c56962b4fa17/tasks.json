@@ -688,7 +688,7 @@
           "type": "Milestone",
           "id": "P2.M7",
           "title": "Completion Flow — Triggers, Accept, Tab",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Implement the completion.lua module that triggers getSuggestions on text changes with debounce, accepts items via applyCompletion with buffer replacement and cursor positioning, and handles Tab-triggered file completion via shouldTriggerFileCompletion.",
           "tasks": [
             {
@@ -762,14 +762,14 @@
               "type": "Task",
               "id": "P2.M7.T20",
               "title": "Tab-triggered file completion (shouldTriggerFileCompletion)",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the Tab-with-no-menu-open behavior that calls shouldTriggerFileCompletion to check if file completion should be forced, then calls getSuggestions with force=true.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M7.T20.S33",
                   "title": "Tab handler — shouldTriggerFileCompletion + force getSuggestions",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M7.T18.S31"

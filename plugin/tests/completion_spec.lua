@@ -92,6 +92,27 @@ describe("pi-editor.completion", function()
   before_each(reset)
   after_each(reset)
 
+  --- Set up a populated menu via the REAL seam: a buffer with the given line + cursor,
+  --- menu.attach(), refresh(), resolve getSuggestions with the given items/prefix,
+  --- wait for the menu to open. Returns (fake, buf, win). The caller deletes buf/win.
+  --- Shared by the S32 (accept/on_enter) + S33 (on_tab) describe blocks.
+  local function populated_menu(line, byte_col, items, prefix)
+    local fake = fake_bridge()
+    pi.bridge = fake
+    local buf = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { line })
+    local win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(win, buf)
+    vim.wo[win].virtualedit = "onemore" -- allow cursor at EOL
+    vim.api.nvim_win_set_cursor(win, { 1, byte_col })
+    menu.attach()
+    completion.refresh(buf)
+    wait_for(200, function() return #fake.requests >= 1 end)
+    fake.resolve_last(nil, { items = items, prefix = prefix })
+    wait_for(200, function() return menu.is_open() end)
+    return fake, buf, win
+  end
+
   -- (1) surface: refresh/reset/current are functions; on_results is settable (nil default)
   it("exposes refresh/reset/current as functions and on_results as a settable nil slot", function()
     assert.are.equals("function", type(completion.refresh))
@@ -374,25 +395,7 @@ describe("pi-editor.completion", function()
   -- getSuggestions reply (don't hand-set menu state — test the real seam).
   -- =====================================================================
   describe("accept/on_enter", function()
-    --- Set up a populated menu via the real seam: a buffer with the given line + cursor,
-    --- menu.attach(), refresh(), resolve getSuggestions with the given items/prefix,
-    --- wait for the menu to open. Returns (fake, buf, win). The caller deletes buf/win.
-    local function populated_menu(line, byte_col, items, prefix)
-      local fake = fake_bridge()
-      pi.bridge = fake
-      local buf = vim.api.nvim_create_buf(true, false)
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { line })
-      local win = vim.api.nvim_get_current_win()
-      vim.api.nvim_win_set_buf(win, buf)
-      vim.wo[win].virtualedit = "onemore" -- allow cursor at EOL
-      vim.api.nvim_win_set_cursor(win, { 1, byte_col })
-      menu.attach()
-      completion.refresh(buf)
-      wait_for(200, function() return #fake.requests >= 1 end)
-      fake.resolve_last(nil, { items = items, prefix = prefix })
-      wait_for(200, function() return menu.is_open() end)
-      return fake, buf, win
-    end
+    -- populated_menu is shared at the top-level describe scope (used by on_tab too).
 
     -- (1) accept issues applyCompletion with the EXACT params shape
     it("accept issues applyCompletion with {lines, cursorLine, cursorCol, item, prefix} (no force)", function()
@@ -513,6 +516,222 @@ describe("pi-editor.completion", function()
         end)
         assert.is_false(completion.accept({ value = "x", label = "x" })) -- pi.bridge == nil
       end)
+    end)
+  end)
+
+  -- =====================================================================
+  -- S33: on_tab(buf) — pi's handleTabCompletion replication.
+  -- Reuses the S32 populated_menu helper (menu-open BRANCH 1) + adds a
+  -- closed_menu helper (menu-closed BRANCH 2a/2b). Drives menu state via the
+  -- REAL seam (fake_bridge + menu.attach + refresh); uses the same reset()
+  -- before/after_each.
+  -- =====================================================================
+  describe("on_tab", function()
+    --- A CLOSED-menu setup: a buf + cursor with NO refresh (or an empty-items
+    --- reply) so menu.is_open()==false. Returns (fake, buf, win). The caller
+    --- deletes buf. Attaches menu so completion.on_results is wired (for the
+    --- multi-item routing cases). When `lines` is a multi-line table the cursor
+    --- is placed on its LAST row; otherwise the single line is used.
+    local function closed_menu(line, byte_col, lines_opt)
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = vim.api.nvim_create_buf(true, false)
+      local src = lines_opt or { line }
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, src)
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore" -- allow cursor at EOL
+      vim.api.nvim_win_set_cursor(win, { #src, byte_col }) -- last row (1-indexed)
+      menu.attach()
+      assert.is_false(menu.is_open(), "closed_menu must start with the menu closed")
+      return fake, buf, win
+    end
+
+    -- (1) BRANCH 1 — menu open + Tab → accept (delegates to the S32 core)
+    it("BRANCH 1: menu open + selected → accept (applyCompletion) + returns true", function()
+      local fake, buf = populated_menu("/mod", 3, { { value = "/model", label = "model" } }, "/mo")
+      local n0 = #fake.requests
+      local ok = completion.on_tab(buf)
+      assert.is_true(ok, "on_tab returns true (Tab consumed)")
+      wait_for(200, function() return #fake.requests > n0 end)
+      local req = fake.requests[#fake.requests]
+      assert.are.equals("applyCompletion", req.method)
+      assert.are.equals("/model", req.params.item.value)
+      assert.are.equals("/mo", req.params.prefix) -- the on_results prefix (menu.get_prefix)
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (2) BRANCH 2b — file-force: shouldTrigger=true → force:true getSuggestions
+    it("BRANCH 2b: shouldTriggerFileCompletion=true → force:true getSuggestions (menu opens)", function()
+      local fake, buf = closed_menu("./src/com", 8)
+      local n0 = #fake.requests
+      local ok = completion.on_tab(buf)
+      assert.is_true(ok, "on_tab returns true (Tab consumed; shouldTrigger issued)")
+      wait_for(200, function() return #fake.requests > n0 end)
+      local trigger_req = fake.requests[#fake.requests]
+      assert.are.equals("shouldTriggerFileCompletion", trigger_req.method)
+      assert.are.same({ "./src/com" }, trigger_req.params.lines)
+      assert.are.equals(0, trigger_req.params.cursorLine)
+      assert.are.equals(8, trigger_req.params.cursorCol)
+      -- resolve shouldTrigger=true → the NEXT req must be getSuggestions force=true
+      fake.resolve_last(nil, true)
+      wait_for(200, function() return #fake.requests > n0 + 1 end)
+      local gs_req = fake.requests[#fake.requests]
+      assert.are.equals("getSuggestions", gs_req.method)
+      assert.is_true(gs_req.params.force, "getSuggestions force must be true (file-force)")
+      -- resolve with >1 items → menu OPENS (shown, not auto-applied)
+      local items = { { value = "./src/a", label = "a" }, { value = "./src/b", label = "b" } }
+      fake.resolve_last(nil, { items = items, prefix = "./" })
+      wait_for(200, function() return menu.is_open() end)
+      assert.is_true(menu.is_open(), "multi-item result must open the menu (not auto-apply)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (3) BRANCH 2b — shouldTrigger=false → NO getSuggestions (pi:2150 abort)
+    it("BRANCH 2b: shouldTriggerFileCompletion=false → NO getSuggestions (Tab still consumed)", function()
+      local fake, buf = closed_menu("./src/com", 8)
+      local n0 = #fake.requests
+      local ok = completion.on_tab(buf)
+      assert.is_true(ok, "on_tab returns true (Tab consumed; shouldTrigger issued)")
+      wait_for(200, function() return #fake.requests > n0 end)
+      assert.are.equals("shouldTriggerFileCompletion", fake.requests[#fake.requests].method)
+      fake.resolve_last(nil, false) -- guard false → abort
+      wait_for(150, function() return false end) -- let the scheduled cb settle
+      assert.are.equals(n0 + 1, #fake.requests, "NO getSuggestions must be issued when shouldTrigger=false")
+      assert.is_false(menu.is_open())
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (4) SINGLE-ITEM AUTO-APPLY — force:true + 1 item → applyCompletion with the RESULT prefix
+    it("SINGLE-ITEM AUTO-APPLY: force:true + 1 item → applyCompletion(result prefix) + menu CLOSED", function()
+      local fake, buf = closed_menu("./x", 3)
+      local n0 = #fake.requests
+      completion.on_tab(buf)
+      wait_for(200, function() return #fake.requests > n0 end)
+      fake.resolve_last(nil, true) -- shouldTrigger=true
+      wait_for(200, function() return #fake.requests > n0 + 1 end)
+      local gs_req = fake.requests[#fake.requests]
+      assert.are.equals("getSuggestions", gs_req.method)
+      assert.is_true(gs_req.params.force)
+      -- resolve with EXACTLY 1 item → auto-apply (applyCompletion with the result prefix)
+      fake.resolve_last(nil, { items = { { value = "./x.rs", label = "x.rs" } }, prefix = "./" })
+      wait_for(200, function() return #fake.requests > n0 + 2 end)
+      local apply_req = fake.requests[#fake.requests]
+      assert.are.equals("applyCompletion", apply_req.method)
+      assert.are.equals("./x.rs", apply_req.params.item.value)
+      assert.are.equals("./", apply_req.params.prefix, "prefix must be the getSuggestions RESULT prefix (NOT menu.get_prefix)")
+      assert.is_false(menu.is_open(), "single-item auto-apply must NOT open the menu")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (5) BRANCH 2a — slash ctx (cursorLine 0, bare /cmd) → force:FALSE (no shouldTrigger first)
+    it("BRANCH 2a: bare slash command at cursorLine==0 → force:FALSE getSuggestions (no shouldTrigger)", function()
+      local fake, buf = closed_menu("/mod", 3)
+      local n0 = #fake.requests
+      local ok = completion.on_tab(buf)
+      assert.is_true(ok, "on_tab returns true (Tab consumed; slash fetch issued)")
+      wait_for(200, function() return #fake.requests > n0 end)
+      local first = fake.requests[#fake.requests]
+      assert.are.equals("getSuggestions", first.method, "slash branch must issue getSuggestions FIRST (no shouldTrigger)")
+      assert.is_false(first.params.force, "slash branch force must be FALSE")
+      -- resolve with 1 item → menu OPENS (slash path NEVER auto-applies even with 1 item)
+      fake.resolve_last(nil, { items = { { value = "/model", label = "model" } }, prefix = "/mo" })
+      wait_for(200, function() return menu.is_open() end)
+      assert.is_true(menu.is_open(), "slash path must show the menu (never auto-apply)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (6) slash gate on cursorLine!=0 — a /cmd on line 2 routes to the file-force branch
+    it("BRANCH 2b (slash gate): a /cmd on line 2 → file-force (shouldTrigger), NOT slash", function()
+      -- multi-line buf { '', '/mod' }; cursor on row 2 (cursorLine==1, NOT 0)
+      local fake, buf = closed_menu(nil, 3, { "", "/mod" })
+      local n0 = #fake.requests
+      completion.on_tab(buf)
+      wait_for(200, function() return #fake.requests > n0 end)
+      local first = fake.requests[#fake.requests]
+      assert.are.equals("shouldTriggerFileCompletion", first.method, "line-2 /cmd must route to file-force (NOT slash)")
+      assert.are.equals(1, first.params.cursorLine, "cursorLine must be 1 (row 2)")
+      fake.resolve_last(nil, true)
+      wait_for(200, function() return #fake.requests > n0 + 1 end)
+      local gs_req = fake.requests[#fake.requests]
+      assert.are.equals("getSuggestions", gs_req.method)
+      assert.is_true(gs_req.params.force, "line-2 /cmd must force==true (file-force)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (7) never-throws / degrade
+    describe("on_tab never-throws / degrade", function()
+      it("on_tab(nil) / on_tab('x') never throw", function()
+        assert.has_no.errors(function()
+          completion.on_tab(nil)
+          completion.on_tab("x")
+        end)
+      end)
+
+      it("on_tab on a wiped buf never throws + returns false", function()
+        local buf = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_buf_delete(buf, { force = true })
+        pi.bridge = fake_bridge()
+        local ok = completion.on_tab(buf)
+        assert.is_false(ok)
+      end)
+
+      it("pi.bridge == nil → on_tab returns false (Tab → indent, no throw)", function()
+        local buf = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mod" })
+        local win = vim.api.nvim_get_current_win()
+        vim.api.nvim_win_set_buf(win, buf)
+        pi.bridge = nil
+        local ok = completion.on_tab(buf)
+        assert.is_false(ok)
+        vim.api.nvim_buf_delete(buf, { force = true })
+      end)
+
+      it("bridge disconnected → on_tab returns false", function()
+        local buf = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mod" })
+        local win = vim.api.nvim_get_current_win()
+        vim.api.nvim_win_set_buf(win, buf)
+        pi.bridge = fake_bridge({ connected = false })
+        local ok = completion.on_tab(buf)
+        assert.is_false(ok)
+        vim.api.nvim_buf_delete(buf, { force = true })
+      end)
+
+      it("on_tab returns false when buf is not the current buffer", function()
+        local _, buf = populated_menu("/mod", 3, { { value = "/model", label = "model" } }, "/mo")
+        local other = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), other)
+        local ok = completion.on_tab(buf)
+        assert.is_false(ok, "on_tab returns false when buf != current")
+        vim.api.nvim_buf_delete(buf, { force = true })
+        vim.api.nvim_buf_delete(other, { force = true })
+      end)
+    end)
+
+    -- (8) supersession: a refresh after Tab supersedes the Tab fetch (shared state.gen)
+    it("supersession: a refresh after on_tab supersedes the Tab fetch (shared gen-guard)", function()
+      local fake, buf = closed_menu("./src/com", 8)
+      local n0 = #fake.requests
+      completion.on_tab(buf)
+      wait_for(200, function() return #fake.requests > n0 end)
+      assert.are.equals("shouldTriggerFileCompletion", fake.requests[#fake.requests].method)
+      fake.resolve_last(nil, true) -- shouldTrigger=true → force_fetch issues getSuggestions
+      wait_for(200, function() return #fake.requests > n0 + 1 end)
+      local tab_req = fake.requests[#fake.requests]
+      assert.are.equals("getSuggestions", tab_req.method)
+      -- NOW a refresh fires (TextChangedI) → it bumps state.gen + cancels the Tab in-flight
+      local seam = 0
+      completion.on_results = function() seam = seam + 1 end
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests > n0 + 2 end, 5)
+      -- cancel(prev_id) was called (layer 1) for the Tab request
+      assert.is_true(#fake.cancels >= 1, "refresh must cancel the in-flight Tab fetch")
+      -- resolve the STALE Tab cb with items → on_results must NOT fire (gen-guard)
+      vim.schedule_wrap(tab_req.cb)(nil, { items = { { value = "stale", label = "stale" } }, prefix = "./" })
+      wait_for(120, function() return false end) -- let the stale cb settle (a no-op)
+      assert.are.equals(0, seam, "a stale Tab response must NOT fire on_results (gen-guard)")
+      vim.api.nvim_buf_delete(buf, { force = true })
     end)
   end)
 end)
