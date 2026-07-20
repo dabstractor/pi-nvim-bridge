@@ -695,7 +695,7 @@
               "type": "Task",
               "id": "P2.M7.T18",
               "title": "Completion triggers & debounce",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the trigger scheduling that fires on InsertEnter/TextChangedI/CursorMovedI with configurable debounce, extracts buffer lines and cursor position, converts coordinates, and calls getSuggestions via the bridge.",
               "subtasks": [
                 {
@@ -718,7 +718,7 @@
                   "type": "Subtask",
                   "id": "P2.M7.T18.S31",
                   "title": "getSuggestions result → menu population",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M7.T18.S30"

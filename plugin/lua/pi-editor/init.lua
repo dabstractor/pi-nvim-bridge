@@ -141,6 +141,14 @@ function M.activate()
       br.handshake(desc, function(_err, _info) end) -- no-op cb
     end
   end)
+  -- S31: wire completion results -> menu population (forward-contract no-op-safe,
+  -- mirrors the bridge.handshake pcall above). menu.attach() registers
+  -- completion.on_results. Safe to call before the bridge connects (refresh is a
+  -- silent no-op then); idempotent across /reload (the `attached` flag).
+  pcall(function()
+    local ok, menu = pcall(require, "pi-editor.menu")
+    if ok and type(menu.attach) == "function" then menu.attach() end
+  end)
   return desc                                             -- (g)/(h) are S22/S24's job (see doc)
 end
 
