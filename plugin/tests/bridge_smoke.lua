@@ -99,12 +99,41 @@ do
   check(not bridge.is_connected(), "is_connected() false after connect failure")
 end
 
--- ── CASE 3: double-close safe + on_exit no-op ──────────────────────────────
+-- ── CASE 3: double-close safe + on_exit no-op ─────────────────────────────
 do
   bridge.close()
   bridge.close() -- must NOT throw (GOTCHA 2 — guarded)
   bridge.on_exit(0) -- no-op when not connected (GOTCHA 12)
   check(true, "double-close + on_exit(no-connect): no throw")
+end
+
+-- ── CASE 4: on_exit autosave-if-modified (S38) ─────────────────────────────
+-- A modified, named, loaded buffer is written to its file (UTF-8 + \n + single
+-- trailing \n) and 'modified' is cleared. (PRD §11 — the lost-prompt fix.)
+do
+  local tmp = os.tmpname() .. ".md"
+  -- seed an initial file (one line) so the buffer has a backing name + content
+  local seed = io.open(tmp, "w")
+  if seed then seed:write("original\n"); seed:close() end
+  -- a NORMAL buffer (not scratch) loaded from the file — mirrors a real pi-prompt buf
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_name(buf, tmp)
+  vim.fn.bufload(buf)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "edited line one", "edited line two" })
+  check(vim.bo[buf].modified, "CASE 4: buffer marked modified after set_lines")
+  -- on_exit is a safe no-op re: the transport here (never connected); autosave still runs.
+  bridge.on_exit(buf)
+  vim.wait(50)
+  check(vim.bo[buf].modified == false, "CASE 4: on_exit cleared 'modified' after write")
+  local f = io.open(tmp, "r")
+  local got = f and f:read("*a") or ""
+  if f then f:close() end
+  local want = "edited line one\nedited line two\n"
+  check(got == want, "CASE 4: file content == buffer text + \n-delimited + single trailing \n (got " .. vim.inspect(got) .. ")")
+  -- idempotent double-fire (ExitPre then VimLeavePre) — 2nd call is a clean no-op
+  bridge.on_exit(buf) -- 'modified' already false -> autosave skips; no throw
+  check(true, "CASE 4: second on_exit (double-fire) is a clean no-op")
+  os.remove(tmp)
 end
 
 if fails > 0 then

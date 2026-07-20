@@ -223,6 +223,7 @@ local notification_handlers = {}
 local resolve_handshake -- (msg, err) — the SINGLE exit point for the handshake (race-safe).
 local resolve_request   -- (id, err, msg) — the SINGLE exit point for a regular request (race-safe).
 local dispatch          -- (msg)       — the single on_event (S26/S27 extension seam).
+local autosave_if_modified -- (buf) — S38 best-effort autosave helper (pure nvim-API; defined below).
 
 --- The `read_start` callback. Routes data chunks to the `jsonlreader`; EOF / read errors
 --- to `on_close` + teardown. Runs on the libuv loop (no `vim.api.*` here — GOTCHA 5).
@@ -737,13 +738,46 @@ function M.close()
   notification_handlers = {}
 end
 
+--- Best-effort autosave of `buf` to its named file when modified. Pure nvim-API (no bridge
+--- state). NEVER throws — the caller (on_exit) pcalls it. Uses writefile+getbufline for a
+--- deterministic UTF-8 + \n + single-trailing-\n write that matches pi's temp-file wire
+--- format (PRD §11) WITHOUT running user BufWritePre/Post autocmds (no formatter risk on
+--- prompt text). Clears 'modified' manually (writefile does not). Skips invalid / unloaded /
+--- unmodified / unnamed buffers. (research/nvim-exit-autosave.md §Q3/Q4/Q6.)
+---@param buf integer Buffer handle (0 = current; non-number/invalid/unloaded -> no-op).
+autosave_if_modified = function(buf)
+  if type(buf) ~= "number" then return end
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  if not vim.api.nvim_buf_is_loaded(buf) then return end   -- content resident?
+  if not vim.bo[buf].modified then return end              -- nothing to save
+  local name = vim.api.nvim_buf_get_name(buf)
+  if name == "" then return end                            -- unnamed/scratch -> skip (GOTCHA F)
+  -- writefile: UTF-8 + \n-delimited + single trailing \n (pi's exact wire format; GOTCHA B).
+  -- NO user autocmds (no formatter risk on prompt text).
+  vim.fn.writefile(vim.fn.getbufline(buf, 1, "$"), name)
+  vim.bo[buf].modified = false                             -- writefile does NOT clear it (GOTCHA B.3)
+end
+
 --- VimLeavePre / ExitPre handler — fulfills the S22 ftplugin forward contract
---- (`require("pi-editor.bridge").on_exit(buf)`). Closes the transport. `buf` is accepted
---- to match the dispatch signature and ignored at the transport layer (autosave is S38's
---- job, dispatched separately). Safe NO-OP when never connected (GOTCHA 12 — `connect()`
---- is not wired into the activation flow until S25). NEVER throws.
----@param buf integer Buffer handle (unused at transport layer; matches the ftplugin dispatch signature).
-function M.on_exit(buf) -- luacheck: ignore buf (transport layer; autosave is S38)
+--- (`require("pi-editor.bridge").on_exit(buf)`). Three idempotent steps, each pcall-guarded
+--- so exit is NEVER blocked or aborted (research §Q6.1; never vim.schedule — GOTCHA E):
+---   (1) autosave buf to its file if modified (PRD §11 — prevents the lost-prompt bug;
+---       independent of connection state, GOTCHA G).
+---   (2) best-effort graceful `bye` JSON-RPC, fire-and-forget, ONLY when connected (PRD §5.4;
+---       GOTCHA C — do NOT await; the ~60B bye flushes synchronously, the server handles EOF).
+---   (3) M.close() — idempotent transport teardown (GOTCHA 2).
+--- Safe across the ExitPre→VimLeavePre double-fire (GOTCHA A): autosave is gated on
+--- 'modified' (cleared in step 1), bye on is_connected() (false after step 3), close on
+--- state.closed. Safe when never connected (GOTCHA 12 — autosave guard + is_connected gate).
+---@param buf integer The pi-prompt buffer handle (from the ftplugin dispatch).
+function M.on_exit(buf)
+  -- (1) autosave — independent of connection (PRD §11; GOTCHA G). Never throw (GOTCHA E).
+  pcall(autosave_if_modified, buf)
+  -- (2) best-effort graceful bye — fire-and-forget, ONLY if connected (PRD §5.4; GOTCHA C).
+  if M.is_connected() then
+    pcall(M.request, "bye", {}, function(_err, _result) end) -- empty cb ignores the ack/drain
+  end
+  -- (3) teardown — idempotent (GOTCHA 2; safe across the ExitPre+VimLeavePre double-fire, GOTCHA A).
   M.close()
 end
 

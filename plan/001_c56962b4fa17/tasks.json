@@ -427,7 +427,7 @@
       "type": "Phase",
       "id": "P2",
       "title": "pi-editor.nvim Plugin Core (Neovim side, Lua)",
-      "status": "Planned",
+      "status": "Complete",
       "description": "Build the Neovim Lua plugin that activates only when PI_EDITOR_BRIDGE env var is present (i.e., when pi launches Neovim as $EDITOR), connects to the bridge's Unix socket, and renders pi's completion suggestions through a dependency-free floating menu with acceptance delegated back to pi's applyCompletion for byte-identical insertion behavior.",
       "milestones": [
         {
@@ -875,21 +875,21 @@
           "type": "Milestone",
           "id": "P2.M9",
           "title": "Autosave & Exit Handling",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Implement the autosave-on-exit behavior that ensures pi reads the latest prompt content when the editor exits, and clean teardown of the bridge connection.",
           "tasks": [
             {
               "type": "Task",
               "id": "P2.M9.T23",
               "title": "Autosave on VimLeavePre/ExitPre & bridge teardown",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the exit handlers that write the buffer to the temp file if modified (so pi reads the latest content on status 0 exit), send bye to the bridge, and close the socket connection.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M9.T23.S38",
                   "title": "VimLeavePre/ExitPre — autosave if modified, send bye, close connection",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M5.T15.S24",
