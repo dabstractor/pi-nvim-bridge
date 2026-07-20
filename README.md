@@ -2,13 +2,20 @@
 
 > Bridge pi's in-prompt completion into the Neovim instance pi launches as `$EDITOR`.
 
-`pi-editor-bridge` is a **pi extension** that captures pi's live autocomplete
-engine and serves it over a local Unix socket to the external editor pi spawns.
-A companion Neovim plugin — **`pi-editor.nvim`** (forthcoming, see Phase 2) —
-connects to that socket and renders pi's completion inside Neovim: `/commands`,
-`skill:` templates, argument completions, `@file` references, and filesystem
-paths. Acceptance is delegated back to pi's `applyCompletion`, so insertion
-behavior is byte-for-byte identical to the TUI.
+This repository ships **two components** that work together:
+
+- **`pi-editor-bridge`** *(this README's focus — a **pi extension**)* captures
+  pi's live autocomplete engine and serves it over a local Unix socket to the
+  external editor pi spawns.
+- **`pi-editor.nvim`** *(the companion **Neovim plugin**, under [`plugin/`](./plugin) —
+  see [`plugin/README.md`](./plugin/README.md) and `:help pi-editor`)* connects
+  to that socket and renders pi's completion inside Neovim: `/commands`,
+  `skill:` templates, argument completions, `@file` references, and filesystem
+  paths.
+
+Acceptance is delegated back to pi's `applyCompletion`, so insertion behavior
+is byte-for-byte identical to the TUI. Both components are **complete and
+shipped**.
 
 ## What it does
 
@@ -21,18 +28,18 @@ launches `$EDITOR` with inherited `process.env`, the Neovim it starts sees that
 descriptor and can dial the bridge. The bridge stays alive for the whole session
 and re-advertises on `/reload`.
 
-> **Note:** the extension is complete and tested; the Neovim-side rendering
-> plugin (`pi-editor.nvim`) ships separately under Phase 2. Until it lands, the
-> bridge advertises correctly but there is nothing on the editor side to consume
-> it.
+> **Note:** the companion `pi-editor.nvim` plugin is **complete** (under
+> [`plugin/`](./plugin)). Together, the bridge + plugin deliver pi-faithful
+> completion in the external editor.
 
 ## Prerequisites
 
 - **pi** with extension support.
-- **Neovim ≥ 0.10** (0.12 verified) for the companion plugin.
+- **Neovim ≥ 0.11** (0.12 verified) for the companion plugin — see
+  [`plugin/README.md`](./plugin/README.md#requirements).
 - **`fd`** *(optional)* — enables fuzzy `@file` search. Without it `@file`
   silently returns nothing, but path completion (directory listing) still works.
-- The companion **`pi-editor.nvim`** plugin (Phase 2, forthcoming).
+- The companion **`pi-editor.nvim`** plugin (see [`plugin/README.md`](./plugin/README.md)).
 
 ## Installation
 
@@ -60,7 +67,9 @@ pi list          # should show "pi-editor-bridge"
 > Install it as a pi package via one of the commands above.
 
 **Companion plugin:** install `pi-editor.nvim` with your plugin manager
-(e.g. lazy.nvim). See that plugin's README (Phase 2).
+(e.g. lazy.nvim — note `lazy = false` so the VimEnter startup shim sources
+**before** activation). See [`plugin/README.md`](./plugin/README.md) and
+`:help pi-editor` (`plugin/doc/pi-editor.txt`).
 
 ## Configuration (`$EDITOR`)
 
@@ -168,8 +177,8 @@ The descriptor is a single-line JSON object:
 
 - **"I typed, then `:q`, and lost my prompt."**
   pi only reads the temp file after the editor exits with status 0. The
-  companion plugin autosaves the buffer on `VimLeavePre` when modified. Until
-  Phase 2 ships, remember to `:w` before `:q`.
+  companion plugin **autosaves** the buffer on `VimLeavePre` when modified
+  (`autosave_on_exit`, default `true`). To be explicit, quit with `:x`/`ZZ`.
 - **"Completion doesn't appear in Neovim."**
   Confirm the extension loaded (`pi list` shows `pi-editor-bridge`), confirm
   `EDITOR=nvim` (or `externalEditor` in settings), and confirm the companion
@@ -233,8 +242,15 @@ done
 ```
 pi-nvim-bridge/
 ├── package.json              # pi package manifest (pi.extensions → entry)
-├── README.md                 # this file
-└── extension/
+├── README.md                 # this file (the EXTENSION README)
+├── plugin/                   # the pi-editor.nvim Neovim plugin (P2 + P4 — complete)
+│   ├── README.md             # the PLUGIN README (end-user landing page)
+│   ├── plugin/pi-editor.lua  # VimEnter auto-activation shim
+│   ├── lua/pi-editor/        # init/bridge/completion/menu/coords/health/blink_source/cmp_source/...
+│   ├── ftplugin/pi-prompt.lua# 9 buffer-local keymaps + ft opts + autocmds
+│   ├── doc/pi-editor.txt     # the vimdoc (`:help pi-editor`)
+│   └── tests/                # plenary specs + plenary-free smokes
+└── extension/                # the pi-editor-bridge pi extension (P1 — complete)
     ├── pi-editor-bridge.ts   # entry: default-export factory
     ├── connection.ts         # JSON-RPC server + dispatch + registry
     ├── jsonl-reader.ts       # newline-delimited JSON framing
@@ -252,4 +268,5 @@ pi-nvim-bridge/
 - [PRD](./PRD.md) — full design document for the bridge + Neovim plugin.
 - pi docs: [packages.md](https://pi.dev/docs/packages) ·
   [extensions.md](https://pi.dev/docs/extensions)
-- Companion plugin: **`pi-editor.nvim`** (Phase 2, forthcoming).
+- Companion plugin: [plugin/README.md](./plugin/README.md) ·
+  `:help pi-editor` ([`plugin/doc/pi-editor.txt`](./plugin/doc/pi-editor.txt)).

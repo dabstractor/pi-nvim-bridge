@@ -912,7 +912,7 @@
       "type": "Phase",
       "id": "P3",
       "title": "Polish, Quality & Documentation",
-      "status": "Planned",
+      "status": "Complete",
       "description": "Add resilience (silent degradation, error handling), refine timing (debounce, timeout, supersession), implement checkhealth diagnostics, and sync all changeset-level documentation (vimdoc, READMEs).",
       "milestones": [
         {
@@ -1026,14 +1026,14 @@
           "type": "Milestone",
           "id": "P3.M11",
           "title": "Changeset-Level Documentation Sync (Mode B)",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Final documentation task that sweeps all cross-cutting docs: vimdoc (doc/pi-editor.txt), README for both plugin and extension, and any overview/architecture docs that span the whole changeset.",
           "tasks": [
             {
               "type": "Task",
               "id": "P3.M11.T28",
               "title": "Sync changeset-level documentation",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Write comprehensive vimdoc and README documentation covering the entire changeset: all commands, options, keymaps, installation, configuration, troubleshooting, and architecture overview.",
               "subtasks": [
                 {
@@ -1062,7 +1062,7 @@
                   "type": "Subtask",
                   "id": "P3.M11.T28.S44",
                   "title": "Write/update README.md for both plugin and extension",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T10.S18",
