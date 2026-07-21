@@ -231,6 +231,14 @@
 
 local M = {}
 
+-- [TEMP DEBUG] trace completion flow to /tmp/pi-editor-menu-debug.log (always-on; remove after diagnosing).
+local function dbg(msg)
+  pcall(function()
+    local f = io.open("/tmp/pi-editor-menu-debug.log", "a")
+    if f then f:write(tostring(msg) .. "\n"); f:close() end
+  end)
+end
+
 --- A pi completion item (mirror of the extension's AutocompleteItem; the bridge delivers
 --- these as the `result.items` array of a successful `getSuggestions`). Opaque to S30 —
 --- S30 only stores + forwards the array; S31 renders it, S32 applies it. Fields typed
@@ -353,6 +361,45 @@ local function cancel_timer()
 end
 
 -- ===========================================================================
+-- completion_context(lines, cursorLine, cursorCol) — the CLIENT-SIDE completion gate.
+-- Returns "slash" | "path" | nil. Mirrors the user's intent: completion should fire ONLY
+--   • "slash" — line 1 (cursorLine 0) begins with "/"  (commands / skills / prompts + their args)
+--   • "path"  — the trailing token before the cursor begins with "@", "#", ".", "~/", or "/"
+--               (file/path/attachment; "@" always — pi's @file mention)
+-- Plain typing (words, spaces, bare quotes) returns nil → do_refresh skips the request +
+-- closes any open menu. Byte-correct on UTF-8 (trigger chars are ASCII).
+---@param lines      string[] Buffer lines (raw UTF-8, as nvim_buf_get_lines returns).
+---@param cursorLine integer 0-based line index.
+---@param cursorCol  integer 0-based BYTE column.
+---@return string|nil "slash" | "path" | nil
+local function completion_context(lines, cursorLine, cursorCol)
+  local line = (type(lines) == "table") and (lines[cursorLine + 1] or "") or ""
+  local before = line:sub(1, cursorCol)                 -- 0-based byte col → bytes [1..cursorCol]
+  local token = before:match("[%S]+$") or ""            -- trailing non-whitespace run (the word being typed)
+  local token_start = #before - #token                  -- 0-based byte column where `token` begins
+  -- (1) A "/" WORD: a slash command ONLY when it is THE first character of line 1
+  --     (cursorLine 0 and the token begins at col 0). A "/" beginning any OTHER word —
+  --     on any other line, or after the command on line 1 (e.g. "/foo /bar") — is a PATH.
+  --     (A bare "/abs/path" as the very first utterance is thus a (non-matching) command,
+  --     not a path; users prepend "@" for a first-utterance absolute path.)
+  if token ~= "" and token:sub(1, 1) == "/" then
+    if cursorLine == 0 and token_start == 0 then return "slash" end
+    return "path"
+  end
+  -- (2) Still on line 1 which begins with "/", but the cursor is past the command name
+  --     (the token is a non-slash argument) → slash-command ARGUMENT completion
+  --     (e.g. "/model ant").
+  if cursorLine == 0 and before:sub(1, 1) == "/" then return "slash" end
+  -- (3) File/path/attachment triggers on the current word.
+  if token == "" then return nil end
+  local c1 = token:sub(1, 1)
+  if c1 == "@" or c1 == "#" then return "path" end       -- @ (always) / # attachment
+  if c1 == "." then return "path" end                     -- ./  ../  .
+  if token:sub(1, 2) == "~/" then return "path" end       -- home path
+  return nil
+end
+
+-- ===========================================================================
 -- do_refresh(buf) — the debounced body (runs inside the api-safe vim.defer_fn cb).
 -- Read buffer + convert to pi coords (S29) + supersede (BOTH layers) + issue RPC.
 -- ===========================================================================
@@ -368,6 +415,7 @@ do_refresh = function(buf)
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
+    dbg("[do_refresh] NOT CONNECTED — bail")
     return -- silent degrade (S39's job to notify once); never throw
   end
   -- READ buffer lines + cursor (api-safe — research §5; NO vim.schedule needed).
@@ -377,6 +425,21 @@ do_refresh = function(buf)
   ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
   if not ok or type(cur) ~= "table" then return end
   local row, byte_col = cur[1], cur[2]
+  -- CLIENT-SIDE COMPLETION GATE (user-facing UX): only ask pi's provider in a
+  -- slash-command context (line 1 starts with "/") or a file/path/attachment context
+  -- (a token before the cursor begins with "@", ".", "~/", or "/"). Plain prose — words,
+  -- spaces, quotes — does NOT request, so no dropdown appears mid-sentence. (pi's provider
+  -- otherwise returns a cwd file listing after a trailing space/quote, which is its TAB
+  -- behavior — wanted only on explicit Tab, not on every keystroke.) Byte-correct: uses
+  -- the RAW UTF-8 `lines` + the 0-based BYTE `byte_col` (all trigger chars are ASCII), so
+  -- multibyte text before the trigger does not skew the slice. The Tab path (force_fetch)
+  -- is EXPLICIT and bypasses this gate.
+  local ctx = completion_context(lines, row - 1, byte_col)
+  if not ctx then
+    dbg(string.format("[do_refresh] ctx=nil (plain) line1=%q col=%s — close, no request", tostring((lines or {})[1] or ""), tostring(byte_col)))
+    if type(M.on_results) == "function" then pcall(M.on_results, buf, {}, "") end
+    return
+  end
   -- CONVERT (S29 — THE centralized seam; the ONLY ±1 is the row). `pi.lines` is the SAME
   -- reference as `lines`, so the result drops straight into the RPC params.
   local pi = require("pi-editor.coords").nvim_to_pi_coords(lines, row, byte_col)
@@ -386,20 +449,32 @@ do_refresh = function(buf)
   end
   state.inflight_id = nil
   -- SUPERSEDE layer 2 (gen-guard — the CORRECTNESS boundary; captured in the cb closure).
+  dbg(string.format("[do_refresh] newgen=%s cursorLine=%s cursorCol=%s line1=%q inflight=%s",
+      state.gen + 1, tostring(pi.cursorLine), tostring(pi.cursorCol), tostring(pi.lines[1] or ""), tostring(state.inflight_id)))
   state.gen = state.gen + 1
   local gen = state.gen
-  local params = vim.tbl_extend("keep", pi, { force = false }) -- {lines,cursorLine,cursorCol,force=false}
+  -- force=true for PATH context makes pi SKIP its own slash-command branch (which
+  -- returns commands for ANY line starting with "/", not just line 1) and do file/path
+  -- completion instead. force=false for SLASH context lets pi return commands/skills/prompts.
+  -- Net effect: commands/skills/prompts appear ONLY for "/" at the start of line 1; a
+  -- "/" word anywhere else yields paths — exactly the requirement.
+  local params = vim.tbl_extend("keep", pi, { force = (ctx == "path") }) -- {lines,cursorLine,cursorCol,force}
   -- ISSUE (pcall so a bridge bug never aborts the autocmd chain). `id` may be nil if the
   -- bridge raced to disconnected (no inflight to track — the gen-guard still drops a late cb).
   local id
   ok, id = pcall(bridge.request, "getSuggestions", params, function(err, result)
-    if gen ~= state.gen then return end                 -- STALE (superseded) — drop, touch nothing
+    if gen ~= state.gen then
+      dbg(string.format("[do_refresh.cb] STALE drop (cb gen=%s != state.gen=%s)", tostring(gen), tostring(state.gen)))
+      return end                 -- STALE (superseded) — drop, touch nothing
     state.inflight_id = nil
-    if err then return end                              -- cancelled/timeout/error → touch nothing
+    if err then dbg("[do_refresh.cb] ERR=" .. tostring(err)); return end                              -- cancelled/timeout/error → touch nothing
     -- NORMALIZE: null result (cb(nil,nil)) = SUCCESS with empty items, NOT an error.
     local items  = (result and type(result.items)  == "table")  and result.items  or {}
     local prefix = (result and type(result.prefix) == "string") and result.prefix or ""
     state.last_result = { items = items, prefix = prefix }
+    local first = (items[1] and (items[1].label or items[1].value)) or "<none>"
+    dbg(string.format("[do_refresh.cb] OK items=%d prefix=%q first=%q on_results=%s",
+        #items, tostring(prefix), tostring(first), tostring(type(M.on_results) == "function")))
     -- S31 seam (api-safe; nil today → no-op). Fires ONLY for the latest non-stale success.
     if type(M.on_results) == "function" then
       pcall(M.on_results, buf, items, prefix)
@@ -514,6 +589,7 @@ function M.refresh(buf)
     ms = compute_debounce(lines, row - 1, byte_col) -- row 1-based → pi 0-based; byte_col is 0-based byte
   end)
   -- SCHEDULE (the cb is api-safe — main loop; research §5; NO vim.schedule needed).
+  dbg(string.format("[completion.refresh] buf=%s ms=%s", tostring(buf), tostring(ms)))
   state.debounce_timer = vim.defer_fn(function() do_refresh(buf) end, ms)
 end
 

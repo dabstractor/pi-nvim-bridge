@@ -61,6 +61,31 @@ vim.bo[buf].textwidth = 0                                                   -- d
 vim.wo[win].wrap = true                                                     -- window-local (GOTCHA E: accepted leak)
 vim.wo[win].spell = false                                                   -- window-local (GOTCHA E: accepted leak)
 
+-- ── Suppress other completion engines (avoid a double completion UI) ───────────
+-- This plugin renders its OWN floating menu from pi's live provider. If the user
+-- also drives blink.cmp and/or nvim-cmp, those engines would pop their OWN menu in
+-- this buffer (double UI, conflicting <Tab>/<CR>). Disable them HERE — buffer-local
+-- + best-effort — so only pi-editor's menu shows, WITHOUT touching the user's global
+-- config. Resolved FRESH (pcall) so a missing/odd engine config degrades silently.
+--   * blink.cmp: its `enabled()` explicitly honors `vim.b.completion == false`
+--     (blink.cmp/lua/blink/cmp/config/init.lua) → setting it disables blink HERE.
+--   * nvim-cmp: per-buffer disable via `cmp.setup.buffer({ enabled = false })`.
+-- Note: the shipped opt-in blink/cmp *adapter sources* (engine="blink"/"cmp") are a
+-- DIFFERENT, user-chosen path; this block only suppresses the user's EXISTING engine
+-- so the builtin menu is the sole UI. Users who prefer their engine can set
+-- `vim.g.pi_editor_suppress_engines = false` to opt out.
+if vim.g.pi_editor_suppress_engines ~= false then
+  vim.b[buf].completion = false -- blink.cmp honors this (forces disabled in this buffer)
+  pcall(function()
+    local ok, cmp = pcall(require, "cmp")
+    -- (nvim-cmp: `cmp.setup` is a function carrying a `.buffer` method. blink.compat's
+    --  `cmp` shim has neither → the guard skips it cleanly; only real nvim-cmp is affected.)
+    if ok and type(cmp.setup) == "function" and type(cmp.setup.buffer) == "function" then
+      cmp.setup.buffer({ enabled = false })
+    end
+  end)
+end
+
 -- ── Forward-contract dispatch (GOTCHA B: no-op-safe against absent modules) ─────
 --- Lazily require a forward-contract module and call one of its functions on a buffer.
 --- Returns `true` ONLY if the module exists AND its function returned truthy ("handled").

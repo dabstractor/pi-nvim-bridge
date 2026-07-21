@@ -115,6 +115,14 @@
 
 local M = {}
 
+-- [TEMP DEBUG] trace completion flow to /tmp/pi-editor-menu-debug.log (always-on; remove after diagnosing).
+local function dbg(msg)
+  pcall(function()
+    local f = io.open("/tmp/pi-editor-menu-debug.log", "a")
+    if f then f:write(tostring(msg) .. "\n"); f:close() end
+  end)
+end
+
 --- A pi completion item (mirror of the extension's AutocompleteItem; the bridge delivers
 --- these as the `result.items` array of a successful `getSuggestions` — passed through
 --- S30's `on_results`). Opaque to S31 — S31 stores + forwards the array; S34 renders it,
@@ -346,14 +354,14 @@ local function render_lines(state, label_w, desc_w)
   local lines = {}
   for i = 1, #state.items do
     local it = state.items[i]
-    local label = (type(it) == "table" and type(it.label) == "string") and it.label or ""
+    local label = ((type(it) == "table" and type(it.label) == "string") and it.label or ""):gsub("[%z\r\n]", " ") -- sanitize: nvim_buf_set_lines rejects NUL/CR/LF
     local lw = vim.fn.strdisplaywidth(label)
     local row = label .. string.rep(" ", math.max(0, label_w - lw)) -- label column, right-padded
     if desc_w > 0 then
       row = row .. string.rep(" ", DESC_GAP) -- the gap
       local has_desc = type(it) == "table" and type(it.description) == "string" and it.description ~= ""
       if has_desc then
-        local dt = _truncate(it.description, desc_w) -- desc, truncated
+        local dt = _truncate(it.description:gsub("[%z\r\n]", " "), desc_w) -- desc, sanitized + truncated
         local dw = vim.fn.strdisplaywidth(dt)
         row = row .. dt .. string.rep(" ", math.max(0, desc_w - dw)) -- desc col, right-padded
       else
@@ -453,7 +461,13 @@ local function render(state)
   local label_w = m.max_label_w
   local desc_w  = m.any_desc and math.max(0, g.width - label_w - DESC_GAP) or 0
   if m.any_desc and desc_w < 3 then desc_w = 0 end -- too thin → label-only (no 1–2 cell sliver)
-  pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, render_lines(state, label_w, desc_w))
+  local _rlines = render_lines(state, label_w, desc_w)
+  dbg(string.format("[menu.render] items=%d height=%s width=%s label_w=%s desc_w=%s nrlines=%d first=%q",
+      #state.items, tostring(g.height), tostring(g.width), tostring(label_w), tostring(desc_w), #_rlines, tostring(_rlines[1] or "<none>")))
+  local _sl_ok, _sl_err = pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, _rlines)
+  -- read-back: confirm the buffer actually holds the lines (rules out a silent set_lines failure)
+  local _rb = vim.api.nvim_buf_get_lines(buf, 0, 1, false)
+  dbg(string.format("[menu.render] set_lines ok=%s err=%q buf_first=%q win=%s", tostring(_sl_ok), tostring(_sl_err), tostring((_rb or {})[1] or "<EMPTY>"), tostring(state.win)))
   apply_highlights(state, buf, label_w, desc_w) -- ← THE S35 INSERTION (3-layer highlights)
   local win_cfg = {
     relative = "cursor", anchor = g.anchor, row = g.row, col = g.col,
@@ -474,6 +488,12 @@ local function render(state)
   end
   -- window options (non-deprecated form): single-line entries, CJK-safe.
   pcall(vim.api.nvim_set_option_value, "wrap", false, { win = state.win })
+  -- PAINT the freshly-set buffer lines. The window is opened with `noautocmd=true` from a
+  -- deferred/scheduled callback; without an explicit repaint neovim sometimes leaves the
+  -- floating window blank until a later keystroke (the intermittent "empty box" that
+  -- resolves after a few opens). nvim__redraw(win, valid=false) forces that window's
+  -- content to be redrawn now. (0.11+ API; pcall'd for safety.)
+  pcall(vim.api.nvim__redraw, { win = state.win, valid = false, flush = true })
 end
 
 -- ===========================================================================
@@ -491,13 +511,19 @@ end
 ---@param prefix string                       The completion prefix (for get_prefix/S32).
 function M.on_results(buf, items, prefix)
   -- WIPE guard (the ONLY nvim-state read here — NOT a staleness re-derive): a buffer may
-  -- be wiped during the 20ms debounce. Silent no-op, never throw.
-  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
+-- be wiped during the 20ms debounce. Silent no-op, never throw.
+  if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then
+    dbg(string.format("[menu.on_results] WIPED/NIL buf=%s — bail", tostring(buf)))
+    return
+  end
+  items = (type(items) == "table") and items or {}           -- defensive (S30 sends a valid array)
+  local first = (items[1] and (items[1].label or items[1].value)) or "<none>"
+  dbg(string.format("[menu.on_results] buf=%s items=%d prefix=%q first=%q",
+      tostring(buf), #items, tostring(prefix), tostring(first)))
   state.buf = buf
   state.prefix = (type(prefix) == "string") and prefix or "" -- defensive (S30 sends a string)
-  items = (type(items) == "table") and items or {}           -- defensive (S30 sends a valid array)
   -- THE routing (blink list.show: empty→hide / non-empty→store+show).
-  if #items == 0 then M.close() else M.open(items) end
+  if #items == 0 then dbg("[menu.on_results] EMPTY → close"); M.close() else M.open(items) end
 end
 
 --- Idempotently register `M.on_results` on `require("pi-editor.completion").on_results`
