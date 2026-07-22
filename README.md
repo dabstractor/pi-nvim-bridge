@@ -56,7 +56,7 @@ completions pi already offers.
 
 ```bash
 # Preferred: install from git
-pi install git:github.com/dabstractor/pi-nvim-bridge
+pi install npm:pi-nvim-bridge
 
 # Or from a local clone
 git clone https://github.com/dabstractor/pi-nvim-bridge
