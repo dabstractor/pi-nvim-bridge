@@ -5,6 +5,11 @@
 > The installable extension is named **`pi-nvim-bridge`** (what you see in
 > `pi list`); the companion Neovim plugin is **`pi-bridge.nvim`**.
 
+## Demo:
+
+https://github.com/user-attachments/assets/12ff8f75-4bf8-4b27-a41b-d001633ea256
+
+
 This repository ships **two components** that work together:
 
 - **`pi-nvim-bridge`** *(this README's focus — a **pi extension**)* captures
