@@ -10,9 +10,9 @@ This repository ships **two components** that work together:
 - **`pi-nvim-bridge`** *(this README's focus — a **pi extension**)* captures
   pi's live autocomplete engine and serves it over a local Unix socket to the
   external editor pi spawns.
-- **`pi-bridge.nvim`** *(the companion **Neovim plugin**, under [`plugin/`](./plugin) —
-  see [`plugin/README.md`](./plugin/README.md) and `:help pi-bridge`)* connects
-  to that socket and renders pi's completion inside Neovim: `/commands`,
+- **`pi-bridge.nvim`** *(the companion **Neovim plugin**, shipped in this same
+  repo at the root — see `:help pi-bridge`)* connects to that socket and
+  renders pi's completion inside Neovim: `/commands`,
   `skill:` templates, argument completions, `@file` references, and filesystem
   paths.
 
@@ -31,18 +31,21 @@ The idea is simple: write your prompt in a real editor without giving up any of
 pi's autocomplete. You get a comfortable editing surface and the full set of
 completions pi already offers.
 
-> **Note:** the companion `pi-bridge.nvim` plugin is **complete** (under
-> [`plugin/`](./plugin)). The bridge and plugin work together to deliver
+> **Note:** the companion `pi-bridge.nvim` plugin is **complete** (its runtime
+> files live at the repo root: `lua/pi-bridge/`, `plugin/pi-bridge.lua`,
+> `ftplugin/`, `doc/`). The bridge and plugin work together to deliver
 > pi-faithful completion in the external editor.
 
 ## Prerequisites
 
 - **pi** with extension support.
-- **Neovim ≥ 0.11** (0.12 verified) for the companion plugin — see
-  [`plugin/README.md`](./plugin/README.md#requirements).
+- **Neovim ≥ 0.11** (0.12 verified) for the companion plugin — the exact-UTF-16
+  cursor conversion needs the 3-arg `vim.str_utfindex` overload added in 0.11;
+  `:checkhealth pi-bridge` enforces the floor.
 - **`fd`** *(optional)* — enables fuzzy `@file` search. Without it `@file`
   silently returns nothing, but path completion (directory listing) still works.
-- The companion **`pi-bridge.nvim`** plugin (see [`plugin/README.md`](./plugin/README.md)).
+- The companion **`pi-bridge.nvim`** plugin (installed via lazy.nvim — see
+  [Installation](#installation)).
 
 ## Installation
 
@@ -69,10 +72,24 @@ pi list          # should show "pi-nvim-bridge"
 > `~/.pi/agent/extensions/`. The imported siblings would be unresolved.
 > Install it as a pi package via one of the commands above.
 
-**Companion plugin:** install `pi-bridge.nvim` with your plugin manager
-(e.g. lazy.nvim — note `lazy = false` so the VimEnter startup shim sources
-**before** activation). See [`plugin/README.md`](./plugin/README.md) and
-`:help pi-bridge` (`plugin/doc/pi-bridge.txt`).
+**Companion plugin** (`pi-bridge.nvim`, same repo) — install with your plugin
+manager. lazy.nvim (**note `lazy = false`** so the VimEnter startup shim sources
+**before** activation):
+
+```lua
+{
+  "dabstractor/pi-nvim-bridge",
+  lazy = false,
+  config = function() require("pi-bridge").setup({}) end,
+}
+```
+
+The repo's nvim runtime files (`lua/pi-bridge/`, `plugin/pi-bridge.lua`,
+`ftplugin/`, `doc/`) live at the **root**, so the clone lands directly on
+`runtimepath` — **no `dir`/`sub` hack needed** (and none would be portable:
+no Neovim plugin manager supports cloning a subdirectory as the rtp root).
+With any other manager, just ensure the repo root is on your `&runtimepath`.
+See `:help pi-bridge` (`doc/pi-bridge.txt`).
 
 ## Configuration (`$EDITOR`)
 
@@ -244,23 +261,30 @@ done
 
 ```
 pi-nvim-bridge/
-├── package.json              # pi package manifest (pi.extensions → entry)
-├── README.md                 # this file (the EXTENSION README)
-├── plugin/                   # the pi-bridge.nvim Neovim plugin (P2 + P4 — complete)
-│   ├── README.md             # the PLUGIN README (end-user landing page)
-│   ├── plugin/pi-bridge.lua  # VimEnter auto-activation shim
-│   ├── lua/pi-bridge/        # init/bridge/completion/menu/coords/health/blink_source/cmp_source/...
-│   ├── ftplugin/pi-prompt.lua# 9 buffer-local keymaps + ft opts + autocmds
-│   ├── doc/pi-bridge.txt     # the vimdoc (`:help pi-bridge`)
-│   └── tests/                # plenary specs + plenary-free smokes
-└── extension/                # the pi-nvim-bridge pi extension (P1 — complete)
-    ├── pi-nvim-bridge.ts   # entry: default-export factory
+├── package.json              # pi package manifest (pi.extensions → extension entry)
+├── README.md                 # project README (extension + nvim plugin)
+├── LICENSE
+├── plugin/pi-bridge.lua      # VimEnter auto-activation shim   ┐
+├── lua/pi-bridge/            # init/bridge/completion/menu/coords/health/  │ nvim plugin
+│                             #   blink_source/cmp_source/notify/jsonlreader │ runtime files
+├── ftplugin/pi-prompt.lua    # 9 buffer-local keymaps + ft opts + autocmds   │ at the REPO ROOT
+├── doc/pi-bridge.txt         # the vimdoc (`:help pi-bridge`)               │ (portable install)
+├── tests/                    # plenary specs + plenary-free smokes          ┘
+└── extension/                # the pi-nvim-bridge pi extension (TypeScript)
+    ├── pi-nvim-bridge.ts     # entry: default-export factory
     ├── connection.ts         # JSON-RPC server + dispatch + registry
     ├── jsonl-reader.ts       # newline-delimited JSON framing
     ├── protocol.ts           # type-only: descriptor + RPC envelopes
     ├── tsconfig.json
     └── tests/                # node:test + jiti suites
 ```
+
+> **Why runtime files live at the root:** every Neovim plugin manager
+> (lazy.nvim, packer, vim-plug, mini.deps) clones the repo and adds its **root**
+> to `&runtimepath`; none portably supports a subdirectory as the rtp root. The
+> `pi-nvim-bridge` npm package is unaffected — `package.json` `files` scopes the
+> published tarball to `extension/*.ts` + README + LICENSE, so the lua never
+> enters npm.
 
 > **LICENSE:** the manifest declares `"license": "MIT"` and an
 > [`LICENSE`](./LICENSE) file is committed at the repo root.
@@ -270,8 +294,7 @@ pi-nvim-bridge/
 - [PRD](./PRD.md) — full design document for the bridge + Neovim plugin.
 - pi docs: [packages.md](https://pi.dev/docs/packages) ·
   [extensions.md](https://pi.dev/docs/extensions)
-- Companion plugin: [plugin/README.md](./plugin/README.md) ·
-  `:help pi-bridge` ([`plugin/doc/pi-bridge.txt`](./plugin/doc/pi-bridge.txt)).
+- Companion plugin: `:help pi-bridge` ([`doc/pi-bridge.txt`](./doc/pi-bridge.txt)).
 
 ## Releasing
 

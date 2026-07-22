@@ -23,3 +23,6 @@ Thumbs.db
 
 # pi-subagents runtime artifacts (transcripts, meta, transient outputs)
 .pi-subagents/
+
+# PRD-driven task pipeline artifacts (internal; not shipped)
+plan/

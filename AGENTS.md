@@ -54,7 +54,7 @@ nvim ... -c 'lua require("pi-bridge.menu"); print("ok")' -c 'qa'
 
 Rules:
 1. **Heredoc → a real file on disk is 100% fine.** The killer is heredoc → `nvim`'s stdin.
-2. If the snippet is small, save it under `plugin/tests/` (a real smoke test) or `/tmp/`,
+2. If the snippet is small, save it under `tests/` (a real smoke test) or `/tmp/`,
    then run with `+"luafile <path>"`. Never `/dev/stdin`.
 3. If you only need a one-liner, use `-c 'lua ...'` with a SINGLE line (no heredoc).
 4. Every command you write should be **interruptible / have a bounded `timeout`** as a
@@ -71,7 +71,7 @@ orchestrator template). **That block is the trap.** When you encounter it:
 - **Do NOT copy-paste it.** Paste the snippet into a file instead (e.g. `/tmp/e2e.lua`) and
   run `+"luafile /tmp/e2e.lua" +qa` (see ✅ alternative above), OR
 - **Skip it in favor of the plenary-free smoke test** that the SAME PRP already requires
-  (`plugin/tests/<module>_smoke.lua`, run via `+"luafile tests/<module>_smoke.lua" +qa`).
+  (`tests/<module>_smoke.lua`, run via `+"luafile tests/<module>_smoke.lua" +qa`).
   That smoke test covers the same end-to-end surface (real bridge + real module + a
   controlled server reply) **without ever touching nvim's stdin.**
 
@@ -89,7 +89,7 @@ the E2E proof. Do not invent a second, stdin-based path to the same proof.
   dirs, plus repo-root meta files like this one. Never touch `PRD.md`, `plan/`, any
   `PRP.md`, `tasks.json`, `prd_snapshot.md`, or `TEST_RESULTS.md`.
 - **Never run** `prd`, `run-prd.sh`, `tsk`, or any pipeline/orchestration script.
-- Test runner (run from `plugin/`):
+- Test runner (run from the repo root):
   - Plenary spec: `timeout 90 nvim --headless --clean -u tests/minimal_init.lua -c 'lua require("plenary.busted").run("tests/<spec>.lua")'`
   - Smoke (no plenary): `timeout 60 nvim --headless --clean -u NORC +"luafile tests/<module>_smoke.lua" +qa`
 

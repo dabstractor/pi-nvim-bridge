@@ -485,18 +485,23 @@ Set the buffer up as a pi prompt buffer:
 
 ### 7.2 Module layout
 
+These paths are **relative to the repository root** (the runtime files live at
+the root, not under a `plugin/` subdir — see [§9](#9-file-layouts)):
+
 ```
-lua/pi-editor/        init.lua       setup() + VimEnter activation
+lua/pi-bridge/        init.lua       setup() + VimEnter activation
                      bridge.lua      socket client, JSONL framing, RPC dispatch
                      completion.lua  triggers, debounce, accept flow
                      menu.lua        dependency-free floating completion popup
                      coords.lua      byte<->utf16 / char-index conversion
-                     health.lua      :checkhealth pi-editor
+                     health.lua      :checkhealth pi-bridge
+                     notify.lua      dedup'd one-shot vim.notify
+                     jsonlreader.lua newline-delimited JSON framing (client side)
 ftplugin/pi-prompt.lua  buffer-local opts/keymaps/autocmds
-plugin/pi-editor.lua    VimEnter auto-activation shim
-lua/pi-editor/blink_source.lua   OPTIONAL blink.cmp source
-lua/pi-editor/cmp_source.lua     OPTIONAL nvim-cmp source
-doc/pi-editor.txt               vimdoc
+plugin/pi-bridge.lua    VimEnter auto-activation shim
+lua/pi-bridge/blink_source.lua   OPTIONAL blink.cmp source
+lua/pi-bridge/cmp_source.lua     OPTIONAL nvim-cmp source
+doc/pi-bridge.txt               vimdoc (:help pi-bridge)
 ```
 
 ### 7.3 `bridge.lua` — socket client (reference skeleton)
@@ -649,38 +654,54 @@ fix is one place.
 
 ## 9. File Layouts
 
-### 9.1 Extension (pi side)
-
-Simplest (single file):
-
-```
-~/.pi/agent/extensions/pi-nvim-bridge.ts        # the whole extension
-```
-
-Or as a pi package (for sharing/`pi install`):
-
-```
-pi-nvim-bridge/
-  package.json          # { "name":"pi-nvim-bridge", "main":"./index.ts", "pi":{ "extensions":["./index.ts"] } }
-  index.ts              # default factory
-  server.ts             # JSONL server + framing
-  protocol.ts           # shared types/enums (optional)
-  README.md
-```
-
-### 9.2 Plugin (Neovim side)
+> **Single repository, two components.** Both the `pi-nvim-bridge` pi extension
+> (TypeScript) and the `pi-bridge.nvim` Neovim plugin (Lua) ship from **one** repo
+> (`dabstractor/pi-nvim-bridge`). The Neovim runtime files live at the **repo
+> root** (not under a `plugin/` subdirectory) so the clone lands directly on
+> `&runtimepath` and is installable by **every** plugin manager (lazy.nvim,
+> packer, vim-plug, mini.deps) with no `dir`/`sub`/`rtp` option — none of which is
+> portable across managers anyway. The npm package is unaffected: `package.json`
+> `files` scopes the published tarball to `extension/*.ts` + README + LICENSE, so
+> the Lua never enters npm.
+>
+> **Decision: one repo, not two.** The two halves are tightly coupled (shared wire
+> protocol + cross-component invariants, e.g. the client `rpc_timeout_ms` must
+> exceed the server `GET_SUGGESTIONS_TIMEOUT_MS`), and a single maintainer
+> coordinating that across two repos/CI/release tags is pure overhead. A split
+> would only buy a marginally cleaner clone — achievable instead by keeping
+> internal pipeline artifacts (`plan/`, `.pi-subagents/`) out of the repo, which
+> is done regardless via `.gitignore`.
 
 ```
-pi-bridge.nvim/
-  lua/pi-editor/
-    init.lua  bridge.lua  completion.lua  menu.lua  coords.lua  health.lua
-    blink_source.lua  cmp_source.lua          # optional
-  plugin/pi-editor.lua                        # VimEnter auto-activation
-  ftplugin/pi-prompt.lua                      # buffer-local setup
-  doc/pi-editor.txt                           # :help pi-editor
-  README.md
-  .github/workflows/                          # plenary tests + selene/stylua (optional)
-  stylua.toml  selene.yml                     # lint config
+pi-nvim-bridge/                      # ONE repo, two components
+├── package.json                     # pi manifest: pi.extensions → ./extension/pi-nvim-bridge.ts
+│                                    # npm `files` scopes the tarball to extension/*.ts (+README/LICENSE)
+├── README.md  LICENSE
+│
+├── extension/                       # Component A — pi-nvim-bridge (TypeScript, published to npm)
+│   ├── pi-nvim-bridge.ts            #   default-export factory
+│   ├── connection.ts                #   JSON-RPC server + dispatch + connection registry
+│   ├── jsonl-reader.ts              #   newline-delimited JSON framing (server side)
+│   ├── protocol.ts                  #   type-only: descriptor + RPC envelopes
+│   ├── tsconfig.json
+│   └── tests/                       #   node:test + jiti suites
+│
+│   ── pi-bridge.nvim runtime files live at the repo ROOT (not under plugin/) ──
+│      so the clone is directly on &runtimepath → installable by any plugin manager
+│
+├── lua/pi-bridge/                   # Component B — pi-bridge.nvim (Lua)
+│   ├── init.lua                     #   setup() + VimEnter activation
+│   ├── bridge.lua                   #   socket client, JSONL framing, RPC dispatch
+│   ├── completion.lua               #   triggers, debounce, accept flow
+│   ├── menu.lua                     #   dependency-free floating completion popup
+│   ├── coords.lua                   #   byte<->utf16 / char-index conversion
+│   ├── health.lua  notify.lua       #   :checkhealth pi-bridge / dedup'd notify
+│   ├── jsonlreader.lua
+│   └── blink_source.lua  cmp_source.lua   # OPTIONAL blink.cmp / nvim-cmp adapters
+├── plugin/pi-bridge.lua             # VimEnter auto-activation shim
+├── ftplugin/pi-prompt.lua           # buffer-local opts/keymaps/autocmds
+├── doc/pi-bridge.txt                # :help pi-bridge
+└── tests/                           # plenary specs + plenary-free smokes
 ```
 
 ---
@@ -689,38 +710,53 @@ pi-bridge.nvim/
 
 ### 10.1 Prerequisites
 
-- pi (with extension support; current monorepo `~/projects/pi`).
-- Neovim **0.10+** (0.12 verified). No plugin manager required for core features.
+- pi (with extension support).
+- Neovim **0.11+** (0.12 verified) — the exact-UTF-16 cursor conversion needs
+  the 3-arg `vim.str_utfindex` overload added in 0.11. No plugin manager required
+  for core features.
 
 ### 10.2 Install the bridge extension
 
+The extension is a **multi-file pi package** (four interdependent `.ts` files:
+`pi-nvim-bridge.ts`, `connection.ts`, `jsonl-reader.ts`, `protocol.ts`) — it
+**cannot** be dropped in as a single file (the sibling imports would be
+unresolved). Install it as a package:
+
 ```bash
-# Option A: drop‑in single file
-cp pi-nvim-bridge.ts ~/.pi/agent/extensions/pi-nvim-bridge.ts
-# Option B: pi package
-pi install <git-or-npm-source>
+# from git (preferred) or npm
+pi install git:github.com/dabstractor/pi-nvim-bridge
+# or: pi install npm:pi-nvim-bridge
+pi list      # should show "pi-nvim-bridge"
 ```
 
-Verify: start pi; `:env`/`echo $PI_NVIM_BRIDGE` won't be visible from a shell
-(it's process‑local), but `/reload` and opening the editor should "just work". Add
-a `notify("pi-nvim-bridge ready", "info")` on `session_start` during development.
+`PI_NVIM_BRIDGE` is process-local (never visible in a shell); verify by opening
+the editor from pi — the companion plugin connects automatically.
 
 ### 10.3 Install the Neovim plugin
+
+The plugin ships from the **same repo** (`dabstractor/pi-nvim-bridge`) with its
+runtime files at the **root**, so the standard plugin-manager install works with
+no `dir`/`sub`/`rtp` option (none of those is portable across managers).
 
 **lazy.nvim:**
 
 ```lua
 {
-  "you/pi-bridge.nvim",
+  "dabstractor/pi-nvim-bridge",
   lazy = false,           -- must load before VimEnter in the editor instance
-  config = function() require("pi-editor").setup({}) end,
+  config = function() require("pi-bridge").setup({}) end,
 }
 ```
 
-**vim.pack / manual:** clone into `~/.local/share/nvim/site/pack/...`.
+**vim-plug:** `Plug 'dabstractor/pi-nvim-bridge'`  ·  **packer:**
+`{ 'dabstractor/pi-nvim-bridge' }`  ·  **mini.deps:**
+`require('mini.deps').add({ source = 'dabstractor/pi-nvim-bridge' })`
 
-Because activation is gated on `PI_NVIM_BRIDGE`, leaving `lazy=false` is fine —
-the plugin no‑ops in every other Neovim session.
+**vim.pack / manual:** clone into `~/.local/share/nvim/site/pack/...` (the repo
+root is the rtp entry).
+
+Because activation is gated on `PI_NVIM_BRIDGE`, `lazy=false` is safe — the
+plugin no‑ops in every ordinary Neovim session.
 
 ### 10.4 `$EDITOR` wiring
 
@@ -731,19 +767,20 @@ Set Neovim as pi's external editor (any of):
   (`externalEditor` takes precedence over `$VISUAL`/`$EDITOR`).
 
 For faster editor startup with a minimal config, the bridge extension may
-**additionally** set `process.env.NVIM_APPNAME = "pi-editor"` (documented
-opt‑in), and the user maintains a tiny `~/.config/pi-editor/` that loads only
-`pi-bridge.nvim`. This is an **optional optimization**, not required.
+**additionally** set `process.env.NVIM_APPNAME = "pi-bridge"` (documented
+opt‑in via `PI_NVIM_APPNAME`), and the user maintains a tiny
+`~/.config/pi-bridge/` that loads only `pi-bridge.nvim`. This is an **optional
+optimization**, not required.
 
 ### 10.5 Default `setup()` options
 
 ```lua
-require("pi-editor").setup({
+require("pi-bridge").setup({
   menu = { max_height = 12, border = "rounded" },
-  debounce_ms = 25,
-  rpc_timeout_ms = 2000,
+  debounce_ms = 20,             -- @/# attachment-context; slash/typing use 0 ms (pi-faithful)
+  rpc_timeout_ms = 2000,        -- MUST exceed the bridge fd-abort (1500)
   autosave_on_exit = true,      -- write the temp file on VimLeavePre if modified
-  engine = "builtin",           -- "builtin" | "blink" | "cmp" (auto-detect if unset)
+  engine = "builtin",           -- "builtin" | "blink" | "cmp" (opt-in adapter sources)
   -- optional: override how the bridge descriptor is read
   -- env_var = "PI_NVIM_BRIDGE",
 })
