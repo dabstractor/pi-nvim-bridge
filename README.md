@@ -19,18 +19,18 @@ shipped**.
 
 ## What it does
 
-On `session_start` the extension registers a pass-through factory with
-`pi.autocomplete.addAutocompleteProvider`, capturing pi's current
-`AutocompleteProvider` (the same one the TUI uses). It then starts a
-JSON-RPC server on a Unix-domain socket and advertises the socket path plus a
-32-byte token to the process environment (`PI_EDITOR_BRIDGE`). Because pi
-launches `$EDITOR` with inherited `process.env`, the Neovim it starts sees that
-descriptor and can dial the bridge. The bridge stays alive for the whole session
-and re-advertises on `/reload`.
+It brings pi's autocomplete into Neovim. When you launch your external editor
+from pi, it behaves just like pi's prompt box — same `/` slash commands, same
+`skill:` templates, same `@file` references and path suggestions, same argument
+completions. Whatever pi would suggest inline, you get here, inside Neovim.
+
+The idea is simple: write your prompt in a real editor without giving up any of
+pi's autocomplete. You get a comfortable editing surface and the full set of
+completions pi already offers.
 
 > **Note:** the companion `pi-editor.nvim` plugin is **complete** (under
-> [`plugin/`](./plugin)). Together, the bridge + plugin deliver pi-faithful
-> completion in the external editor.
+> [`plugin/`](./plugin)). The bridge and plugin work together to deliver
+> pi-faithful completion in the external editor.
 
 ## Prerequisites
 
@@ -259,9 +259,8 @@ pi-nvim-bridge/
     └── tests/                # node:test + jiti suites
 ```
 
-> **LICENSE:** the manifest declares `"license": "MIT"`, but no `LICENSE` file is
-> committed yet. Adding one is a separate human decision (out of scope for the
-> packaging task).
+> **LICENSE:** the manifest declares `"license": "MIT"` and an
+> [`LICENSE`](./LICENSE) file is committed at the repo root.
 
 ## Links
 
@@ -270,3 +269,36 @@ pi-nvim-bridge/
   [extensions.md](https://pi.dev/docs/extensions)
 - Companion plugin: [plugin/README.md](./plugin/README.md) ·
   `:help pi-editor` ([`plugin/doc/pi-editor.txt`](./plugin/doc/pi-editor.txt)).
+
+## Releasing
+
+Releases are **tag-driven**. The git tag is the single source of truth for the
+published version — you never hand-edit `package.json`'s `"version"`.
+
+```bash
+git tag v1.2.3
+ git push origin v1.2.3
+```
+
+Pushing a `v*` tag triggers [`.github/workflows/release.yml`](./.github/workflows/release.yml),
+which:
+
+1. extracts the version from the tag (strips the leading `v`, validates it as
+   semver),
+2. writes that version into `package.json` **inside the ephemeral runner
+   checkout only** (`npm version … --no-git-tag-version`) — nothing is committed
+   back to the repo,
+3. publishes `pi-editor-bridge` to npm with [provenance](https://docs.npmjs.com/generating-provenance-statements)
+   attestation, and
+4. opens a GitHub Release with auto-generated notes (prereleases are auto-marked
+   when the version contains a `-`, e.g. `v1.0.0-beta.1`).
+
+**One-time setup:** add an npm access token (Automation or Granular, with
+publish rights for `pi-editor-bridge`) as the repo secret `NPM_TOKEN`.
+Provenance also relies on the workflow's `id-token: write` permission, which is
+already declared in the workflow. If your token type can't do provenance, set
+`publishConfig.provenance` to `false` in `package.json` (and drop
+`--provenance` from the publish step).
+
+The repo's `package.json` `"version"` stays at a placeholder (currently
+`0.1.0`) on purpose — it is always overridden at publish time by the tag.

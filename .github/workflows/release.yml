@@ -1,0 +1,115 @@
+# Publish pi-editor-bridge to npm on tag push.
+#
+# Release model: the git tag IS the source of truth for the version.
+# You never edit package.json's "version" by hand — just:
+#
+#   git tag v1.2.3 && git push origin v1.2.3
+#
+# The workflow extracts the version from the tag (strips the leading "v"),
+# writes it into package.json in the ephemeral runner checkout (NOT committed
+# back to the repo), then publishes. A GitHub Release with auto-generated
+# notes is also created from the tag.
+#
+# Required secret: NPM_TOKEN — an npm access token with publish rights for
+# `pi-editor-bridge`. Create it at https://www.npmjs.com/settings/<you>/tokens
+# (Automation or Granular, publish scope) and add it as a repo/secret named
+# NPM_TOKEN. Provenance (supply-chain attestation) also needs the workflow's
+# `id-token: write` permission, which is granted below.
+
+name: Release
+
+"on":
+  push:
+    tags:
+      - 'v*'
+
+# `id-token: write` is required for npm publish provenance.
+# `contents: write` lets the release step create/update the GitHub Release.
+permissions:
+  contents: write
+  id-token: write
+
+# One release pipeline per tag; do NOT cancel an in-flight publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for release notes
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # registry-url writes a local .npmrc that authenticates publishes.
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Derive version from tag
+        id: ver
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"        # e.g. v1.2.3 or v1.2.3-beta.1
+          VERSION="${TAG#v}"              # strip leading v
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not a valid semver (expected vMAJOR.MINOR.PATCH)."
+            exit 1
+          fi
+          echo "tag=$TAG"        >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG -> npm@$VERSION"
+
+      - name: Set package.json version (in runner only, never committed)
+        run: |
+          # --no-git-tag-version: don't create a commit/tag; we already have the tag.
+          # --allow-same-version: safe if package.json already happens to match.
+          npm version "${{ steps.ver.outputs.version }}" \
+            --no-git-tag-version --allow-same-version
+
+      - name: Verify what will be published
+        run: |
+          echo "::group::npm pack (dry-run)"
+          npm pack --dry-run
+          echo "::endgroup::"
+
+      - name: Check if already published
+        id: check
+        run: |
+          set -euo pipefail
+          PKG=$(node -p "require('./package.json').name")
+          VER="${{ steps.ver.outputs.version }}"
+          if npm view "$PKG@$VER" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::$PKG@$VER is already on npm; skipping publish step."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        id: publish
+        if: steps.check.outputs.published == 'false'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create / update GitHub Release
+        # Run when publish succeeded OR was skipped (already on npm);
+        # skip only if the publish step actually failed.
+        if: always() && steps.publish.conclusion != 'failure'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

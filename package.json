@@ -5,6 +5,27 @@
   "type": "module",
   "keywords": ["pi-package", "pi", "neovim", "completion"],
   "license": "MIT",
+  "author": "Dustin Schultz",
+  "homepage": "https://github.com/dabstractor/pi-nvim-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dabstractor/pi-nvim-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dabstractor/pi-nvim-bridge/issues"
+  },
+  "files": [
+    "extension/*.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
     "extensions": ["./extension/pi-editor-bridge.ts"]
   },
