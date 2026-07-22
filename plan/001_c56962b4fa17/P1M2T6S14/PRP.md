@@ -78,7 +78,7 @@ already established by S9–S13, plus one trivially-new `getPid` (`process.pid`)
 
 ## User Persona
 
-**Target User**: The `pi-editor.nvim` Neovim plugin (P2.M5 / P2.M7 / P2.M9) — the
+**Target User**: The `pi-bridge.nvim` Neovim plugin (P2.M5 / P2.M7 / P2.M9) — the
 bridge's only client. (Indirectly: the human editing a pi prompt in their
 `$EDITOR`, plus a future `:checkhealth pi-editor` user.)
 
@@ -95,7 +95,7 @@ bridge's only client. (Indirectly: the human editing a pi prompt in their
   skill, template, and extension command.
 
 **User Journey**: (ping) open Neovim as `$EDITOR` → plugin activates on
-`PI_EDITOR_BRIDGE` → `hello` (token) → `ping` → diagnostics render. (bye) user
+`PI_NVIM_BRIDGE` → `hello` (token) → `ping` → diagnostics render. (bye) user
 quits → `VimLeavePre` autosaves → `bye` → server acks `{ok:true}` + half-closes
 → Neovim exits → pi reads the temp file back. (getCommands) a `:PiCommands`
 helper issues `getCommands` → renders a floating list.
@@ -473,7 +473,7 @@ Task 3: MODIFY extension/pi-editor-bridge.ts — register the three handlers in 
       registerBridgeHandler("bye", makeByeHandler());
       registerBridgeHandler("getCommands", makeGetCommandsHandler({ getProvider }));
   - Idempotent (Map.set) — safe across reload/new/resume/fork re-entry (same as S9-S13).
-  - UPDATE the TODO comment: `// (S14 DONE). TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE ...`
+  - UPDATE the TODO comment: `// (S14 DONE). TODO(S16): advertise via process.env.PI_NVIM_BRIDGE ...`
   - UPDATE the file-top STATUS block: add a `STATUS (P1.M2.T6.S14)` note documenting
     that ping/bye/getCommands are now registered, that bye uses the
     closeAfterResponse flag (approach (a)), and that getCommands derives its list
@@ -653,7 +653,7 @@ PROTOCOL.TS:
   - none: "PingParams/PingResult, ByeParams/ByeResult, GetCommandsParams/GetCommandsResult, CommandInfo ALL already defined in §C; BridgeMethod/RequestMethod/BridgeParamsMap/BridgeResultMap all include them in §D. NO CHANGE."
 
 ENV (S16's lane — NOT this task):
-  - note: "S16 will read getPid()/getCwd()/getFdAvailable()/getSocketPath()/getToken()/BRIDGE_VERSION to build the PI_EDITOR_BRIDGE descriptor. S14 only ADDS getPid() (which S16 reuses); S14 writes NO env var."
+  - note: "S16 will read getPid()/getCwd()/getFdAvailable()/getSocketPath()/getToken()/BRIDGE_VERSION to build the PI_NVIM_BRIDGE descriptor. S14 only ADDS getPid() (which S16 reuses); S14 writes NO env var."
 ```
 
 ---
@@ -816,7 +816,7 @@ node --import "$JITI_REG" extension/tests/ping-bye-getcommands-handler.test.ts 2
 
 ### Documentation & Deployment
 - [ ] The file-top STATUS note documents: bye uses approach (a) (closeAfterResponse); getCommands derives from `getSuggestions(["/"],0,1)` with `argumentHint` unrecoverable (documented limitation).
-- [ ] No new env vars written by S14 (S16 owns `PI_EDITOR_BRIDGE`); `getPid()` is added for S16's reuse.
+- [ ] No new env vars written by S14 (S16 owns `PI_NVIM_BRIDGE`); `getPid()` is added for S16's reuse.
 - [ ] Logs (if any) print only safe fields (pid/cwd/serverVersion) — NEVER the token.
 
 ---

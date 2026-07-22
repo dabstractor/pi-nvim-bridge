@@ -2,15 +2,15 @@
 -- Covers every Success Criterion of health.lua's M.check(). Stubs the 5 vim.health.*
 -- methods to a capturing table in before_each (EXACTLY how notify_spec.lua stubs
 -- vim.notify), then asserts on the captured calls across dormant/active/malformed/fd
--- cases. Also stubs vim.fn.executable / vim.fn.has / vim.env.PI_EDITOR_BRIDGE + the
--- module state on require("pi-editor") / require("pi-editor.bridge").
+-- cases. Also stubs vim.fn.executable / vim.fn.has / vim.env.PI_NVIM_BRIDGE + the
+-- module state on require("pi-bridge") / require("pi-bridge.bridge").
 --
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/health_spec.lua")'
 --
 -- NOTE: do NOT name a local `pending` (shadows plenary.busted's skip fn — cf. completion_spec.lua header).
-local health = require("pi-editor.health")
+local health = require("pi-bridge.health")
 
 -- captured calls + saved originals (reset in before_each, restored in after_each)
 local captured
@@ -49,7 +49,7 @@ local function count(method)
   return n
 end
 
-describe("pi-editor.health (S42)", function()
+describe("pi-bridge.health (S42)", function()
   before_each(function()
     captured = {}
     saved = {}
@@ -68,8 +68,8 @@ describe("pi-editor.health (S42)", function()
       info = stub("info"),
     }
     -- env var
-    saved.env = vim.env.PI_EDITOR_BRIDGE
-    vim.env.PI_EDITOR_BRIDGE = nil
+    saved.env = vim.env.PI_NVIM_BRIDGE
+    vim.env.PI_NVIM_BRIDGE = nil
     -- vim.fn stubs (restorable)
     saved.fn_executable = vim.fn.executable
     saved.fn_has = vim.fn.has
@@ -83,8 +83,8 @@ describe("pi-editor.health (S42)", function()
       return saved.fn_has(feature)
     end
     -- module state on init.lua + bridge.lua (the read-only consumers)
-    local pi = require("pi-editor")
-    local bridge = require("pi-editor.bridge")
+    local pi = require("pi-bridge")
+    local bridge = require("pi-bridge.bridge")
     saved.pi_config = pi.config
     saved.pi_descriptor = pi.descriptor
     saved.bridge_version = bridge.version
@@ -99,12 +99,12 @@ describe("pi-editor.health (S42)", function()
 
   after_each(function()
     vim.health = saved.vim_health
-    vim.env.PI_EDITOR_BRIDGE = saved.env
+    vim.env.PI_NVIM_BRIDGE = saved.env
     vim.fn.executable = saved.fn_executable
     vim.fn.has = saved.fn_has
     vim.fn.exepath = saved.fn_exepath
-    local pi = require("pi-editor")
-    local bridge = require("pi-editor.bridge")
+    local pi = require("pi-bridge")
+    local bridge = require("pi-bridge.bridge")
     pi.config = saved.pi_config
     pi.descriptor = saved.pi_descriptor
     bridge.version = saved.bridge_version
@@ -121,10 +121,10 @@ describe("pi-editor.health (S42)", function()
 
   -- (b) dormant session (env unset, descriptor nil): info "dormant" + NO error
   it("dormant session emits an info 'dormant' and zero errors", function()
-    local pi = require("pi-editor")
+    local pi = require("pi-bridge")
     pi.config = nil
     pi.descriptor = nil
-    vim.env.PI_EDITOR_BRIDGE = nil
+    vim.env.PI_NVIM_BRIDGE = nil
 
     local ok = pcall(health.check)
     assert.is_true(ok, "check() must not throw")
@@ -156,11 +156,11 @@ describe("pi-editor.health (S42)", function()
 
   -- (d) active session (valid descriptor + connected + server_info): ok connected, no errors
   it("active session emits ok connected + descriptor info + zero errors", function()
-    local pi = require("pi-editor")
-    local bridge = require("pi-editor.bridge")
+    local pi = require("pi-bridge")
+    local bridge = require("pi-bridge.bridge")
     local desc = {
       transport = "unix",
-      path = "/tmp/pi-editor-bridge-fake.sock",
+      path = "/tmp/pi-nvim-bridge-fake.sock",
       token = "deadbeef",
       pid = 99999,
       cwd = "/home/u/proj",
@@ -175,7 +175,7 @@ describe("pi-editor.health (S42)", function()
     assert.is_true(ok)
     assert.is_false(any_error(), "active + connected must emit ZERO errors")
     assert.is_true(any_ok_substr("connected"), "an ok 'connected' line")
-    assert.is_true(any_info_substr("/tmp/pi-editor-bridge-fake.sock"), "info line names the socket path")
+    assert.is_true(any_info_substr("/tmp/pi-nvim-bridge-fake.sock"), "info line names the socket path")
     assert.is_true(any_info_substr("99999"), "info line names the pid")
     assert.is_true(any_info_substr("/home/u/proj"), "info line names the cwd")
     assert.is_true(any_info_substr("0.1.0"), "info line names the server version")
@@ -183,9 +183,9 @@ describe("pi-editor.health (S42)", function()
 
   -- (e) malformed env var (bad JSON): an error naming it; no throw
   it("malformed env var (bad JSON) emits an error", function()
-    local pi = require("pi-editor")
+    local pi = require("pi-bridge")
     pi.descriptor = nil
-    vim.env.PI_EDITOR_BRIDGE = "{not json"
+    vim.env.PI_NVIM_BRIDGE = "{not json"
 
     local ok = pcall(health.check)
     assert.is_true(ok)
@@ -196,9 +196,9 @@ describe("pi-editor.health (S42)", function()
 
   -- (e2) malformed env var (wrong transport): a warn naming it; no throw
   it("malformed env var (wrong transport) emits a warn", function()
-    local pi = require("pi-editor")
+    local pi = require("pi-bridge")
     pi.descriptor = nil
-    vim.env.PI_EDITOR_BRIDGE = '{"transport":"tcp","path":"/tmp/x","token":"t","pid":1,"cwd":"/","fdAvailable":false,"serverVersion":"0.1.0"}'
+    vim.env.PI_NVIM_BRIDGE = '{"transport":"tcp","path":"/tmp/x","token":"t","pid":1,"cwd":"/","fdAvailable":false,"serverVersion":"0.1.0"}'
 
     local ok = pcall(health.check)
     assert.is_true(ok)
@@ -208,9 +208,9 @@ describe("pi-editor.health (S42)", function()
 
   -- (f) fd present: an ok naming fd
   it("fd present emits an ok naming fd", function()
-    local pi = require("pi-editor")
+    local pi = require("pi-bridge")
     pi.descriptor = nil
-    vim.env.PI_EDITOR_BRIDGE = nil
+    vim.env.PI_NVIM_BRIDGE = nil
     vim.fn.executable = function(name) if name == "fd" then return 1 end; return 0 end
     vim.fn.exepath = function(name) if name == "fd" then return "/usr/bin/fd" end; return "" end
 
@@ -222,9 +222,9 @@ describe("pi-editor.health (S42)", function()
 
   -- (g) fd absent: a warn (NOT error) whose advice is a table containing "sharkdp/fd"
   it("fd absent emits a warn (not error) with string[] advice mentioning sharkdp/fd", function()
-    local pi = require("pi-editor")
+    local pi = require("pi-bridge")
     pi.descriptor = nil
-    vim.env.PI_EDITOR_BRIDGE = nil
+    vim.env.PI_NVIM_BRIDGE = nil
     vim.fn.executable = function(_name) return 0 end
 
     local ok = pcall(health.check)
@@ -239,11 +239,11 @@ describe("pi-editor.health (S42)", function()
 
   -- (h) server=true/client=false fd nuance: warn for fd absent + info noting bridge has fd
   it("server=true/client=false fd nuance emits a warn + an info noting the bridge has fd", function()
-    local pi = require("pi-editor")
-    local bridge = require("pi-editor.bridge")
+    local pi = require("pi-bridge")
+    local bridge = require("pi-bridge.bridge")
     local desc = {
       transport = "unix",
-      path = "/tmp/pi-editor-bridge-fake2.sock",
+      path = "/tmp/pi-nvim-bridge-fake2.sock",
       token = "deadbeef",
       pid = 99999,
       cwd = "/home/u/proj",
@@ -261,22 +261,22 @@ describe("pi-editor.health (S42)", function()
     assert.is_true(any_info_substr("bin dir"), "info notes the bridge resolved fd in its bin dir")
   end)
 
-  -- (i) never throws: force require("pi-editor.bridge") to fail; check() still completes
-  it("never throws when require('pi-editor.bridge') fails", function()
-    local pi = require("pi-editor")
+  -- (i) never throws: force require("pi-bridge.bridge") to fail; check() still completes
+  it("never throws when require('pi-bridge.bridge') fails", function()
+    local pi = require("pi-bridge")
     pi.config = nil
     pi.descriptor = nil
-    vim.env.PI_EDITOR_BRIDGE =
+    vim.env.PI_NVIM_BRIDGE =
       '{"transport":"unix","path":"/tmp/x.sock","token":"t","pid":1,"cwd":"/","fdAvailable":false,"serverVersion":"0.1.0"}'
-    -- poison package.loaded so the pcall(require("pi-editor.bridge")) inside check() fails
-    local real_bridge = package.loaded["pi-editor.bridge"]
-    package.loaded["pi-editor.bridge"] = nil
-    package.preload["pi-editor.bridge"] = function() error("forced load failure") end
+    -- poison package.loaded so the pcall(require("pi-bridge.bridge")) inside check() fails
+    local real_bridge = package.loaded["pi-bridge.bridge"]
+    package.loaded["pi-bridge.bridge"] = nil
+    package.preload["pi-bridge.bridge"] = function() error("forced load failure") end
 
     local ok = pcall(health.check)
     -- restore BEFORE asserting so after_each also gets a clean state
-    package.preload["pi-editor.bridge"] = nil
-    package.loaded["pi-editor.bridge"] = real_bridge
+    package.preload["pi-bridge.bridge"] = nil
+    package.loaded["pi-bridge.bridge"] = real_bridge
     assert.is_true(ok, "check() must not throw when the bridge module is broken")
     assert.is_true(count("start") >= 4, "still emits the 4 start() sections")
     -- version section still ran (a warn that the version could not be read OR an ok)
@@ -288,11 +288,11 @@ describe("pi-editor.health (S42)", function()
 
   -- (j) socket file missing (active session): a warn whose msg contains "missing"
   it("active session with a missing socket file emits a warn 'missing'", function()
-    local pi = require("pi-editor")
-    local bridge = require("pi-editor.bridge")
+    local pi = require("pi-bridge")
+    local bridge = require("pi-bridge.bridge")
     pi.descriptor = {
       transport = "unix",
-      path = "/nonexistent/pi-editor-sock-does-not-exist.sock",
+      path = "/nonexistent/pi-bridge-sock-does-not-exist.sock",
       token = "t",
       pid = 1,
       cwd = "/",
@@ -310,11 +310,11 @@ describe("pi-editor.health (S42)", function()
 
   -- (k) not connected (env set): a warn "not connected" (NOT error)
   it("active session that is not connected emits a warn 'not connected'", function()
-    local pi = require("pi-editor")
-    local bridge = require("pi-editor.bridge")
+    local pi = require("pi-bridge")
+    local bridge = require("pi-bridge.bridge")
     pi.descriptor = {
       transport = "unix",
-      path = "/tmp/pi-editor-bridge-fake3.sock",
+      path = "/tmp/pi-nvim-bridge-fake3.sock",
       token = "t",
       pid = 1,
       cwd = "/",

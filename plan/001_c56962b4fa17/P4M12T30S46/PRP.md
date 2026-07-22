@@ -1,4 +1,4 @@
-name: "P4.M12.T30.S46 — nvim-cmp completion source module (pi-editor.nvim)"
+name: "P4.M12.T30.S46 — nvim-cmp completion source module (pi-bridge.nvim)"
 description: |
 
   Create `plugin/lua/pi-editor/cmp_source.lua` — an OPT-IN [nvim-cmp](https://github.com/hrsh7th/nvim-cmp)

@@ -2,7 +2,7 @@
 name: "P2.M4.T11.S19 — init.lua with setup() and default config options"
 description: |
   **Bootstrap the entire Neovim plugin tree** by creating `plugin/lua/pi-editor/init.lua`
-  for `pi-editor.nvim`. It exposes `M.setup(opts)` that deep-merges a user options table
+  for `pi-bridge.nvim`. It exposes `M.setup(opts)` that deep-merges a user options table
   over documented PRD §10.5 defaults (via `vim.tbl_deep_extend("force", …)`), stores the
   resolved config on `M.config`, exposes a typed-`nil` `M.bridge` placeholder for PRD §7.7,
   and is annotated with LuaCATS (`---@class`/`---@field`/`---@param`/`---@return`) [Mode A] docs.
@@ -10,7 +10,7 @@ description: |
   0.12.4) with **zero** external Lua dependencies. This is the FIRST task of P2 — the
   `plugin/` directory does NOT exist yet; this task CREATES it.
   NARROW scope guard — this task does NOT create or wire: `plugin/plugin/pi-editor.lua`
-  (the VimEnter shim = **S20**), the activation gate / `PI_EDITOR_BRIDGE` reader (**S21**),
+  (the VimEnter shim = **S20**), the activation gate / `PI_NVIM_BRIDGE` reader (**S21**),
   `plugin/ftplugin/pi-prompt.lua` (**S22**), or `plugin/lua/pi-editor/bridge.lua` (**S24**).
   `setup()` is PURELY config: merge + store + return — side-effect-free (no autocmds, no
   `vim.api` calls, no `require` of other pi-editor modules, no env-var reads). Keeping it
@@ -23,7 +23,7 @@ description: |
 ## Goal
 
 **Feature Goal**: Create the entry module `lua/pi-editor/init.lua` for the
-`pi-editor.nvim` plugin. It exposes `M.setup(opts)` that deep-merges a user options
+`pi-bridge.nvim` plugin. It exposes `M.setup(opts)` that deep-merges a user options
 table over documented defaults (using `vim.tbl_deep_extend`), stores the resolved
 config on `M.config`, and exposes the documented-but-initially-nil `M.bridge`
 placeholder. `require("pi-editor").setup({})` must run without error in a stock
@@ -52,7 +52,7 @@ Neovim 0.10+ (verified on 0.12.4) with **zero** external Lua dependencies.
 
 ## User Persona (if applicable)
 
-**Target User**: The `pi-editor.nvim` plugin author and the downstream implementers of
+**Target User**: The `pi-bridge.nvim` plugin author and the downstream implementers of
 **S20** (VimEnter shim), **S21** (activation gate), **S22** (ftplugin), **S24**
 (bridge.lua), **S42** (health.lua). This is developer scaffolding, not end-user-facing.
 
@@ -83,10 +83,10 @@ rediscovering them.
   now (as a typed `nil` placeholder) locks the public surface so `bridge.lua` (task S24)
   just has to *populate* it.
 - **Integrates with the (complete) extension work.** The bridge extension already writes
-  `process.env.PI_EDITOR_BRIDGE` on `session_start` (P1.M3.T8.S16 — DONE; see
+  `process.env.PI_NVIM_BRIDGE` on `session_start` (P1.M3.T8.S16 — DONE; see
   `extension/pi-editor-bridge.ts:startBridge`). The Neovim-side *reader* of that env var
   is the activation gate (task S21) — **NOT this task**. This task only owns the config
-  table that S21 will read `M.config.env_var or "PI_EDITOR_BRIDGE"` from.
+  table that S21 will read `M.config.env_var or "PI_NVIM_BRIDGE"` from.
 
 ## What
 
@@ -100,7 +100,7 @@ require("pi-editor").setup({
   rpc_timeout_ms = 3000,
   autosave_on_exit = false, -- disable writing the pi temp file on exit
   engine = "builtin",       -- "builtin" | "blink" | "cmp"
-  -- env_var = "PI_EDITOR_BRIDGE", -- optional override of the discovery env var
+  -- env_var = "PI_NVIM_BRIDGE", -- optional override of the discovery env var
 })
 ```
 
@@ -191,10 +191,10 @@ and embedded in every validation command.
         (Neovim 0.10+) and the module path 'lua/pi-editor/' are pinned here."
 
 - file: extension/pi-editor-bridge.ts
-  why: "The COMPLETE pi extension that WRITES process.env.PI_EDITOR_BRIDGE (in
-        startBridge()). Confirms the env-var name is 'PI_EDITOR_BRIDGE' and the
+  why: "The COMPLETE pi extension that WRITES process.env.PI_NVIM_BRIDGE (in
+        startBridge()). Confirms the env-var name is 'PI_NVIM_BRIDGE' and the
         descriptor is single-line JSON — which is why the activation gate (S21, not this
-        task) will read M.config.env_var or 'PI_EDITOR_BRIDGE'."
+        task) will read M.config.env_var or 'PI_NVIM_BRIDGE'."
 
 - docfile: plan/001_c56962b4fa17/prd_snapshot.md
   section: "§7.2 (module layout), §7.5 (menu.lua), §7.7 (bridge exposure), §10.5 (default setup() options)"
@@ -207,7 +207,7 @@ and embedded in every validation command.
 ```bash
 pi-nvim-bridge/                  # repo root (monorepo: extension/ + plugin/)
 ├── extension/                   # P1 — pi-editor-bridge (TypeScript) — COMPLETE
-│   ├── pi-editor-bridge.ts      # writes process.env.PI_EDITOR_BRIDGE in startBridge()
+│   ├── pi-editor-bridge.ts      # writes process.env.PI_NVIM_BRIDGE in startBridge()
 │   ├── protocol.ts              # defines BridgeDescriptor (the env-var payload)
 │   ├── connection.ts, jsonl-reader.ts
 │   └── tests/*.test.ts          # node:test + jiti
@@ -236,7 +236,7 @@ plugin/                          # <-- Neovim plugin root (added to runtimepath 
 > **Why `plugin/` and not the repo root?** The repo is a monorepo hosting BOTH the
 > TypeScript extension (`extension/`) and the Neovim plugin (`plugin/`). The `plugin/`
 > directory is what a user installs / symlinks onto `runtimepath` (PRD §9.2 calls this
-> root `pi-editor.nvim/`). Everything under `plugin/` mirrors a normal standalone plugin
+> root `pi-bridge.nvim/`). Everything under `plugin/` mirrors a normal standalone plugin
 > repo (`lua/`, `plugin/`, `ftplugin/`, `doc/`). Later tasks add
 > `plugin/plugin/pi-editor.lua` (S20 VimEnter shim), `plugin/ftplugin/pi-prompt.lua`
 > (S22), `plugin/lua/pi-editor/bridge.lua` (S24), etc.
@@ -315,12 +315,12 @@ completion. (Verified syntax: LuaLS Annotations wiki.)
 ---@field rpc_timeout_ms integer Ms before a pending RPC is considered stale (supersession / cancellation).
 ---@field autosave_on_exit boolean Write the pi temp file on VimLeavePre if modified (PRD §7.6, §11).
 ---@field engine ("builtin"|"blink"|"cmp") Which completion UI engine to drive (default "builtin").
----@field env_var? string Override the bridge-descriptor env var (default "PI_EDITOR_BRIDGE"; PRD §7.1).
+---@field env_var? string Override the bridge-descriptor env var (default "PI_NVIM_BRIDGE"; PRD §7.1).
 ```
 
 > `env_var` is optional (`?`) and is **deliberately NOT in `M.defaults`** — it has no useful
 > default *value* to merge (the activation gate reads it as `M.config.env_var or
-> "PI_EDITOR_BRIDGE"`). Keeping it out of `defaults` keeps the defaults table to exactly the
+> "PI_NVIM_BRIDGE"`). Keeping it out of `defaults` keeps the defaults table to exactly the
 > 5 PRD §10.5 options.
 
 ### Implementation Tasks (ordered by dependencies)
@@ -389,13 +389,13 @@ Task 4: CREATE plugin/tests/smoke.lua  (plenary-FREE fast smoke test — the Lev
 -- (The implementer may ship this verbatim; it satisfies every Success Criterion and is
 --  LIVE-VERIFIED to pass the smoke + plenary gates.)
 
---- pi-editor.nvim — entry module.
+--- pi-bridge.nvim — entry module.
 --
 -- Call |setup()| once from your config to apply options:
 -- >
 --   require("pi-editor").setup({})
 -- <
--- The plugin stays dormant unless pi spawned this Neovim with the PI_EDITOR_BRIDGE
+-- The plugin stays dormant unless pi spawned this Neovim with the PI_NVIM_BRIDGE
 -- env var set (PRD §7.1; the activation gate lives in plugin/pi-editor.lua, added by
 -- a later task). setup() itself is side-effect-free: it only merges options into
 -- |M.config|.
@@ -412,7 +412,7 @@ Task 4: CREATE plugin/tests/smoke.lua  (plenary-FREE fast smoke test — the Lev
 ---@field rpc_timeout_ms integer Ms before a pending RPC is considered stale (supersession).
 ---@field autosave_on_exit boolean Write the pi temp file on VimLeavePre if modified (PRD §7.6, §11).
 ---@field engine ("builtin"|"blink"|"cmp") Which completion UI engine to drive.
----@field env_var? string Override the bridge-descriptor env var (default "PI_EDITOR_BRIDGE"; PRD §7.1).
+---@field env_var? string Override the bridge-descriptor env var (default "PI_NVIM_BRIDGE"; PRD §7.1).
 
 local M = {}
 
@@ -435,7 +435,7 @@ M.defaults = {
 M.config = nil
 
 --- Bridge client. Populated by `bridge.lua` after a successful connect + handshake;
---- `nil` before that and in dormant sessions (no PI_EDITOR_BRIDGE env var). External
+--- `nil` before that and in dormant sessions (no PI_NVIM_BRIDGE env var). External
 --- code (blink/cmp sources, user code) reads `require("pi-editor").bridge` to issue
 --- RPCs (PRD §7.7). Typed `table|nil` until bridge.lua ships a concrete type.
 ---@type table|nil
@@ -631,7 +631,7 @@ io.stdout:write("SMOKE_PASS\n")
 ```yaml
 RUNTIMEPATH (Neovim):
   - the plugin/ subdirectory is the runtimepath entry (NOT the repo root) — GOTCHA #1.
-    Users add it via packer/lazy/vim.opt.rtp, or symlink plugin/ as ~/.local/share/.../pi-editor.nvim.
+    Users add it via packer/lazy/vim.opt.rtp, or symlink plugin/ as ~/.local/share/.../pi-bridge.nvim.
   - this task only CREATES plugin/lua/pi-editor/init.lua; it does not register anything.
 
 MODULE SURFACE (public API, locked by this task):
@@ -641,7 +641,7 @@ MODULE SURFACE (public API, locked by this task):
   - require("pi-editor").bridge        -> table|nil          (placeholder; S24 populates it)
 
 FORWARD CONTRACTS (do NOT implement here — just don't break them):
-  - S21 (activation gate) reads M.config.env_var or "PI_EDITOR_BRIDGE", and other config
+  - S21 (activation gate) reads M.config.env_var or "PI_NVIM_BRIDGE", and other config
     fields (debounce_ms, rpc_timeout_ms, engine). Keep all field names EXACTLY as above.
   - S24 (bridge.lua) does `require("pi-editor").bridge = <client instance>`.
   - S42 (health.lua) reads M.config + M.defaults for diagnostics.
@@ -778,7 +778,7 @@ nvim --headless --clean -u NORC \
 - ❌ Don't mutate `M.defaults` (it won't happen via `tbl_deep_extend`, but don't write
   code that does) — tests pin it as pristine.
 - ❌ Don't put `env_var` in `M.defaults` — it's an optional override; the activation
-  gate (S21) reads `M.config.env_var or "PI_EDITOR_BRIDGE"`.
+  gate (S21) reads `M.config.env_var or "PI_NVIM_BRIDGE"`.
 - ❌ Don't make validation depend on stylua/selene — they're not installed here. The
   headless smoke test + plenary spec are the hard gates (GOTCHA #8).
 - ❌ Don't skip the `setup(nil)` / re-`setup()` / non-mutation test cases — those pin

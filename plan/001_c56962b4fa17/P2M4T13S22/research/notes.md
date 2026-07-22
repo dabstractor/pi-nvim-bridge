@@ -71,7 +71,7 @@ Built `/tmp/fttest/ftplugin/pi-prompt.lua` (`vim.g.PI_FT_RAN=1; vim.bo.textwidth
   `vim.bo[buf].filetype = "pi-prompt"` **auto-sources** `ftplugin/pi-prompt.lua` with no
   extra `:filetype plugin on` (reliable in both tests and real pi-launched nvim).
 - The **real** activation path works end-to-end: load the real `plugin/` on rtp, set
-  `PI_EDITOR_BRIDGE`, fire `VimEnter` → `activate()` sets filetype → ftplugin sources.
+  `PI_NVIM_BRIDGE`, fire `VimEnter` → `activate()` sets filetype → ftplugin sources.
   This is the Level-3 integration-test path (no mocking of the ftplugin mechanism).
 - **Buffer identity**: inside the ftplugin, the matched buffer IS the current buffer
   (`:help filetype-plugins`: "options will be set and mappings defined … local to the

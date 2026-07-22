@@ -409,7 +409,7 @@ export default function (pi: ExtensionAPI): void {
 		);
 		// TODO(S3): guard with `if (ctx.mode !== "tui") return;` before capturing.
 		captureProvider(ctx);
-		// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE
+		// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_NVIM_BRIDGE
 	});
 
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
@@ -651,7 +651,7 @@ rm -f ~/.pi/agent/extensions/pi-editor-bridge.ts   # clean up (don't leave insta
 - [ ] `captureProvider()` JSDoc (Mode A) documents the technique + the session-reset re-registration rationale.
 - [ ] File-level JSDoc STATUS block updated to reflect S2 done (capture) + pending (M2/S16/S17).
 - [ ] TODO comments reference downstream tasks (S3 guard, M2 startBridge, S16 env, S6/S15 shutdown).
-- [ ] No new env vars WRITTEN (the JSDoc continues to merely document the future `PI_EDITOR_BRIDGE`).
+- [ ] No new env vars WRITTEN (the JSDoc continues to merely document the future `PI_NVIM_BRIDGE`).
 
 ---
 

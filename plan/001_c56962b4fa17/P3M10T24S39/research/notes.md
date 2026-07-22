@@ -90,7 +90,7 @@ For S39's process-death case: after `with_handshaken_server`, register `on_disco
 then `server_conn:close()` (server-side half-close → client `read_cb` sees EOF) and assert the
 disconnect handler fired + `pi.bridge` is still the module but `is_connected()` is false.
 
-`activate_spec.lua` shows the gate-test pattern (`vim.env.PI_EDITOR_BRIDGE = ...; pi.activate()`).
+`activate_spec.lua` shows the gate-test pattern (`vim.env.PI_NVIM_BRIDGE = ...; pi.activate()`).
 Extend it with: a descriptor whose `path` points at a non-existent socket → `activate()` fires
 exactly one `notify.once("bridge", ...)` (assert via `notify.did_notify("bridge")`).
 

@@ -13,7 +13,7 @@ import bridgeFactory, {
 	getSocketPath,
 	getToken,
 	stopBridge,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 
 type StartHandler = (event: SessionStartEvent, ctx: ExtensionContext) => void;
 type ShutdownHandler = (event: SessionShutdownEvent) => void;

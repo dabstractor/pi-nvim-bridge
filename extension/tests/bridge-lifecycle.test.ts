@@ -10,7 +10,7 @@ import {
 	getSocketPath,
 	getToken,
 	__deps,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 
 // startBridge does NOT dereference ctx in S5, so a bare cast is sufficient.
 const fakeCtx = {} as ExtensionContext;
@@ -56,8 +56,8 @@ test("startBridge (mocked): createServer + chmodSync(_,0o600) invoked, token 32-
 		// socket path shape (unique, under tmpdir, .sock extension)
 		assert.match(
 			listenArg ?? "",
-			/pi-editor-bridge-[0-9a-f-]+\.sock$/,
-			"listen() must be called with a unique pi-editor-bridge-*.sock path",
+			/pi-nvim-bridge-[0-9a-f-]+\.sock$/,
+			"listen() must be called with a unique pi-nvim-bridge-*.sock path",
 		);
 		// chmod called with EXACTLY the listen path and 0o600
 		assert.ok(chmodCall, "chmodSync must be invoked");

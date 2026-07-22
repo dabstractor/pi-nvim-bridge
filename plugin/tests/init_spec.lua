@@ -1,10 +1,10 @@
 -- === plugin/tests/init_spec.lua — the spec (covers every Success Criterion) ===
-describe("pi-editor.setup", function()
+describe("pi-bridge.setup", function()
   local pi
 
   before_each(function()
-    package.loaded["pi-editor"] = nil   -- force a fresh module per test
-    pi = require("pi-editor")
+    package.loaded["pi-bridge"] = nil   -- force a fresh module per test
+    pi = require("pi-bridge")
   end)
 
   it("exposes a module table with setup()", function()
@@ -92,7 +92,7 @@ describe("pi-editor.setup", function()
     -- the @---@field debounce_ms doc states the pi-faithful semantics; verify the shipped
     -- default + the (testable) completion.is_attachment_context mirror the model.
     assert.are.equals(20, pi.defaults.debounce_ms)
-    local completion = require("pi-editor.completion")
+    local completion = require("pi-bridge.completion")
     assert.are.equals("function", type(completion.is_attachment_context))
     assert.is_true(completion.is_attachment_context("@src"))   -- attachment → debounce_ms
     assert.is_false(completion.is_attachment_context("/mod"))  -- slash → 0 ms (immediate)

@@ -40,7 +40,7 @@ description: |
 
 ## Goal
 
-**Feature Goal**: Ship the **upper layer** of the pi-editor.nvim coordinate-translation stack —
+**Feature Goal**: Ship the **upper layer** of the pi-bridge.nvim coordinate-translation stack —
 two pure wrapper functions that translate the **whole cursor** (not just a within-line offset)
 between Neovim's native coordinate system (**1-indexed row + 0-indexed byte col**, as
 `nvim_win_get_cursor` reports) and pi's coordinate system (**0-indexed `cursorLine` +
@@ -352,7 +352,7 @@ Define the two return shapes inline in the LuaCATS (match S28's annotation style
 ---@field cursorCol  integer 0-indexed UTF-16 code-unit offset (pi's cursorCol unit).
 
 --- Result of pi_to_nvim_coords: pi-native cursor → nvim-native. `lines` is pass-through.
----@class pi-editor.NvimCoords
+---@class pi-bridge.nvimCoords
 ---@field lines string[] The buffer lines (UNCHANGED — same reference as the input).
 ---@field row integer 1-indexed nvim row == pi cursorLine + 1 (for nvim_win_set_cursor[1]).
 ---@field col integer 0-indexed BYTE offset (for nvim_win_set_cursor[2] — NO `-1`; see header).
@@ -389,7 +389,7 @@ Task 3: MODIFY plugin/lua/pi-editor/coords.lua — ADD pi_to_nvim_coords (the in
   - ROUTE THROUGH S28: call M.utf16_to_byte (NOT vim.str_byteindex). col is 0-based byte — NO `-1`.
   - NEVER THROWS: same guards as Task 2.
   - ADD LuaCATS: @param lines string[]; @param cursorLine integer (0-indexed pi line);
-      @param cursorCol integer (0-indexed UTF-16, pi's unit); @return pi-editor.NvimCoords.
+      @param cursorCol integer (0-indexed UTF-16, pi's unit); @return pi-bridge.nvimCoords.
   - NAMING/PLACEMENT: M.pi_to_nvim_coords, directly below nvim_to_pi_coords.
   - DEPENDENCIES: M.utf16_to_byte (S28).
 
@@ -405,7 +405,7 @@ Task 4: MODIFY plugin/lua/pi-editor/coords.lua — EXTEND the [Mode A] header
   - ADD a one-line role update to the header's opening: "…+ the S29 row/col wrappers
       (nvim_to_pi_coords / pi_to_nvim_coords) that compose these primitives with the nvim↔pi row ±1
       and cursor-API alignment — THE public nvim↔pi cursor API for S30+ completion / S32 accept."
-  - ADD the two @class blocks (pi-editor.PiCoords / pi-editor.NvimCoords) near the top (by the module doc).
+  - ADD the two @class blocks (pi-editor.PiCoords / pi-bridge.nvimCoords) near the top (by the module doc).
 
 Task 5: MODIFY plugin/tests/coords_spec.lua — APPEND the wrapper describe block
   - APPEND: describe("pi-editor.coords nvim_to_pi_coords / pi_to_nvim_coords", function() … end)
@@ -464,7 +464,7 @@ end
 ---@param lines      string[] Buffer/result lines.
 ---@param cursorLine integer  0-indexed pi line.
 ---@param cursorCol  integer  0-indexed UTF-16 offset (pi's cursorCol unit).
----@return pi-editor.NvimCoords
+---@return pi-bridge.nvimCoords
 function M.pi_to_nvim_coords(lines, cursorLine, cursorCol)
   if type(lines) ~= "table" then lines = {} end          -- never-throws
   local cl = (type(cursorLine) == "number") and cursorLine or 0

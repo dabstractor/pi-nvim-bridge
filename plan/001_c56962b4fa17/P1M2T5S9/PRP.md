@@ -39,10 +39,10 @@ still pass** (the `BridgeRpcError` refinement is backward-compatible — a plain
 
 ## User Persona
 
-**Target User**: The `pi-editor.nvim` Neovim plugin (P2.M5) — the bridge's only
+**Target User**: The `pi-bridge.nvim` Neovim plugin (P2.M5) — the bridge's only
 client. (Indirectly: the human editing a pi prompt in their `$EDITOR`.)
 
-**Use Case**: On `VimEnter`, after reading `PI_EDITOR_BRIDGE`, the plugin opens
+**Use Case**: On `VimEnter`, after reading `PI_NVIM_BRIDGE`, the plugin opens
 a socket connection and immediately sends `hello` with the token. Until `hello`
 succeeds it sends nothing else.
 
@@ -63,7 +63,7 @@ is the boundary; "bad token → close" prevents brute-force chatter.
   (which S10 gates every other method on) and introduces `BridgeRpcError`
   (which S15 uses to wrap every handler's domain errors into proper codes).
 - **Reuse for S16/S17**: `BRIDGE_VERSION`, `getCwd()`, `getFdAvailable()` are
-  introduced here and reused by the `PI_EDITOR_BRIDGE` descriptor (S16).
+  introduced here and reused by the `PI_NVIM_BRIDGE` descriptor (S16).
 
 ---
 
@@ -320,7 +320,7 @@ Task 3: MODIFY extension/pi-editor-bridge.ts — the hello handler factory + wir
       `cwd = ctx.cwd;`
       `registerBridgeHandler("hello", makeHelloHandler({ getToken, getCwd, getFdAvailable, version: BRIDGE_VERSION }));`
   - DO NOT: add the S10 handshake GATE (S9 only SETS the flag); write
-    process.env.PI_EDITOR_BRIDGE (S16); register other methods (S11–S14).
+    process.env.PI_NVIM_BRIDGE (S16); register other methods (S11–S14).
 
 Task 4: MODIFY extension/tests/connection.test.ts — BridgeRpcError mapping
   - EXTEND fakeSocket(): add `end()` (record into a `state.ended` bool + emit
@@ -509,7 +509,7 @@ PROTOCOL (protocol.ts): CONSUMED, not modified. HelloParams/HelloResult/JsonRpcE
   already declared (S4). BridgeRpcError is a runtime escape hatch in connection.ts.
 
 DOWNSTREAM REUSE:
-  - BRIDGE_VERSION / getCwd() / getFdAvailable() are reused by S16 (PI_EDITOR_BRIDGE descriptor).
+  - BRIDGE_VERSION / getCwd() / getFdAvailable() are reused by S16 (PI_NVIM_BRIDGE descriptor).
   - BridgeRpcError is reused by S15 (wrap domain-handler errors into proper codes).
   - ConnectionState.handshakeComplete (set true here) is read by S10 (the gate).
 ```
@@ -621,7 +621,7 @@ node --import "$JITI_REG" extension/tests/hello-handler.test.ts 2>&1 | grep -c "
 
 ### Scope Discipline (did NOT bleed into other tasks)
 - [ ] No S10 handshake GATE added (S9 only sets the flag).
-- [ ] No `process.env.PI_EDITOR_BRIDGE` write (S16) / no `commandsChanged` (S17) / no getSuggestions… (S11–S14).
+- [ ] No `process.env.PI_NVIM_BRIDGE` write (S16) / no `commandsChanged` (S17) / no getSuggestions… (S11–S14).
 
 ---
 

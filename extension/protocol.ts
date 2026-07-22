@@ -1,6 +1,6 @@
 /**
- * protocol.ts — the JSON-RPC 2.0 IPC contract between the pi-editor-bridge
- * extension (server, pi side) and the pi-editor.nvim plugin (client, Neovim side).
+ * protocol.ts — the JSON-RPC 2.0 IPC contract between the pi-nvim-bridge
+ * extension (server, pi side) and the pi-bridge.nvim plugin (client, Neovim side).
  *
  * Transport: Unix domain socket. Framing: strict JSONL — exactly one JSON object per
  * line, delimited by `\n` only (strip an optional trailing `\r`; do NOT use readers
@@ -71,7 +71,7 @@ export interface JsonRpcNotification {
 }
 
 /* ==========================================================================
- * §B — BridgeDescriptor: JSON-serialized to process.env.PI_EDITOR_BRIDGE (S16) and
+ * §B — BridgeDescriptor: JSON-serialized to process.env.PI_NVIM_BRIDGE (S16) and
  *      vim.json.decode'd by the Neovim activation gate (PRD §7.1). MUST be a plain
  *      JSON object (all fields required, JSON-serializable). `transport:"unix"` is a
  *      v1 literal; PRD §5.1 names a future TCP variant — extend as a discriminated

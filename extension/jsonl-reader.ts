@@ -1,5 +1,5 @@
 /**
- * jsonl-reader.ts — strict JSONL framing for the pi-editor-bridge IPC socket.
+ * jsonl-reader.ts — strict JSONL framing for the pi-nvim-bridge IPC socket.
  *
  * This module is a VERBATIM LOGIC MIRROR of pi's own authoritative framing module
  * `packages/coding-agent/src/modes/rpc/jsonl.ts` (compiled: `dist/modes/rpc/jsonl.js`),

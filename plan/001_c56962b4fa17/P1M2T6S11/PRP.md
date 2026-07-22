@@ -56,7 +56,7 @@ existing extension suites stay green** (S2–S10); `connection.ts` and
 
 ## User Persona
 
-**Target User**: The `pi-editor.nvim` Neovim plugin (P2.M5) — the bridge's only
+**Target User**: The `pi-bridge.nvim` Neovim plugin (P2.M5) — the bridge's only
 client. (Indirectly: the human editing a pi prompt in their `$EDITOR`.)
 
 **Use Case**: As the user types in the pi prompt buffer, the plugin debounces
@@ -780,7 +780,7 @@ node --import "$JITI_REG" extension/tests/get-suggestions-handler.test.ts 2>&1 |
 - [ ] `extension/protocol.ts` UNCHANGED (verify: `git diff --stat extension/protocol.ts` ⇒ empty).
 - [ ] No S12 (applyCompletion) / S13 (shouldTriggerFileCompletion) / S14 (ping/bye/getCommands) registrations.
 - [ ] No S15 domain-error wrapping of provider-not-captured / provider-runtime-throws into specific codes (left to the -32603 net).
-- [ ] No S16 `process.env.PI_EDITOR_BRIDGE` write / no S17 `commandsChanged`.
+- [ ] No S16 `process.env.PI_NVIM_BRIDGE` write / no S17 `commandsChanged`.
 - [ ] No client-side supersession/debounce (that is P2.M5/S26 — the server only aborts + responds; the client ignores stale ids).
 
 ---

@@ -1,7 +1,7 @@
 ---
 name: "P2.M8.T21.S34 (PRP path P2M5T1S1) — menu.lua floating window: cursor-relative positioning & edge clamping"
 description: |
-  **Create `plugin/lua/pi-editor/menu.lua`** for `pi-editor.nvim`: a dependency-free
+  **Create `plugin/lua/pi-editor/menu.lua`** for `pi-bridge.nvim`: a dependency-free
   floating completion popup opened with `vim.api.nvim_open_win(buf, false, config)`
   (`relative="cursor"`, `style="minimal"`, `border`, `focusable=false`, then `wrap=false`).
   This task (logical id **S34 / P2.M8.T21.S34**; PRP output dir `P2M5T1S1`) owns the
@@ -202,7 +202,7 @@ baked into the test design.
 ```bash
 pi-nvim-bridge/                       # repo root (monorepo)
 ├── extension/                        # P1 pi-editor-bridge (TypeScript) — COMPLETE
-├── plugin/                           # P2 pi-editor.nvim (Lua) — S19 DONE, rest in progress
+├── plugin/                           # P2 pi-bridge.nvim (Lua) — S19 DONE, rest in progress
 │   ├── lua/pi-editor/
 │   │   └── init.lua                  # S19: M.defaults/M.config/M.bridge/M.setup (CONTRACT for this task)
 │   └── tests/
@@ -350,7 +350,7 @@ Task 3: CREATE plugin/tests/smoke_menu.lua  (plenary-FREE — the Level-1 gate)
 -- (Functionally identical to the LIVE-VERIFIED prototype — research/live-verification.md §7.)
 -- (The implementer may ship this verbatim; it passes every Success Criterion + the spec.)
 
---- pi-editor.nvim — dependency-free floating completion menu.
+--- pi-bridge.nvim — dependency-free floating completion menu.
 --
 -- A single-file, zero-plugin floating popup that renders pi's `AutocompleteItem`s near
 -- the caret and clamps to the screen edges (PRD §7.5). This module owns WINDOW LIFECYCLE

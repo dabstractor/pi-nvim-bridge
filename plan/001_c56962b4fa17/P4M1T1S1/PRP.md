@@ -32,7 +32,7 @@ test (`plugin/tests/blink_source_smoke.lua`) and a plenary spec
 - The module satisfies the `blink.cmp.Source` interface (verified against the locally-cloned
   blink.cmp `sources/lib/types.lua`).
 - `source.new(opts, config)` returns an object with all five methods.
-- `source:enabled()` is `true` iff `vim.env.PI_EDITOR_BRIDGE ~= nil and require("pi-editor").bridge ~= nil`.
+- `source:enabled()` is `true` iff `vim.env.PI_NVIM_BRIDGE ~= nil and require("pi-editor").bridge ~= nil`.
 - `source:get_trigger_characters()` returns `{ "/", "@" }`.
 - `source:get_completions(ctx, callback)` extracts the **full buffer** + cursor from `ctx`, converts
   nvim→pi coords, calls `bridge.request("getSuggestions", {lines, cursorLine, cursorCol})`, maps each
@@ -52,7 +52,7 @@ as their completion UI (instead of the plugin's dependency-free builtin popup).
 blink.cmp shows pi's completion candidates; accepting one inserts it exactly as pi's TUI would.
 
 **User Journey**:
-1. pi launches Neovim with `PI_EDITOR_BRIDGE` set → the plugin activates + connects the bridge
+1. pi launches Neovim with `PI_NVIM_BRIDGE` set → the plugin activates + connects the bridge
    (`require("pi-editor").bridge` becomes non-nil).
 2. The user's blink.cmp config registers `["pi-editor"] = { module = "pi-editor.blink_source" }`.
 3. On typing, blink calls `get_completions` → pi returns candidates → blink renders them.
@@ -382,7 +382,7 @@ end
 --- Active iff pi spawned this editor (env var set) AND the bridge connected (pi.bridge ~= nil).
 --- (PRD §7.7; mirrors external_deps §2.) Reads the env var + bridge LIVE.
 function M:enabled()
-  return vim.env.PI_EDITOR_BRIDGE ~= nil and require("pi-editor").bridge ~= nil
+  return vim.env.PI_NVIM_BRIDGE ~= nil and require("pi-editor").bridge ~= nil
 end
 
 --- Trigger characters (PRD §7.7): "/" (file completion) + "@" (commands).

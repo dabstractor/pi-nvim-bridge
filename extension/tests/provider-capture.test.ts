@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { captureProvider, getProvider } from "../pi-editor-bridge.ts";
+import { captureProvider, getProvider } from "../pi-nvim-bridge.ts";
 
 // Build a sentinel object satisfying the AutocompleteProvider shape. Methods are
 // stubs — the pass-through test only checks IDENTITY, never calls them.

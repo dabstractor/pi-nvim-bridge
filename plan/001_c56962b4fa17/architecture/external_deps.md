@@ -176,7 +176,7 @@ function source.new(opts)
 end
 
 function source:enabled()
-  return vim.env.PI_EDITOR_BRIDGE ~= nil
+  return vim.env.PI_NVIM_BRIDGE ~= nil
 end
 
 function source:get_trigger_characters()
@@ -209,7 +209,7 @@ source.new = function()
 end
 
 function source:is_available()
-  return vim.env.PI_EDITOR_BRIDGE ~= nil
+  return vim.env.PI_NVIM_BRIDGE ~= nil
 end
 
 function source:get_trigger_characters()

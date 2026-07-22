@@ -71,7 +71,7 @@ export default function (pi: ExtensionAPI): void {
         console.log(`pi-editor-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`);
         // TODO(S3): guard with `if (ctx.mode !== "tui") return;` before capturing.
         captureProvider(ctx);
-        // TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE
+        // TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_NVIM_BRIDGE
     });
     pi.on("session_shutdown", (_event: SessionShutdownEvent) => { /* no-op placeholder */ });
 }

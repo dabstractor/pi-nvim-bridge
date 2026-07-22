@@ -2,7 +2,7 @@
 --
 -- Owns EXACTLY the pipeline the buffer-local autocmds (ftplugin S22) drive:
 --   InsertEnter / TextChangedI / CursorMovedI
---     → require("pi-editor.completion").refresh(buf)   (fire-and-forget; wired via the
+--     → require("pi-bridge.completion").refresh(buf)   (fire-and-forget; wired via the
 --                                                         ftplugin's no-op-safe `dispatch`)
 --     → debounce (TRIGGER-AWARE via `compute_debounce`: 0 ms for slash/typing, the
 --        configured window — default 20 — for @/#/attachment context; mirrors pi's TUI
@@ -22,7 +22,7 @@
 --    entry point; do_refresh(buf) is the debounced body. It owns the debounce, the RPC
 --    issuance, supersession, result storage, the `on_results` seam, and `reset()`/`current()`.
 --    It does NOT render the menu (S31), accept (S32), Tab-force (S33), or navigate (S36).
---    It reads the bridge FRESH at call time (`require("pi-editor").bridge`, NOT a cached
+--    It reads the bridge FRESH at call time (`require("pi-bridge").bridge`, NOT a cached
 --    local — so the async handshake + test mocks both work).
 --
 --  * `vim.defer_fn` STOP+CLOSE LEAK (LIVE-VERIFIED, research/vim-defer-fn-semantics.md §3):
@@ -64,8 +64,8 @@
 --    `cb(nil, nil)` — SUCCESS with empty items, NOT an error. Normalize to
 --    `{items={}, prefix=""}`, store, and fire `on_results(buf, {}, "")`.
 --
---  * BRIDGE READ FRESH AT CALL TIME: `local bridge = require("pi-editor").bridge` INSIDE
---    do_refresh, NOT a module-load `local bridge = require("pi-editor").bridge`. The
+--  * BRIDGE READ FRESH AT CALL TIME: `local bridge = require("pi-bridge").bridge` INSIDE
+--    do_refresh, NOT a module-load `local bridge = require("pi-bridge").bridge`. The
 --    handshake resolves ASYNC after activation — at first-require time `pi.bridge` is
 --    still nil; tests must be able to swap in a fake bridge after `require`. Caching
 --    breaks both.
@@ -222,8 +222,8 @@
 --        at all. NO window coupling (routes via menu.on_results STATE + menu.close
 --        STATE; the window is S34's job inside menu's render).
 --
--- Node builtins analog: pure Lua + the COMPLETE in-tree bridge (`require("pi-editor").bridge`)
--- + coords (`require("pi-editor.coords")`) + config (`require("pi-editor")`). No sockets
+-- Node builtins analog: pure Lua + the COMPLETE in-tree bridge (`require("pi-bridge").bridge`)
+-- + coords (`require("pi-bridge.coords")`) + config (`require("pi-bridge")`). No sockets
 -- of its own — the smoke's fake luv server is the integration surface. Singleton state
 -- (mirrors bridge.lua's `state` shape, NOT coords.lua's stateless shape — completion HAS
 -- state). One pi-prompt buffer per session (PRD §11); reset() clears state for tests +
@@ -231,10 +231,10 @@
 
 local M = {}
 
--- [TEMP DEBUG] trace completion flow to /tmp/pi-editor-menu-debug.log (always-on; remove after diagnosing).
+-- [TEMP DEBUG] trace completion flow to /tmp/pi-bridge-menu-debug.log (always-on; remove after diagnosing).
 local function dbg(msg)
   pcall(function()
-    local f = io.open("/tmp/pi-editor-menu-debug.log", "a")
+    local f = io.open("/tmp/pi-bridge-menu-debug.log", "a")
     if f then f:write(tostring(msg) .. "\n"); f:close() end
   end)
 end
@@ -243,20 +243,20 @@ end
 --- these as the `result.items` array of a successful `getSuggestions`). Opaque to S30 —
 --- S30 only stores + forwards the array; S31 renders it, S32 applies it. Fields typed
 --- loosely here (the exact shape is the extension's protocol; S30 is shape-agnostic).
----@class pi-editor.AutocompleteItem
+---@class pi-bridge.AutocompleteItem
 ---@field value string The text to insert on accept (the canonical value).
 ---@field label string Human-readable label shown in the menu.
 ---@field [string] any Extra fields the extension includes (e.g. detail, kind, filterText).
 
 --- Singleton completion state. One pi-prompt buffer per session (PRD §11). Cleared by
 --- `reset()`. Mirrors `bridge.lua`'s `state` shape (completion HAS state).
----@class pi-editor.CompletionState
+---@class pi-bridge.CompletionState
 ---@field buf            integer?    The pi-prompt buffer handle refresh() is debouncing for.
 ---@field debounce_timer userdata?   The `vim.defer_fn` handle (tracked for stop+close — NEVER stop-only; leaks).
 ---@field gen            integer     Monotonic supersession guard (bumped per fetch; captured in the cb closure).
 ---@field inflight_id    string?     The `bridge.request` id string of the current in-flight getSuggestions (for `bridge.cancel`).
----@field last_result    {items:pi-editor.AutocompleteItem[], prefix:string}? Latest non-stale {items,prefix} (for current()/S32/S33).
----@type pi-editor.CompletionState
+---@field last_result    {items:pi-bridge.AutocompleteItem[], prefix:string}? Latest non-stale {items,prefix} (for current()/S32/S33).
+---@type pi-bridge.CompletionState
 local state = {
   buf = nil,
   debounce_timer = nil,
@@ -277,7 +277,7 @@ local force_fetch -- (buf, pi, opts, on_items) — S33: the IMMEDIATE (0-debounc
 --- nvim main loop (api-safe — the bridge's cb is `schedule_wrap`d, so on_result is too).
 --- NOT called for stale / error / cancelled results (the two-layer supersession + the
 --- error→touch-nothing idiom guarantee that). Last-wins re-registration (a Lua table set).
----@type fun(buf:integer, items:pi-editor.AutocompleteItem[], prefix:string)|nil
+---@type fun(buf:integer, items:pi-bridge.AutocompleteItem[], prefix:string)|nil
 M.on_results = nil
 
 --- Detect whether `text_before_cursor` is a file/attachment context that pi would
@@ -341,7 +341,7 @@ local function compute_debounce(lines, cursorLine, cursorCol)
   local byte_end = cursorCol                              -- 0-based BYTE col; ASCII @/#/"/space checks → byte slice is correct
   local before = line:sub(1, byte_end)
   if not M.is_attachment_context(before) then return 0 end
-  local cfg = require("pi-editor")
+  local cfg = require("pi-bridge")
   local ms = ((cfg.config or cfg.defaults) or {}).debounce_ms
   if type(ms) ~= "number" or ms < 0 then ms = 20 end     -- fallback 20 (pi constant; was 25)
   return math.max(0, math.floor(ms))
@@ -410,7 +410,7 @@ do_refresh = function(buf)
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
   if buf ~= vim.api.nvim_get_current_buf() then return end
   -- READ BRIDGE FRESH (handshake resolves async + test mocks swap in after require).
-  local pi_mod = require("pi-editor")
+  local pi_mod = require("pi-bridge")
   local bridge = pi_mod.bridge
   if not bridge
      or type(bridge.is_connected) ~= "function"
@@ -442,7 +442,7 @@ do_refresh = function(buf)
   end
   -- CONVERT (S29 — THE centralized seam; the ONLY ±1 is the row). `pi.lines` is the SAME
   -- reference as `lines`, so the result drops straight into the RPC params.
-  local pi = require("pi-editor.coords").nvim_to_pi_coords(lines, row, byte_col)
+  local pi = require("pi-bridge.coords").nvim_to_pi_coords(lines, row, byte_col)
   -- SUPERSEDE layer 1 (cancel prev in-flight — optimization; frees the round-trip).
   if state.inflight_id and type(bridge.cancel) == "function" then
     pcall(bridge.cancel, state.inflight_id)
@@ -502,12 +502,12 @@ end
 -- (research/notes.md §3.)
 --
 -- @param buf      integer                The pi-prompt buffer handle (captured in the cb closure).
--- @param pi       pi-editor.PiCoords      The pi coords {lines, cursorLine, cursorCol} (S29).
+-- @param pi       pi-bridge.PiCoords      The pi coords {lines, cursorLine, cursorCol} (S29).
 -- @param opts     {force:boolean}        force=true ⇒ the file-force path; force=false ⇒ the slash path.
--- @param on_items fun(buf:integer, items:pi-editor.AutocompleteItem[], prefix:string) The result router.
+-- @param on_items fun(buf:integer, items:pi-bridge.AutocompleteItem[], prefix:string) The result router.
 force_fetch = function(buf, pi, opts, on_items)
   cancel_timer()                                   -- drop any pending refresh debounce (can't race)
-  local bridge = require("pi-editor").bridge          -- READ FRESH (handshake async + test mocks)
+  local bridge = require("pi-bridge").bridge          -- READ FRESH (handshake async + test mocks)
   -- SUPERSEDE layer 1 (cancel prev in-flight — optimization; frees the round-trip).
   if state.inflight_id and type(bridge.cancel) == "function" then
     pcall(bridge.cancel, state.inflight_id)
@@ -538,7 +538,7 @@ end
 --- auto-applies (pi applyAutocompleteSuggestions always sets the list).
 ---@param buf        integer  The pi-prompt buffer handle.
 ---@param allow_auto boolean  true on the file-force path (auto-apply eligible); false on the slash path.
----@return fun(buf:integer, items:pi-editor.AutocompleteItem[], prefix:string) router The result router.
+---@return fun(buf:integer, items:pi-bridge.AutocompleteItem[], prefix:string) router The result router.
 local function _route_or_accept(buf, allow_auto)
   return function(_, items, prefix)
     -- SINGLE-ITEM AUTO-APPLY (file-force path): pi editor.ts:2253. Uses the getSuggestions
@@ -601,7 +601,7 @@ end
 --- research/notes.md §1/§6).
 function M.reset()
   cancel_timer()
-  local b = require("pi-editor").bridge
+  local b = require("pi-bridge").bridge
   if state.inflight_id and b and type(b.cancel) == "function" then
     pcall(b.cancel, state.inflight_id)
   end
@@ -616,7 +616,7 @@ end
 --- S33 Tab to read the current items WITHOUT coupling to the menu. Returns a SHALLOW copy
 --- (the caller may not mutate `state.last_result`).
 ---
----@return {items:pi-editor.AutocompleteItem[], prefix:string}? result The latest result, or nil.
+---@return {items:pi-bridge.AutocompleteItem[], prefix:string}? result The latest result, or nil.
 function M.current()
   local r = state.last_result
   if not r then return nil end
@@ -635,7 +635,7 @@ end
 --- `extension/protocol.ts` `ApplyCompletionResult`). pi returns the COMPLETE new buffer
 --- + cursor; S32 applies it wholesale via `nvim_buf_set_lines`. Delivered as the
 --- `result` arg of the `bridge.request` cb (cb(nil, result)).
----@class pi-editor.ApplyCompletionResult
+---@class pi-bridge.ApplyCompletionResult
 ---@field lines      string[] The COMPLETE new line array (replace buf wholesale).
 ---@field cursorLine integer 0-indexed pi line (coords.pi_to_nvim_coords adds +1).
 ---@field cursorCol  integer 0-indexed UTF-16 offset (coords.pi_to_nvim_coords → 0-based byte; NO -1).
@@ -649,19 +649,19 @@ end
 --- fire-and-forget). Never throws (pcall-wrapped nvim + bridge/menu/coords read FRESH).
 --- cb error → degrade (buffer untouched + menu.close). (research/notes.md §2/§3/§5/§6.)
 ---
----@param item            pi-editor.AutocompleteItem The selected item (from menu.get_selected()) — forwarded VERBATIM.
+---@param item            pi-bridge.AutocompleteItem The selected item (from menu.get_selected()) — forwarded VERBATIM.
 ---@param prefix_override string?                     OPTIONAL (S33): the getSuggestions result's prefix (the single-item auto-apply path — the menu is NOT shown, so `menu.get_prefix()` is stale/empty). Defaults to `menu.get_prefix()` (S32's on_enter calls accept(item) with NO override → IDENTICAL behavior).
 ---@return boolean issued true iff the applyCompletion RPC was accepted by the bridge.
 function M.accept(item, prefix_override)
   if type(item) ~= "table" then return false end                    -- defensive (on_enter pre-checks; direct callers may not)
   -- READ bridge/menu/coords FRESH (handshake resolves async + test mocks swap in after require).
-  local bridge = require("pi-editor").bridge
+  local bridge = require("pi-bridge").bridge
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
     return false                                                    -- silent degrade (S39 notifies once)
   end
-  local menu = require("pi-editor.menu")
+  local menu = require("pi-bridge.menu")
   local buf  = menu.get_buf()
   -- S33 auto-apply path: the menu is NOT shown (closed) OR its buf is stale/wiped, so
   -- menu.get_buf() is nil/invalid. Fall back to the current buffer (on_tab already gated
@@ -676,7 +676,7 @@ function M.accept(item, prefix_override)
   local cur
   ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
   if not ok or type(cur) ~= "table" then return false end
-  local coords = require("pi-editor.coords")
+  local coords = require("pi-bridge.coords")
   local pi = coords.nvim_to_pi_coords(lines, cur[1], cur[2])        -- {lines, cursorLine, cursorCol(UTF-16)}
   local params = {
     lines      = pi.lines,
@@ -711,7 +711,7 @@ end
 function M.on_enter(buf)
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
   if buf ~= vim.api.nvim_get_current_buf() then return false end    -- one buf/session
-  local menu = require("pi-editor.menu")
+  local menu = require("pi-bridge.menu")
   if not menu.is_open() or not menu.has_items() then return false end
   local item = menu.get_selected()
   if type(item) ~= "table" then return false end
@@ -748,14 +748,14 @@ end
 function M.on_tab(buf)
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
   if buf ~= vim.api.nvim_get_current_buf() then return false end    -- one buf/session
-  local menu = require("pi-editor.menu")
+  local menu = require("pi-bridge.menu")
   -- ── BRANCH 1 (menu OPEN + selected): pi editor.ts:664 Tab-confirm ──
   if menu.is_open() and menu.has_items() then
     local item = menu.get_selected()
     if type(item) == "table" then return M.accept(item) == true end   -- S32 core (no override)
   end
   -- ── BRANCH 2 (menu CLOSED): pi handleTabCompletion (editor.ts:2126) ──
-  local bridge = require("pi-editor").bridge                          -- READ FRESH
+  local bridge = require("pi-bridge").bridge                          -- READ FRESH
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
@@ -766,7 +766,7 @@ function M.on_tab(buf)
   local cur
   ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
   if not ok or type(cur) ~= "table" then return false end
-  local coords = require("pi-editor.coords")
+  local coords = require("pi-bridge.coords")
   local pi = coords.nvim_to_pi_coords(lines, cur[1], cur[2])         -- {lines, cursorLine, cursorCol(UTF-16)}
   -- beforeCursor (UTF-16→byte slice — pi.cursorCol is UTF-16; pi.lines[cursorLine] is UTF-8).
   local line_str = pi.lines[pi.cursorLine + 1] or ""       -- pi cursorLine is 0-based → Lua 1-based (the SAME +1 coords uses)
@@ -812,7 +812,7 @@ end
 function M.on_next(buf)
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
   if buf ~= vim.api.nvim_get_current_buf() then return false end    -- one buf/session (PRD §11)
-  local menu = require("pi-editor.menu")                            -- READ FRESH
+  local menu = require("pi-bridge.menu")                            -- READ FRESH
   if not menu.is_open() or not menu.has_items() then return false end
   menu.next()
   return true                                                       -- key CONSUMED (cursor does NOT move)
@@ -825,7 +825,7 @@ end
 function M.on_prev(buf)
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
   if buf ~= vim.api.nvim_get_current_buf() then return false end
-  local menu = require("pi-editor.menu")
+  local menu = require("pi-bridge.menu")
   if not menu.is_open() or not menu.has_items() then return false end
   menu.prev()
   return true
@@ -842,7 +842,7 @@ end
 function M.on_dismiss(buf)
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return false end
   if buf ~= vim.api.nvim_get_current_buf() then return false end
-  local menu = require("pi-editor.menu")
+  local menu = require("pi-bridge.menu")
   if not menu.is_open() then return false end                       -- has_items implied by open()'s contract
   menu.dismiss()
   return true
@@ -851,7 +851,7 @@ end
 -- ===========================================================================
 -- S37: on_insert_leave(buf) / on_buf_leave(buf) — the AUTOCMD-driven auto-close handlers
 -- (the complement to S36's KEY handlers). The ftplugin dispatches InsertLeave→on_insert_leave +
--- BufLeave→on_buf_leave (buffer-local, the "pi-editor" augroup). Each hides the menu + CANCELS the
+-- BufLeave→on_buf_leave (buffer-local, the "pi-bridge" augroup). Each hides the menu + CANCELS the
 -- pending debounced refresh so a stale do_refresh cannot re-open the menu in normal mode (THE race
 -- fix — research/notes.md §1; reset()'s docstring promised it for S37). The "CursorMoved out of
 -- prefix" trigger is OWNED by the EXISTING CursorMovedI→refresh→re-fetch→empty→close path (S30,
@@ -865,7 +865,7 @@ end
 --- gen-guard drops it → the stale on_results never fires → no normal-mode re-open). Never throws
 --- (menu.close + M.reset are both idempotent + pcall-safe). (research/notes.md §1/§6.)
 local function hide_and_cancel()
-  pcall(function() require("pi-editor.menu").close() end)   -- hide the floating window FIRST
+  pcall(function() require("pi-bridge.menu").close() end)   -- hide the floating window FIRST
   M.reset()                                                  -- cancel_timer + cancel inflight + gen=0 + clear state
 end
 
@@ -925,16 +925,16 @@ end
 function M.on_commands_changed(buf)
   buf = buf or state.buf
   local was_open = false
-  pcall(function() was_open = require("pi-editor.menu").is_open() end) -- capture BEFORE close (the "actively completing" signal)
+  pcall(function() was_open = require("pi-bridge.menu").is_open() end) -- capture BEFORE close (the "actively completing" signal)
   cancel_timer()                                              -- stop()+close() the pending defer (leak fix; NEVER stop-only)
-  local b = require("pi-editor").bridge                       -- READ FRESH (handshake async; test mocks swap in after require)
+  local b = require("pi-bridge").bridge                       -- READ FRESH (handshake async; test mocks swap in after require)
   if state.inflight_id and b and type(b.cancel) == "function" then
     pcall(b.cancel, state.inflight_id)                        -- supersede layer 1 (cancel the in-flight getSuggestions)
   end
   state.inflight_id = nil
   state.last_result = nil                                     -- CLEAR THE CACHE (the stale items)
   state.gen = state.gen + 1                                   -- supersede layer 2 (drop a late stale cb via the gen-guard)
-  pcall(function() require("pi-editor.menu").close() end)     -- clear the menu's OWN stale items (menu holds its own copy)
+  pcall(function() require("pi-bridge.menu").close() end)     -- clear the menu's OWN stale items (menu holds its own copy)
   if not was_open then return end                             -- not actively completing → next keystroke fetches fresh
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
   if buf ~= vim.api.nvim_get_current_buf() then return end    -- one buf/session (PRD §11)

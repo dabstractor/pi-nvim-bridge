@@ -39,7 +39,7 @@ description: |
 ## Goal
 
 **Feature Goal**: Create `plugin/lua/pi-editor/jsonlreader.lua` — the strict-JSONL framing+decode
-module for the pi-editor.nvim bridge client. Given an arbitrary sequence of byte chunks from a luv
+module for the pi-bridge.nvim bridge client. Given an arbitrary sequence of byte chunks from a luv
 `pipe:read_start` callback (whose chunk boundaries are ARBITRARY — LIVE-VERIFIED that 4 writes can
 arrive as 2 chunks at any byte offset), it buffers partial lines, splits on `\n` ONLY (never
 U+2028/U+2029 — PRD §5.2), strips a single trailing `\r` (CRLF tolerance), `vim.json.decode`s each
@@ -91,7 +91,7 @@ ported to client-side semantics (decode-in-reader) and to Lua's byte-string mode
 
 ## User Persona (if applicable)
 
-**Target User**: The `pi-editor.nvim` plugin author and the downstream implementer of **S24**
+**Target User**: The `pi-bridge.nvim` plugin author and the downstream implementer of **S24**
 (`bridge.lua` — the luv socket client + handshake + RPC dispatch). `jsonlreader.lua` is the byte→table
 decoder S24 plugs into its `pipe:read_start` callback. End users never see it; they experience it as
 "the completion menu shows the right items" (because the JSON-RPC responses were framed correctly).
@@ -506,7 +506,7 @@ Task 3: CREATE plugin/tests/jsonlreader_spec.lua  (plenary/busted spec — the L
 
 ```lua
 -- === plugin/lua/pi-editor/jsonlreader.lua — the FULL reference implementation (LIVE-VERIFIED) ===
--- Strict-JSONL framing + decode for the pi-editor.nvim bridge CLIENT. Lua twin of the DONE
+-- Strict-JSONL framing + decode for the pi-bridge.nvim bridge CLIENT. Lua twin of the DONE
 -- extension-side extension/jsonl-reader.ts (P1.M2.T4.S7 — the authoritative framing mirror,
 -- PRD §16), ported to Lua's byte-string model and to the client role.
 --

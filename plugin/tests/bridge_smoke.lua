@@ -18,8 +18,8 @@ local plugin_root = vim.fn.fnamemodify(me, ":h:h") -- .../plugin (the runtimepat
 vim.opt.runtimepath:append(plugin_root)
 
 local uv = vim.uv
-local bridge = require("pi-editor.bridge")
-local jreader = require("pi-editor.jsonlreader")
+local bridge = require("pi-bridge.bridge")
+local jreader = require("pi-bridge.jsonlreader")
 
 local fails = 0
 local function check(cond, msg)

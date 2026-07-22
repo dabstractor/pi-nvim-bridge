@@ -12,7 +12,7 @@ me = vim.fn.fnamemodify(me, ":p")
 local plugin_root = vim.fn.fnamemodify(me, ":h:h") -- .../plugin (the runtimepath entry)
 vim.opt.runtimepath:append(plugin_root)
 
-local notify = require("pi-editor.notify")
+local notify = require("pi-bridge.notify")
 
 local fails = 0
 local function check(cond, msg)
@@ -23,7 +23,7 @@ local function check(cond, msg)
 end
 
 -- (1) require loads + once is a function
-check(type(notify) == "table", "require('pi-editor.notify') returns a table")
+check(type(notify) == "table", "require('pi-bridge.notify') returns a table")
 check(type(notify.once) == "function", "once is a function")
 check(type(notify.reset) == "function", "reset is a function")
 check(type(notify.did_notify) == "function", "did_notify is a function")
@@ -39,7 +39,7 @@ do
   check(#calls == 1, "once() fires vim.notify exactly once (got " .. #calls .. ")")
   check(calls[1] and calls[1].msg == "hi", "once() message forwarded verbatim")
   check(calls[1] and calls[1].level == vim.log.levels.WARN, "once() level forwarded")
-  check(calls[1] and calls[1].opts and calls[1].opts.title == "pi-editor", "once() title=pi-editor")
+  check(calls[1] and calls[1].opts and calls[1].opts.title == "pi-bridge", "once() title=pi-bridge")
   -- (3) dedup: a 2nd call with the same category is a silent no-op
   notify.once("bridge", vim.log.levels.WARN, "again")
   vim.wait(50, function() return #calls > 1 end, 5)

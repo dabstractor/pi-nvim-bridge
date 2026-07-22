@@ -49,7 +49,7 @@ For a one-liner only (a SINGLE line, no heredoc), `-c 'lua ...' -c 'qa'` is also
 
 ```bash
 # ✅ GOOD (one-liner only, single line, no heredoc)
-nvim ... -c 'lua require("pi-editor.menu"); print("ok")' -c 'qa'
+nvim ... -c 'lua require("pi-bridge.menu"); print("ok")' -c 'qa'
 ```
 
 Rules:

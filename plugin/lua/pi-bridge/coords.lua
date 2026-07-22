@@ -22,7 +22,7 @@
 --    functions. Downstream consumers — S29 (`nvim_to_pi_coords` / `pi_to_nvim_coords`
 --    row/col wrappers), S30+ completion (cursor→pi `cursorCol` for `getSuggestions`),
 --    S32 accept (pi `cursorCol`→nvim byte col for `nvim_win_set_cursor`), and any
---    blink/cmp source — MUST `require("pi-editor.coords")` and call these. They MUST
+--    blink/cmp source — MUST `require("pi-bridge.coords")` and call these. They MUST
 --    NOT call `vim.str_utfindex` / `vim.str_byteindex` directly (Anti-Pattern: that
 --    bypasses the centralization mandate and re-fragments the conversion).
 --  * REFINEMENT OVER PRD §8 (LIVE‑VERIFIED, research/notes.md §1/§4): PRD §8
@@ -109,14 +109,14 @@ local M = {}
 --- Result of nvim_to_pi_coords: nvim-native cursor → pi-native. `lines` is
 --- pass-through (SAME table reference as the input) so the result drops straight
 --- into a `getSuggestions` RPC params object (`vim.tbl_extend("keep", …)`).
----@class pi-editor.PiCoords
+---@class pi-bridge.PiCoords
 ---@field lines      string[] The buffer lines (UNCHANGED — same reference as input).
 ---@field cursorLine integer 0-indexed line (pi's unit) == nvim `row` - 1.
 ---@field cursorCol  integer 0-indexed UTF‑16 code-unit offset (pi's `cursorCol`).
 
 --- Result of pi_to_nvim_coords: pi-native cursor → nvim-native. `lines` is
 --- pass-through (SAME table reference as the input).
----@class pi-editor.NvimCoords
+---@class pi-bridge.NvimCoords
 ---@field lines string[] The buffer lines (UNCHANGED — same reference as input).
 ---@field row   integer 1-indexed nvim row == pi `cursorLine` + 1 (nvim_win_set_cursor[1]).
 ---@field col   integer 0-indexed BYTE offset (nvim_win_set_cursor[2] — NO `-1`; see header).
@@ -208,7 +208,7 @@ end
 ---@param lines    string[] Buffer lines (as from `nvim_buf_get_lines(0,0,-1,false)`).
 ---@param row      integer  1-indexed nvim row (`nvim_win_get_cursor(0)[1]`).
 ---@param byte_col integer  0-indexed BYTE offset (`nvim_win_get_cursor(0)[2]`) — NO ±1.
----@return pi-editor.PiCoords `{lines, cursorLine, cursorCol}` (lines is pass-through).
+---@return pi-bridge.PiCoords `{lines, cursorLine, cursorCol}` (lines is pass-through).
 function M.nvim_to_pi_coords(lines, row, byte_col)
   if type(lines) ~= "table" then lines = {} end        -- never-throws (non-table → safe)
   local r = (type(row) == "number") and row or 1       -- never-throws; default row 1
@@ -234,7 +234,7 @@ end
 ---@param lines      string[] Buffer/result lines.
 ---@param cursorLine integer  0-indexed pi line.
 ---@param cursorCol  integer  0-indexed UTF‑16 offset (pi's `cursorCol` unit).
----@return pi-editor.NvimCoords `{lines, row, col}` (lines is pass-through; col is 0-based byte — NO -1).
+---@return pi-bridge.NvimCoords `{lines, row, col}` (lines is pass-through; col is 0-based byte — NO -1).
 function M.pi_to_nvim_coords(lines, cursorLine, cursorCol)
   if type(lines) ~= "table" then lines = {} end        -- never-throws
   local cl = (type(cursorLine) == "number") and cursorLine or 0  -- never-throws; default cursorLine 0

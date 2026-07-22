@@ -6,9 +6,9 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/jsonlreader_spec.lua")'
-local jreader = require("pi-editor.jsonlreader")
+local jreader = require("pi-bridge.jsonlreader")
 
-describe("pi-editor.jsonlreader", function()
+describe("pi-bridge.jsonlreader", function()
   -- string.char for explicit byte control (GOTCHA 7 — LuaJIT supports \u{} too, but
   -- string.char is clearest for constructing split sequences / exact bytes).
   local LS = string.char(0xE2, 0x80, 0xA8) -- U+2028 LINE SEPARATOR

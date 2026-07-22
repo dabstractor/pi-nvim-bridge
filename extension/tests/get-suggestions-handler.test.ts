@@ -51,7 +51,7 @@ import {
 	makeHelloHandler,
 	BRIDGE_VERSION,
 	GET_SUGGESTIONS_TIMEOUT_MS,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 const TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -523,7 +523,7 @@ test("REAL: hello → getSuggestions(\"/m\") ⇒ result; getSuggestions(\"zzz\")
 		makeGetSuggestionsHandler({ getProvider: () => stub }),
 	);
 
-	const sockpath = join(tmpdir(), `pi-editor-gs-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-gs-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");

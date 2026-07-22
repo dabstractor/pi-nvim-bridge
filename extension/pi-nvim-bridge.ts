@@ -1,10 +1,10 @@
 /**
- * pi-editor-bridge — bridges pi's autocomplete engine to an external $EDITOR
+ * pi-nvim-bridge — bridges pi's autocomplete engine to an external $EDITOR
  * (e.g. Neovim) by running a JSONL-over-Unix-domain-socket RPC server for the
  * session lifetime.
  *
  * Transport:  Unix domain socket, strict JSONL framing (LF-delimited records).
- * Env var:    process.env.PI_EDITOR_BRIDGE  (JSON BridgeDescriptor: { transport,
+ * Env var:    process.env.PI_NVIM_BRIDGE  (JSON BridgeDescriptor: { transport,
  *             path, token, pid, cwd, fdAvailable, serverVersion }) — written in
  *             startBridge (S16) and deleted in stopBridge.
  *
@@ -130,7 +130,7 @@
  *     UNCHANGED.
  *
  * Loaded by pi via jiti (TypeScript works without compilation). Install at
- * ~/.pi/agent/extensions/pi-editor-bridge.ts or load with `pi -e ./path.ts`.
+ * ~/.pi/agent/extensions/pi-nvim-bridge.ts or load with `pi -e ./path.ts`.
  */
 import type { AutocompleteProvider, AutocompleteItem } from "@earendil-works/pi-tui";
 import type {
@@ -214,7 +214,7 @@ export function captureProvider(ctx: ExtensionContext): void {
 export function getProvider(): AutocompleteProvider {
 	if (!liveProvider) {
 		throw new Error(
-			"pi-editor-bridge: autocomplete provider not captured yet (await session_start)",
+			"pi-nvim-bridge: autocomplete provider not captured yet (await session_start)",
 		);
 	}
 	return liveProvider;
@@ -272,7 +272,7 @@ export function getToken(): string | undefined {
 
 /**
  * Bridge protocol version. PRD §6.4 hardcodes "0.1.0". Reused by the S16
- * `PI_EDITOR_BRIDGE` descriptor (`serverVersion`) and by {@link makeHelloHandler}.
+ * `PI_NVIM_BRIDGE` descriptor (`serverVersion`) and by {@link makeHelloHandler}.
  */
 export const BRIDGE_VERSION = "0.1.0";
 
@@ -283,7 +283,7 @@ export const BRIDGE_VERSION = "0.1.0";
  * deleted by {@link stopBridge}. Exported so tests reference the NAME (not a
  * hardcoded string) and a future rename is one-line.
  */
-export const BRIDGE_ENV = "PI_EDITOR_BRIDGE";
+export const BRIDGE_ENV = "PI_NVIM_BRIDGE";
 
 /**
  * Per-`getSuggestions` server-side abort timeout (PRD §5.5 / §6.5). Aborts a runaway
@@ -308,17 +308,17 @@ export const NVIM_APPNAME_ENV = "NVIM_APPNAME";
  * Any other non-empty string ⇒ that literal appname. Exported for the same reasons
  * as {@link BRIDGE_ENV}.
  */
-export const NVIM_APPNAME_OPTIN_ENV = "PI_EDITOR_NVIM_APPNAME";
+export const NVIM_APPNAME_OPTIN_ENV = "PI_NVIM_APPNAME";
 
 /**
- * Default appname when the opt-in is a truthy sentinel (PRD §10.4: "pi-editor").
- * The user maintains a tiny `~/.config/pi-editor/` that loads only `pi-editor.nvim`.
+ * Default appname when the opt-in is a truthy sentinel (PRD §10.4: "pi-bridge").
+ * The user maintains a tiny `~/.config/pi-bridge/` that loads only `pi-bridge.nvim`.
  */
-export const DEFAULT_NVIM_APPNAME = "pi-editor";
+export const DEFAULT_NVIM_APPNAME = "pi-bridge";
 
 /** The session's cwd (stored from `ctx.cwd` on `session_start`). Read via
  *  {@link getCwd}; used by {@link makeHelloHandler} for `HelloResult.cwd` and (later)
- *  by S16's `PI_EDITOR_BRIDGE` descriptor. */
+ *  by S16's `PI_NVIM_BRIDGE` descriptor. */
 let cwd: string | undefined;
 /** @returns the pi process PID (S14's `ping` result + S16's BridgeDescriptor both use this). */
 export function getPid(): number {
@@ -403,7 +403,7 @@ let nvimAppnameBaseline: string | undefined;
 /**
  * Pure resolver for the opt-in. Reads {@link NVIM_APPNAME_OPTIN_ENV} and returns:
  *  - `undefined`          → opt-in OFF (`applyNvimAppname` does nothing) — the default.
- *  - {@link DEFAULT_NVIM_APPNAME} (`"pi-editor"`) → empty / `1` / `true` / `yes` / `on`.
+ *  - {@link DEFAULT_NVIM_APPNAME} (`"pi-bridge"`) → empty / `1` / `true` / `yes` / `on`.
  *  - `<literal>`          → any other non-empty string (custom appname).
  *
  * PURE — no caching: it re-reads `process.env` each call (the opt-in can be changed
@@ -425,7 +425,7 @@ export function resolveNvimAppname(): string | undefined {
  * baseline and overriding it with the resolved appname. NO-OP when the opt-in is off
  * (GOTCHA #2 — guarantees byte-identical behavior to today when
  * {@link NVIM_APPNAME_OPTIN_ENV} is unset). Called at the END of `startBridge`, AFTER
- * the `PI_EDITOR_BRIDGE` descriptor write.
+ * the `PI_NVIM_BRIDGE` descriptor write.
  *
  * CAPTURE ORDER (GOTCHA #3): `startBridge`'s first line is `stopBridge()`, which calls
  * {@link restoreNvimAppname} (writing the baseline back / deleting the override). So by
@@ -509,7 +509,7 @@ export function stopBridge(): void {
  * PRD §6.2) never leak a server or orphan a socket file.
  *
  * STATUS (P1.M2.T3.S5): server-start runtime. OUT OF SCOPE here (landed by later tasks):
- *  - process.env.PI_EDITOR_BRIDGE advertisement ........ DONE in P1.M3.T8.S16 (writes
+ *  - process.env.PI_NVIM_BRIDGE advertisement ........ DONE in P1.M3.T8.S16 (writes
  *    the BridgeDescriptor as the LAST line of this function, reading socketPath/token/
  *    process.pid/ctx.cwd/getFdAvailable()/BRIDGE_VERSION).
  *  - wiring startBridge into the session_start handler .. DONE in P1.M2.T3.S6 (S5 left
@@ -519,7 +519,7 @@ export function stopBridge(): void {
  *    'error' event (e.g. EADDRINUSE) THROWS and would crash pi (Node EventEmitter contract
  *    — verified); the handler logs + stopBridge()'s and does NOT rethrow.
  *
- * @param ctx its `.cwd` is read for the S16 `PI_EDITOR_BRIDGE` descriptor (the module
+ * @param ctx its `.cwd` is read for the S16 `PI_NVIM_BRIDGE` descriptor (the module
  *   `cwd` is set in `session_start` AFTER this returns — GOTCHA #3 — so `ctx.cwd` is the
  *   source of truth here). The socket path itself comes from `os.tmpdir()`.
  */
@@ -527,7 +527,7 @@ export function startBridge(ctx: ExtensionContext): void {
 	stopBridge(); // idempotent teardown of any prior server (reload/new/resume/fork re-entry)
 
 	token = randomUUID().replace(/-/g, "").slice(0, 32); // 32 lowercase hex chars (PRD §12)
-	socketPath = join(tmpdir(), `pi-editor-bridge-${randomUUID()}.sock`);
+	socketPath = join(tmpdir(), `pi-nvim-bridge-${randomUUID()}.sock`);
 	server = __deps.createServer((sock) => onConnection(sock));
 	// Defensive: an unhandled 'error' event (e.g. EADDRINUSE, EACCES binding tmpdir, EMFILE)
 	// on a net.Server THROWS and would crash the process (Node EventEmitter contract —
@@ -538,7 +538,7 @@ export function startBridge(ctx: ExtensionContext): void {
 	// rethrow. Double-close is a safe no-op (verified), so stopBridge()'s own
 	// `server?.close()` won't choke when this handler calls it first.
 	server.on("error", (err: Error) => {
-		console.error(`pi-editor-bridge: socket server error (terminating bridge): ${err}`);
+		console.error(`pi-nvim-bridge: socket server error (terminating bridge): ${err}`);
 		stopBridge();
 	});
 	server.listen(socketPath);
@@ -559,8 +559,8 @@ export function startBridge(ctx: ExtensionContext): void {
 	 * DISCOVERY: pi spawns the external editor with `spawn(editor, [tmpFile], {
 	 * stdio:"inherit", shell: process.platform==="win32" })` and NO `env:` option
 	 * (interactive-mode.ts:3811-3816), so the child Neovim INHERITS pi's process.env.
-	 * Writing PI_EDITOR_BRIDGE here (on session_start, before any Ctrl+G launch) makes
-	 * it visible to the spawned Neovim as `vim.env.PI_EDITOR_BRIDGE`. The plugin's
+	 * Writing PI_NVIM_BRIDGE here (on session_start, before any Ctrl+G launch) makes
+	 * it visible to the spawned Neovim as `vim.env.PI_NVIM_BRIDGE`. The plugin's
 	 * VimEnter gate vim.json.decode's it to find the socket path + token; absent/
 	 * unparseable → the plugin stays dormant (PRD §7.1). This write is THE discovery
 	 * that makes the two-component design work (PRD §2.1). CRITICALITY: without it the
@@ -580,14 +580,14 @@ export function startBridge(ctx: ExtensionContext): void {
 	 * [Mode A] Optional NVIM_APPNAME opt-in — minimal-config optimization (PRD §10.4).
 	 *
 	 * When the user sets {@link NVIM_APPNAME_OPTIN_ENV} (`""` / `"1"` / `"true"` /
-	 * `"yes"` / `"on"` ⇒ default `"pi-editor"`; any other non-empty string ⇒ that
+	 * `"yes"` / `"on"` ⇒ default `"pi-bridge"`; any other non-empty string ⇒ that
 	 * appname), override `process.env[NVIM_APPNAME_ENV]` so the pi-spawned `$EDITOR`
 	 * (Neovim) boots with a tiny dedicated config (`~/.config/<appname>/`) instead of
 	 * the user's full `~/.config/nvim/` — dramatically faster editor startup.
 	 *
-	 * DISCOVERY: same `process.env`-inheritance seam as `PI_EDITOR_BRIDGE` above — pi
+	 * DISCOVERY: same `process.env`-inheritance seam as `PI_NVIM_BRIDGE` above — pi
 	 * spawns the editor with `stdio:"inherit"` and no `env:` override (interactive-mode.ts),
-	 * so the child Neovim sees this value. SAVE/RESTORE: unlike `PI_EDITOR_BRIDGE`
+	 * so the child Neovim sees this value. SAVE/RESTORE: unlike `PI_NVIM_BRIDGE`
 	 * (which pi owns and `stopBridge` plainly `delete`s), `NVIM_APPNAME` is a STANDARD
 	 * Neovim var the user may already export globally (e.g. `NVIM_APPNAME=work`); we
 	 * capture the baseline in `applyNvimAppname()` and `restoreNvimAppname()` (called
@@ -604,7 +604,7 @@ export function startBridge(ctx: ExtensionContext): void {
 /**
  * Build the `hello` JSON-RPC handler (PRD §5.3 / §5.4). PURE factory — deps are
  * injected so the unit tests can exercise every branch without touching module
- * state. `pi-editor-bridge.ts` registers it via
+ * state. `pi-nvim-bridge.ts` registers it via
  * `registerBridgeHandler("hello", makeHelloHandler({ getToken, getCwd, getFdAvailable, version: BRIDGE_VERSION }))`
  * on every `session_start` (AFTER `startBridge`, so the token exists).
  *
@@ -664,7 +664,7 @@ export function makeHelloHandler(deps: {
  * The MethodHandler union (`Promise<unknown> | unknown`) accommodates the SYNC
  * return; handleLine's `await` is a no-op on a non-Promise.
  *
- * Consumer: P3.M10.T27.S42 (`:checkhealth pi-editor` opens a connection, handshakes,
+ * Consumer: P3.M10.T27.S42 (`:checkhealth pi-bridge` opens a connection, handshakes,
  * then sends `ping` to confirm liveness + read server identity/capabilities).
  */
 export function makePingHandler(deps: {
@@ -1135,7 +1135,7 @@ export default function (pi: ExtensionAPI): void {
 		if (ctx.mode !== "tui") return;
 
 		console.log(
-			`pi-editor-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`,
+			`pi-nvim-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`,
 		);
 		captureProvider(ctx);
 		startBridge(ctx);
@@ -1197,7 +1197,7 @@ export default function (pi: ExtensionAPI): void {
 			"getCommands",
 			makeGetCommandsHandler({ getProvider }),
 		);
-		// (S14 DONE). S16 writes the BridgeDescriptor to process.env.PI_EDITOR_BRIDGE
+		// (S14 DONE). S16 writes the BridgeDescriptor to process.env.PI_NVIM_BRIDGE
 		// at the end of startBridge above (the discovery the Neovim plugin reads).
 		//
 		// S17: broadcast `commandsChanged` (S→C notification) to every connected,

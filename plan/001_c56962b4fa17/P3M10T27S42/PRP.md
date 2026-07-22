@@ -20,7 +20,7 @@ description: |
         cross-version-safe `vim.fn.has("nvim-0.11") == 1` (a vimscript builtin present on EVERY
         version — NOT `vim.version.ge/le`, which are **0.12-only**, `version.lua @since 12`). Below
         0.11 → `error` (coords.lua would crash at runtime on older nvim), not warn.
-    (2) **ENV** — read `vim.env[env_name]` (`env_name = config.env_var or "PI_EDITOR_BRIDGE"`).
+    (2) **ENV** — read `vim.env[env_name]` (`env_name = config.env_var or "PI_NVIM_BRIDGE"`).
         **DORMANT BY DESIGN**: in a normal nvim session the var is UNSET (PRD §7.1/§11 — the plugin
         only activates when pi spawns the editor). A missing var is **NOT an error** → emit an
         `info` ("dormant — completion is only active inside a pi-launched editor"). When SET → parse
@@ -79,7 +79,7 @@ description: |
 never-throwing diagnostic report covering the four areas named in the task — **version**,
 **env** (the bridge descriptor), **socket** (live connection state), and **fd** (the optional
 `@file` binary). The report must be correct in BOTH a dormant normal-config session (no
-`PI_EDITOR_BRIDGE`) and an active pi-launched-editor session, and must guide the user toward
+`PI_NVIM_BRIDGE`) and an active pi-launched-editor session, and must guide the user toward
 the likely fix when something is off — without raising false alarms for the dormant case
 (which is the expected state for someone auditing their config).
 
@@ -97,11 +97,11 @@ source, NO TS change):
   `require("pi-editor.health").check()`) and produces a 4-section report with NO "Failed to run
   healthcheck" / "report is empty" error.
 - The Neovim version gate reports `error` below 0.11 (with upgrade advice) and `ok` at/above.
-- In a **dormant** session (`PI_EDITOR_BRIDGE` unset) the report emits an `info` "dormant" and
+- In a **dormant** session (`PI_NVIM_BRIDGE` unset) the report emits an `info` "dormant" and
   **zero** `error` lines.
 - In an **active** session (valid descriptor + connected bridge + handshake result) the report
   emits `ok` "connected" + `info` the descriptor fields, and **zero** `error` lines.
-- A malformed `PI_EDITOR_BRIDGE` (bad JSON / wrong transport) → an `error`/`warn` naming it.
+- A malformed `PI_NVIM_BRIDGE` (bad JSON / wrong transport) → an `error`/`warn` naming it.
 - `fd` present → `ok` (with the resolved path); `fd` absent → a `warn` (NOT error) with install
   advice, and a note that the bridge may still have `fd` in its bin dir.
 - `M.check()` **never throws** (broken/missing bridge or init module, nil config, nil
@@ -111,11 +111,11 @@ source, NO TS change):
 
 ## User Persona
 
-**Target User**: a pi user installing / configuring / debugging `pi-editor.nvim` — either
+**Target User**: a pi user installing / configuring / debugging `pi-bridge.nvim` — either
 auditing their normal Neovim config (`:checkhealth pi-editor` from their daily nvim) or
 troubleshooting a pi editor session where completion isn't appearing.
 
-**Use Case**: "I installed pi-editor.nvim but I don't see `/model` completion when pi opens
+**Use Case**: "I installed pi-bridge.nvim but I don't see `/model` completion when pi opens
 nvim — what's wrong?" They run `:checkhealth pi-editor` and get a structured report telling
 them (a) their nvim is too old, (b) completion is dormant (expected — they're in normal nvim),
 (c) the bridge didn't connect / handshake failed, or (d) `fd` isn't installed (so `@file`
@@ -146,7 +146,7 @@ sections:
 
 1. **`pi-editor`** — plugin version (`bridge.version`) + a Neovim `>= 0.11` gate
    (`vim.fn.has("nvim-0.11")`).
-2. **`pi-editor bridge (environment)`** — `PI_EDITOR_BRIDGE` present? Absent → `info "dormant"`.
+2. **`pi-editor bridge (environment)`** — `PI_NVIM_BRIDGE` present? Absent → `info "dormant"`.
    Present → parse/validate + report the descriptor fields.
 3. **`pi-editor bridge (connection)`** — dormant → `info "n/a"`. Active → `is_connected()` +
    `server_info` + `fs_stat(socket path)`.
@@ -159,7 +159,7 @@ sections:
       `plugin/lua/pi-editor/health.lua`; function is `M.check`, NOT a local).
 - [ ] Report has the 4 `start()` sections; no "report is empty" / "Failed to run healthcheck".
 - [ ] Neovim version: `error` below 0.11 (advice: upgrade); `ok` at/above (shows the version).
-- [ ] Dormant session (`PI_EDITOR_BRIDGE` unset): an `info` "dormant"; **zero** `error` calls.
+- [ ] Dormant session (`PI_NVIM_BRIDGE` unset): an `info` "dormant"; **zero** `error` calls.
 - [ ] Active session (valid unix descriptor + connected + server_info): `ok` connected + `info`
       fields; **zero** `error` calls.
 - [ ] Malformed env var (bad JSON / wrong transport): an `error`/`warn` naming it.
@@ -223,7 +223,7 @@ pattern (stub `vim.health` exactly like `notify_spec.lua` stubs `vim.notify`), t
 # MUST READ — the EXISTING state health consumes (read-only; do NOT modify)
 - file: plugin/lua/pi-editor/init.lua
   why: |
-    `M.config` (:39, nil until setup()) — read `config.env_var or "PI_EDITOR_BRIDGE"` for the env
+    `M.config` (:39, nil until setup()) — read `config.env_var or "PI_NVIM_BRIDGE"` for the env
     var name. `M.descriptor` (:107, nil until activate() succeeds) — the parsed descriptor; fields
     `.transport/.path/.token/.pid/.cwd/.fdAvailable/.serverVersion` (the `pi-editor.BridgeDescriptor`
     class doc :99-105). `M.defaults` (:33) — the shipped defaults (for reference). Read FRESH inside
@@ -341,7 +341,7 @@ plugin/tests/health_smoke.lua      # NEW — plenary-free smoke: stub vim.health
 -- REMOVED by 0.12). NO `report_*` shim (floor is 0.11). `advice` = the 2nd arg of warn/error,
 -- `string|string[]` — pass a TABLE for multiple lines (`warn(msg,"a","b")` DROPS "b").
 
--- CRITICAL (dormant ≠ error): in a normal nvim session PI_EDITOR_BRIDGE is UNSET (PRD §7.1/§11).
+-- CRITICAL (dormant ≠ error): in a normal nvim session PI_NVIM_BRIDGE is UNSET (PRD §7.1/§11).
 -- A missing env var is the EXPECTED state. Emit an `info` "dormant", NOT an `error`/`warn`.
 -- Gate the env-DETAIL + socket sections on the env var being set. The fd section runs ALWAYS.
 
@@ -360,7 +360,7 @@ plugin/tests/health_smoke.lua      # NEW — plenary-free smoke: stub vim.health
 -- alternates `{ "fd", "fdfind" }` (Debian=fdfind).
 
 -- GOTCHA (config may be nil): the user may never have called setup() (NVIM_APPNAME minimal config).
--- `require("pi-editor").config` can be nil → default the env name to the literal "PI_EDITOR_BRIDGE".
+-- `require("pi-editor").config` can be nil → default the env name to the literal "PI_NVIM_BRIDGE".
 
 -- GOTCHA (server_info may be nil): handshake is ASYNC. server_info is nil until hello succeeds
 -- (and nil again after close()). Treat nil as `info "handshake in flight or failed"`, never error.
@@ -401,10 +401,10 @@ Task 1: CREATE plugin/lua/pi-editor/health.lua — M.check() with 4 sections
       local uv = vim.uv
       local pi; pcall(function() pi = require("pi-editor") end)   -- nil-safe (broken install)
       SECTION 1 "pi-editor":
-        plugin version: pcall require("pi-editor.bridge").version → ok("pi-editor.nvim v%s") / warn(failed)
+        plugin version: pcall require("pi-editor.bridge").version → ok("pi-bridge.nvim v%s") / warn(failed)
         nvim gate: if vim.fn.has(M.min_nvim)==1 then ok("Neovim %s (>= %s required)") else error(...,advice[])
       SECTION 2 "pi-editor bridge (environment)":
-        env_name = "PI_EDITOR_BRIDGE"; pcall inherit config.env_var if present
+        env_name = "PI_NVIM_BRIDGE"; pcall inherit config.env_var if present
         raw = vim.env[env_name]; desc = pi and pi.descriptor or nil
         if raw==nil and desc==nil → info("dormant — ...")
         else → parse raw (pcall vim.json.decode + type check); bad → error(...); transport!="unix" → warn
@@ -434,7 +434,7 @@ Task 2: CREATE plugin/tests/health_spec.lua — plenary/busted unit tests
         local captured = {}
         local function stub(method) return function(msg, advice) captured[#captured+1] = {method=method, msg=msg, advice=advice} end end
         vim.health = { start=stub("start"), ok=stub("ok"), warn=stub("warn"), error=stub("error"), info=stub("info") }
-    (after_each restores the original `vim.health`). ALSO save/restore `vim.env.PI_EDITOR_BRIDGE`,
+    (after_each restores the original `vim.health`). ALSO save/restore `vim.env.PI_NVIM_BRIDGE`,
     `vim.fn.executable`, `require("pi-editor").descriptor`, `require("pi-editor").config`,
     `require("pi-editor.bridge").is_connected`/`.server_info` per-case (table of saved originals).
   - HELPERS:
@@ -448,9 +448,9 @@ Task 2: CREATE plugin/tests/health_spec.lua — plenary/busted unit tests
           (Stub `vim.fn.has`→0 in a sub-case to exercise the error branch + advice; restore after.)
       (d) active session (set a VALID descriptor on `require("pi-editor").descriptor`; stub
           bridge.is_connected→true; server_info={serverVersion="0.1.0",cwd="/x",fdAvailable=true};
-          set vim.env.PI_EDITOR_BRIDGE to JSON of the descriptor): an `ok` "connected"; `info` lines for
+          set vim.env.PI_NVIM_BRIDGE to JSON of the descriptor): an `ok` "connected"; `info` lines for
           path/pid/cwd/serverVersion; NO `error` calls.
-      (e) malformed env var (set vim.env.PI_EDITOR_BRIDGE="{not json" or `"123"` or a JSON object with
+      (e) malformed env var (set vim.env.PI_NVIM_BRIDGE="{not json" or `"123"` or a JSON object with
           transport!="tcp"): an `error` (bad JSON) OR a `warn` (wrong transport); NO throw.
       (f) fd present (stub vim.fn.executable→1 for "fd"): an `ok` whose msg contains "fd".
       (g) fd absent (stub vim.fn.executable→0 for ALL names): a `warn` (NOT error) whose advice is a
@@ -509,7 +509,7 @@ function M.check()
   local pver
   pcall(function() pver = require("pi-editor.bridge").version end)
   if pver then
-    health.ok(("pi-editor.nvim v%s"):format(pver))
+    health.ok(("pi-bridge.nvim v%s"):format(pver))
   else
     health.warn("could not read pi-editor version (bridge module failed to load)")
   end
@@ -524,7 +524,7 @@ function M.check()
 
   -- ===== Section 2: pi-editor bridge (environment) =====
   health.start("pi-editor bridge (environment)")
-  local env_name = "PI_EDITOR_BRIDGE"
+  local env_name = "PI_NVIM_BRIDGE"
   pcall(function() if pi and pi.config and pi.config.env_var then env_name = pi.config.env_var end end)
   local raw = vim.env[env_name]
   local desc = (pi and pi.descriptor) or nil      -- the descriptor activate() parsed (authoritative)
@@ -720,14 +720,14 @@ require("pi-editor.health").check()
 for _, l in ipairs(lines) do io.stdout:write(l .. "\n") end
 LUA
 # Dormant case (no env var):
-env -u PI_EDITOR_BRIDGE timeout 30 nvim --headless --clean -u NORC +"luafile /tmp/checkhealth_live.lua" +qa \
+env -u PI_NVIM_BRIDGE timeout 30 nvim --headless --clean -u NORC +"luafile /tmp/checkhealth_live.lua" +qa \
   | tee /tmp/dormant_report.txt
 echo "--- expect a [INFO] ... dormant line + no [ERROR] above ---"
 # Active case (fake a descriptor via the env var — JSON of a BridgeDescriptor):
-export PI_EDITOR_BRIDGE='{"transport":"unix","path":"/tmp/pi-editor-bridge-fake.sock","token":"deadbeef","pid":99999,"cwd":"/home/u/proj","fdAvailable":true,"serverVersion":"0.1.0"}'
+export PI_NVIM_BRIDGE='{"transport":"unix","path":"/tmp/pi-editor-bridge-fake.sock","token":"deadbeef","pid":99999,"cwd":"/home/u/proj","fdAvailable":true,"serverVersion":"0.1.0"}'
 timeout 30 nvim --headless --clean -u NORC +"luafile /tmp/checkhealth_live.lua" +qa | tee /tmp/active_report.txt
 echo "--- expect [OK] env set, [INFO] socket/pid/cwd/version lines, [WARN] not-connected/missing-socket ---"
-unset PI_EDITOR_BRIDGE; rm -f /tmp/checkhealth_live.lua /tmp/dormant_report.txt /tmp/active_report.txt
+unset PI_NVIM_BRIDGE; rm -f /tmp/checkhealth_live.lua /tmp/dormant_report.txt /tmp/active_report.txt
 # Expected (both): exit 0; no "Failed to run healthcheck"; dormant has zero [ERROR]; active shows the descriptor fields.
 ```
 
@@ -775,7 +775,7 @@ unset PI_EDITOR_BRIDGE; rm -f /tmp/checkhealth_live.lua /tmp/dormant_report.txt 
 - ❌ Don't use `vim.health.report_*` — REMOVED by 0.12. Use `start/ok/warn/error/info` (this repo's floor is 0.11).
 - ❌ Don't use `vim.version.ge/le` for the version gate — 0.12-ONLY. Use `vim.fn.has("nvim-0.11")` (every version).
 - ❌ Don't gate on 0.10 — the floor is **0.11** (coords.lua GOTCHA 9: the UTF-16 overload). Below 0.11 must `error` (coords crashes on older nvim), not warn.
-- ❌ Don't raise an `error` for a MISSING `PI_EDITOR_BRIDGE` — dormant is the expected normal-session state (PRD §7.1/§11). Emit an `info "dormant"`.
+- ❌ Don't raise an `error` for a MISSING `PI_NVIM_BRIDGE` — dormant is the expected normal-session state (PRD §7.1/§11). Emit an `info "dormant"`.
 - ❌ Don't raise an `error` for a missing `fd` — it is OPTIONAL (`warn` with install advice; @file silently no-ops, path completion still works — PRD §11).
 - ❌ Don't pass multiple advice strings as separate args (`warn(msg,"a","b")` DROPS `"b"`) — pass a TABLE: `warn(msg,{"a","b"})`.
 - ❌ Don't let one probe throw and hide the others — the loader pcall-wraps the WHOLE `check()` (one throw blanks the rest). pcall EACH probe.

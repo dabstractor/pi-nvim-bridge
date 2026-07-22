@@ -16,7 +16,7 @@ description: |
   EventEmitter contract — empirically verified), and S5 explicitly deferred this handler
   to "S6, when wiring". S6 also UPDATES two JSDoc STATUS markers (stopBridge: note
   session_shutdown wiring landed; startBridge: note error handler added + wiring landed)
-  and leaves a `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE` breadcrumb at the
+  and leaves a `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE` breadcrumb at the
   session_start call site. S6 then UPDATES two existing test files so the new wiring does
   not break or leak: `tests/mode-guard.test.ts` (S3) — the tui-mode case now fires a REAL
   startBridge, so add `import { stopBridge }` + a `finally { stopBridge(); }` cleanup; and
@@ -29,7 +29,7 @@ description: |
   guard still holds (session_start in rpc/json/print creates NO server); (C) the new
   `server.on("error")` handler catches a synthetic `srv.emit("error", …)`, does NOT throw,
   and triggers `stopBridge` (getServer undefined, socket unlinked). This task is NARROW: it
-  does **NOT** write or delete `process.env.PI_EDITOR_BRIDGE` (env advertisement is
+  does **NOT** write or delete `process.env.PI_NVIM_BRIDGE` (env advertisement is
   **P1.M3.T8.S16** — S6 writes the `// TODO(S16)` breadcrumb only), does **NOT** touch the
   `stopBridge()` BODY (S5 owns it; S6 only calls it), does **NOT** implement
   `onConnection`/JSONL reader/handshake/RPC handlers (S7/S8/S9/S11–S15), does **NOT** add
@@ -146,7 +146,7 @@ one new test file (`bridge-lifecycle-wiring.test.ts`). No new module, no tsconfi
       `stopBridge()` **body is byte-identical to S5's** — S6 only adds the call site.
 - [ ] `session_start` handler calls `startBridge(ctx)` AFTER the TUI guard + log +
       `captureProvider(ctx)`, replacing the L243 `// TODO(M2)` placeholder. A trailing
-      `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE` breadcrumb remains.
+      `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE` breadcrumb remains.
 - [ ] `startBridge` attaches `server.on("error", (err) => { console.error(...); stopBridge(); })`
       BEFORE `server.listen(...)` (between L202 and L203). The handler does NOT rethrow.
 - [ ] In tui mode, invoking the factory's `session_start` handler populates
@@ -160,7 +160,7 @@ one new test file (`bridge-lifecycle-wiring.test.ts`). No new module, no tsconfi
       `try { … } finally { stopBridge(); }`; non-tui cases unchanged.
 - [ ] `bridge-lifecycle.test.ts` (S5) TEST 1's fake server has a no-op `on()` returning
       itself; TEST 1 still passes (`pass` includes the mocked createServer/chmod contract).
-- [ ] NO `process.env.PI_EDITOR_BRIDGE` read or write anywhere (env is S16; S6 leaves only
+- [ ] NO `process.env.PI_NVIM_BRIDGE` read or write anywhere (env is S16; S6 leaves only
       a `// TODO(S16)` comment).
 - [ ] NO change to `stopBridge()` body, `captureProvider`/`getProvider`, `onConnection`,
       `__deps`, the getters, `protocol.ts`, or `tsconfig.json`.
@@ -189,11 +189,11 @@ empirically verified in `research/notes.md`.
 ```yaml
 # MUST READ — the authoritative task analysis for THIS EXACT TASK (S6's scope is enumerated there)
 - docfile: plan/001_c56962b4fa17/P1M2T3S5/research/notes.md
-  why: §6 "Cross-task notes" enumerates S6's deliverables VERBATIM: "REUSE the stopBridge S5 ships (do NOT recreate it). S6 adds: wire it into session_shutdown; (after S16) add delete process.env.PI_EDITOR_BRIDGE; wire startBridge(ctx) into the session_start handler at the L101 TODO call site; and add server.on('error', ...) so an async listen failure (EADDRINUSE) doesn't crash pi". §1–§5 hold the empirically-verified foundations (frozen node:net namespace → __deps; jiti no export-let live-binding → getters; chmod-after-listen safe; token 32-hex; validation cmds).
+  why: §6 "Cross-task notes" enumerates S6's deliverables VERBATIM: "REUSE the stopBridge S5 ships (do NOT recreate it). S6 adds: wire it into session_shutdown; (after S16) add delete process.env.PI_NVIM_BRIDGE; wire startBridge(ctx) into the session_start handler at the L101 TODO call site; and add server.on('error', ...) so an async listen failure (EADDRINUSE) doesn't crash pi". §1–§5 hold the empirically-verified foundations (frozen node:net namespace → __deps; jiti no export-let live-binding → getters; chmod-after-listen safe; token 32-hex; validation cmds).
   section: "§6 (cross-task notes for S6); §1 (token/chmod/frozen-namespace re-verification); §3 (validation cmds); §5 (design decisions incl. 'S6 lands both wirings atomically')"
   critical: |
     This file is the single source of truth for S6's scope. The PRP implements §6 verbatim.
-    S6 does NOT add `delete process.env.PI_EDITOR_BRIDGE` — that is explicitly "(after S16)".
+    S6 does NOT add `delete process.env.PI_NVIM_BRIDGE` — that is explicitly "(after S16)".
 
 # MUST READ — the sibling PRP that built startBridge/stopBridge (the code S6 wires)
 - docfile: plan/001_c56962b4fa17/P1M2T3S5/PRP.md
@@ -355,9 +355,9 @@ extension/
 //   So wiring startBridge into the handler does NOT break the guard test's assertions; it
 //   only creates a real server that needs cleanup (hence the finally{stopBridge()}).
 
-// GOTCHA: S6 writes NO process.env.PI_EDITOR_BRIDGE and adds NO `delete` of it. The env
+// GOTCHA: S6 writes NO process.env.PI_NVIM_BRIDGE and adds NO `delete` of it. The env
 //   advertisement (write) is P1.M3.T8.S16; the matching delete is "(after S16)". S6 leaves
-//   only a `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE` breadcrumb at the
+//   only a `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE` breadcrumb at the
 //   session_start call site so S16 knows where the write belongs.
 
 // GOTCHA: the server.on("error") handler logs the Error via console.error. Do NOT include
@@ -408,10 +408,10 @@ Task 1: MODIFY extension/pi-editor-bridge.ts — INSERT the server 'error' handl
 
 Task 2: MODIFY extension/pi-editor-bridge.ts — WIRE startBridge into session_start
   - LOCATE (grep-verify first): inside the default-export factory's `pi.on("session_start", …)`:
-        // TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE   # ~L243
+        // TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_NVIM_BRIDGE   # ~L243
   - REPLACE that single comment line with:
         startBridge(ctx);
-        // TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
+        // TODO(S16): advertise via process.env.PI_NVIM_BRIDGE (env write is S16's job).
   - WHY here (after captureProvider(ctx), inside the post-guard happy path): the TUI guard
       at the handler top (`if (ctx.mode !== "tui") return;`) protects non-tui modes, so
       startBridge fires ONLY in tui mode. Placement after captureProvider matches the PRD
@@ -426,12 +426,12 @@ Task 3: MODIFY extension/pi-editor-bridge.ts — WIRE stopBridge into session_sh
         });
   - REPLACE the comment line in the body with:
         stopBridge(); // idempotent teardown: close server, unlink socket, clear state.
-        // NOTE: clearing process.env.PI_EDITOR_BRIDGE belongs to S16 (which writes it).
+        // NOTE: clearing process.env.PI_NVIM_BRIDGE belongs to S16 (which writes it).
   - WHY: stopBridge() ALREADY EXISTS and is idempotent (S5). S6 only adds the call site.
       `_event` stays (unused param; tsconfig has no noUnusedParameters, but keep it for
       signature fidelity).
   - DO NOT: edit the stopBridge() BODY (S5 owns it; S6 changes zero lines there); add
-      `delete process.env.PI_EDITOR_BRIDGE` (S16); remove the _event param.
+      `delete process.env.PI_NVIM_BRIDGE` (S16); remove the _event param.
 
 Task 4: MODIFY extension/pi-editor-bridge.ts — UPDATE the two STATUS JSDoc markers + breadcrumb
   - In stopBridge()'s JSDoc STATUS line: append a note that S6 wired it into session_shutdown
@@ -552,12 +552,12 @@ Task 8: VALIDATE — run the seven validation commands; fix until all green
 //     (inside `pi.on("session_start", (event, ctx) => { ... })`, AFTER captureProvider(ctx)) ===
 		captureProvider(ctx);
 		startBridge(ctx);
-		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
+		// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE (env write is S16's job).
 
 // === extension/pi-editor-bridge.ts — EDIT 3: wire stopBridge into session_shutdown (TITLE DELIVERABLE) ===
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
 		stopBridge(); // idempotent teardown: close server, unlink socket, clear state.
-		// NOTE: clearing process.env.PI_EDITOR_BRIDGE belongs to S16 (which writes it).
+		// NOTE: clearing process.env.PI_NVIM_BRIDGE belongs to S16 (which writes it).
 	});
 
 // === extension/pi-editor-bridge.ts — EDIT 4 (docs): update the two STATUS markers ===
@@ -739,9 +739,9 @@ NO new external integration points. S6 connects EXISTING internal seams to pi's 
 INTERNAL seams (unchanged by S6; consumed by later tasks):
   - getServer()      → S8 attaches the onConnection reader/dispatcher to the live server.
   - getToken()       → S9 hello handshake compares the client token against this.
-  - getSocketPath()  → S16 BridgeDescriptor.path (S16 also WRITES process.env.PI_EDITOR_BRIDGE here).
+  - getSocketPath()  → S16 BridgeDescriptor.path (S16 also WRITES process.env.PI_NVIM_BRIDGE here).
   - startBridge(ctx) → S16 extends it to write the BridgeDescriptor (ctx.cwd dereferenced there).
-  - stopBridge()     → S16 extends it with `delete process.env.PI_EDITOR_BRIDGE`.
+  - stopBridge()     → S16 extends it with `delete process.env.PI_NVIM_BRIDGE`.
 NO tsconfig change:
   - The new test matches the existing tests/**/*.ts glob (already in include).
   - server.on("error", (err:Error)=>...) type-checks: Server extends EventEmitter (@types/node net.d.ts:587).
@@ -766,10 +766,10 @@ tsc --noEmit -p extension/tsconfig.json
 grep -nP '^    ' extension/pi-editor-bridge.ts extension/tests/bridge-lifecycle-wiring.test.ts \
   && echo "WARN: space-indent lines found" || echo "indent OK (tabs)"
 
-# Confirm S6 did NOT write/read process.env.PI_EDITOR_BRIDGE (env is S16; S6 leaves only a comment):
-grep -nE 'process\.env\.(PI_EDITOR_BRIDGE|BRIDGE_ENV)' extension/pi-editor-bridge.ts \
+# Confirm S6 did NOT write/read process.env.PI_NVIM_BRIDGE (env is S16; S6 leaves only a comment):
+grep -nE 'process\.env\.(PI_NVIM_BRIDGE|BRIDGE_ENV)' extension/pi-editor-bridge.ts \
   && echo "FAIL: S6 touched the env var (out of scope — S16)" \
-  || echo "PASS: no PI_EDITOR_BRIDGE env access in code"
+  || echo "PASS: no PI_NVIM_BRIDGE env access in code"
 
 # Confirm S6 did NOT change the stopBridge() BODY (S5 owns it; S6 only calls it). The body
 # is the `server?.close()` + `rmSync` + 3 resets — grep for it and confirm it's intact:
@@ -887,7 +887,7 @@ node --import "$JITI_REG" -e '
       on-disk mode 0o600; session_shutdown → all cleared + socket unlinked.
 - [ ] non-tui: session_start leaves getServer() undefined (TUI guard intact — S3 preserved).
 - [ ] synthetic `server.emit("error", …)` does NOT throw and clears getServer() (handler ran).
-- [ ] NO process.env.PI_EDITOR_BRIDGE read/write (only a `// TODO(S16)` breadcrumb).
+- [ ] NO process.env.PI_NVIM_BRIDGE read/write (only a `// TODO(S16)` breadcrumb).
 
 ### Code Quality Validation
 
@@ -918,9 +918,9 @@ node --import "$JITI_REG" -e '
 - ❌ Don't rethrow inside the `server.on("error")` handler — PRD §6.7 "never throws from
       handlers". The handler's job is log + stopBridge + return. An uncaught throw would
       re-crash pi via the same EventEmitter path the handler exists to defuse.
-- ❌ Don't read or write `process.env.PI_EDITOR_BRIDGE` in S6 — that's S16. Leave only a
-      `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE` breadcrumb.
-- ❌ Don't add `delete process.env.PI_EDITOR_BRIDGE` to stopBridge in S6 — S16 adds it
+- ❌ Don't read or write `process.env.PI_NVIM_BRIDGE` in S6 — that's S16. Leave only a
+      `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE` breadcrumb.
+- ❌ Don't add `delete process.env.PI_NVIM_BRIDGE` to stopBridge in S6 — S16 adds it
       "(after S16)". Nothing writes the var until S16, so deleting it in S6 is a dead ref.
 - ❌ Don't attach the `server.on("error")` handler AFTER `server.listen()` — attach it
       BEFORE listen so it also catches an error emitted during the async bind.

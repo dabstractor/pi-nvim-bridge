@@ -3,9 +3,9 @@ name: "P1.M1.T2.S4 — Define JSON-RPC envelope, method, and bridge descriptor t
 description: |
   Create `extension/protocol.ts`: a **type-only** TypeScript module that encodes the
   entire JSON-RPC 2.0 wire contract between the `pi-editor-bridge` extension and the
-  `pi-editor.nvim` plugin. It exports (a) the three raw JSON-RPC parse envelopes
+  `pi-bridge.nvim` plugin. It exports (a) the three raw JSON-RPC parse envelopes
   (Request/Response/Notification) with `jsonrpc:"2.0"` literal + `id:string`; (b) the
-  `BridgeDescriptor` type (the `process.env.PI_EDITOR_BRIDGE` JSON shape, unix-only);
+  `BridgeDescriptor` type (the `process.env.PI_NVIM_BRIDGE` JSON shape, unix-only);
   (c) per-method params/result interfaces matching PRD §5.4 **exactly**, including a
   lean bridge-local `CommandInfo` for the optional `getCommands` docs menu; and (d) a
   mapped/narrowed dispatch layer (`BridgeMethod`, `BridgeParamsMap`, `BridgeResultMap`,
@@ -331,7 +331,7 @@ empty-params `Record<string, never>` aliases).
 ```yaml
 Task 1: CREATE extension/protocol.ts  (type-only module)
   - HEADER: Mode-A JSDoc file header: purpose (IPC contract for pi-editor-bridge ↔
-      pi-editor.nvim), transport (Unix socket + strict JSONL), the PRD §5 reference,
+      pi-bridge.nvim), transport (Unix socket + strict JSONL), the PRD §5 reference,
       and a one-line citation of dist/modes/rpc/jsonl.js as the authoritative framing
       contract mirror (implemented by S7, not here). Note STATUS: types-only; wiring
       lands in M2/S16.
@@ -408,7 +408,7 @@ Task 4: VALIDATE — run the three validation commands; fix until all green
 // === extension/protocol.ts (CREATE — type-only; implement VERBATIM) ===
 /**
  * protocol.ts — the JSON-RPC 2.0 IPC contract between the pi-editor-bridge
- * extension (server, pi side) and the pi-editor.nvim plugin (client, Neovim side).
+ * extension (server, pi side) and the pi-bridge.nvim plugin (client, Neovim side).
  *
  * Transport: Unix domain socket. Framing: strict JSONL — exactly one JSON object per
  * line, delimited by `\n` only (strip an optional trailing `\r`; do NOT use readers
@@ -479,7 +479,7 @@ export interface JsonRpcNotification {
 }
 
 /* ==========================================================================
- * §B — BridgeDescriptor: JSON-serialized to process.env.PI_EDITOR_BRIDGE (S16) and
+ * §B — BridgeDescriptor: JSON-serialized to process.env.PI_NVIM_BRIDGE (S16) and
  *      vim.json.decode'd by the Neovim activation gate (PRD §7.1). MUST be a plain
  *      JSON object (all fields required, JSON-serializable). `transport:"unix"` is a
  *      v1 literal; PRD §5.1 names a future TCP variant — extend as a discriminated
@@ -792,7 +792,7 @@ test("wire type shapes compile and round-trip key literals", () => {
 	// --- §C per-method params/results ---
 	const hello: HelloParams = {
 		token: "deadbeef",
-		client: "pi-editor.nvim",
+		client: "pi-bridge.nvim",
 		clientVersion: "0.1.0",
 	};
 	const helloRes: HelloResult = {

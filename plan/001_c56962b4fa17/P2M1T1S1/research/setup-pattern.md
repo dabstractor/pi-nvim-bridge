@@ -1,6 +1,6 @@
 # Research: `init.lua` `setup()` pattern for a dependency-free Neovim plugin
 
-> Scope: `pi-editor.nvim`, module `lua/pi-editor/init.lua` → `require("pi-editor")`.
+> Scope: `pi-bridge.nvim`, module `lua/pi-editor/init.lua` → `require("pi-editor")`.
 > Plugin root in THIS monorepo is the `plugin/` subdirectory
 > (`plugin/lua/pi-editor/init.lua`). Neovim 0.12.4.
 >
@@ -141,7 +141,7 @@ lua_ls reports types):
 ---@field rpc_timeout_ms integer Ms before a pending RPC is dropped (supersession).
 ---@field autosave_on_exit boolean Write the pi temp file on VimLeavePre if modified.
 ---@field engine "builtin"|"blink"|"cmp"|"auto" Completion UI engine.
----@field env_var? string Override the bridge-descriptor env var (default "PI_EDITOR_BRIDGE").
+---@field env_var? string Override the bridge-descriptor env var (default "PI_NVIM_BRIDGE").
 ```
 
 Then on `setup`:
@@ -168,7 +168,7 @@ forward contract:
 
 ```lua
 --- Bridge client. Set by `bridge.lua` after a successful connect+handshake; nil
---- until then (and in dormant sessions with no PI_EDITOR_BRIDGE env var). External
+--- until then (and in dormant sessions with no PI_NVIM_BRIDGE env var). External
 --- code (blink/cmp sources, user code) reads `require("pi-editor").bridge` to issue
 --- RPCs. See PRD §7.7.
 ---@type table|nil

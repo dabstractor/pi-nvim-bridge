@@ -12,9 +12,9 @@
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/bridge_handshake_spec.lua")'
 local uv = vim.uv
-local bridge = require("pi-editor.bridge")
-local jreader = require("pi-editor.jsonlreader")
-local pi = require("pi-editor")
+local bridge = require("pi-bridge.bridge")
+local jreader = require("pi-bridge.jsonlreader")
+local pi = require("pi-bridge")
 
 if pi.config == nil then pi.setup({}) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -99,7 +99,7 @@ local function with_hello_server(opts, spec)
   end
 end
 
-describe("pi-editor.bridge handshake", function()
+describe("pi-bridge.bridge handshake", function()
   -- expose the module surface
   it("exposes handshake + version + server_info", function()
     assert.are.equals("function", type(bridge.handshake))
@@ -124,7 +124,7 @@ describe("pi-editor.bridge handshake", function()
     end))
 
   -- (a-cont) the wire envelope is EXACTLY {jsonrpc,id:"h1",method:"hello",params:{token,client,clientVersion}}
-  it("sends the exact hello envelope (id h1, client pi-editor.nvim, clientVersion M.version)",
+  it("sends the exact hello envelope (id h1, client pi-bridge.nvim, clientVersion M.version)",
     with_hello_server({ mode = "success" }, function(path, _opts, stop)
       -- intercept the raw client write via a server-side read_cb capture
       local captured
@@ -150,7 +150,7 @@ describe("pi-editor.bridge handshake", function()
       assert.are.equals("h1", env.id)
       assert.are.equals("hello", env.method)
       assert.are.equals(TOKEN, env.params.token)
-      assert.are.equals("pi-editor.nvim", env.params.client)
+      assert.are.equals("pi-bridge.nvim", env.params.client)
       assert.are.equals(bridge.version, env.params.clientVersion)
       if srv and not srv:is_closing() then pcall(function() srv:close() end) end
       os.remove(p2)

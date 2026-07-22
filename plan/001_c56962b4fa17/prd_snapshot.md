@@ -7,9 +7,9 @@
 
 This document specifies two cooperating components:
 
-1. **`pi-editor-bridge`** — a pi **TypeScript extension** that exposes pi's live
+1. **`pi-nvim-bridge`** — a pi **TypeScript extension** that exposes pi's live
    `AutocompleteProvider` over a local socket.
-2. **`pi-editor.nvim`** — a **Neovim (Lua) plugin** that activates only inside a
+2. **`pi-bridge.nvim`** — a **Neovim (Lua) plugin** that activates only inside a
    pi editor session, connects to the bridge, and renders completion through a
    dependency‑free floating menu (with optional blink.cmp / nvim‑cmp sources).
 
@@ -22,8 +22,8 @@ This document specifies two cooperating components:
 3. [Architecture Overview](#3-architecture-overview)
 4. [The Core Technique](#4-the-core-technique)
 5. [IPC Protocol](#5-ipc-protocol)
-6. [Component A — `pi-editor-bridge` (pi extension)](#6-component-a--pi-editor-bridge-pi-extension)
-7. [Component B — `pi-editor.nvim` (Neovim plugin)](#7-component-b--pi-editornvim-neovim-plugin)
+6. [Component A — `pi-nvim-bridge` (pi extension)](#6-component-a--pi-nvim-bridge-pi-extension)
+7. [Component B — `pi-bridge.nvim` (Neovim plugin)](#7-component-b--pi-editornvim-neovim-plugin)
 8. [Coordinate & Encoding Contract](#8-coordinate--encoding-contract)
 9. [File Layouts](#9-file-layouts)
 10. [Installation & Configuration](#10-installation--configuration)
@@ -176,9 +176,9 @@ templates, dynamic argument completions, and `@file`/path logic — for free.
  │         │                                                           │
  │   CombinedAutocompleteProvider  ◄── captured by ──┐                 │
  │                                                    │                 │
- │   pi-editor-bridge (extension)  ──────────────────┘                 │
+ │   pi-nvim-bridge (extension)  ──────────────────┘                 │
  │     • session_start  ──► net.createServer on Unix socket            │
- │     • sets process.env.PI_EDITOR_BRIDGE = {path, token, pid, …}     │
+ │     • sets process.env.PI_NVIM_BRIDGE = {path, token, pid, …}     │
  │     • JSONL RPC: getSuggestions / applyCompletion / shouldTrigger…  │
  │     • session_shutdown ──► server.close() + unlink socket           │
  │                                                                     │
@@ -186,8 +186,8 @@ templates, dynamic argument completions, and `@file`/path logic — for free.
                               │ Unix domain socket (or TCP loopback)
                               │ newline-delimited JSON (JSONL) with id correlation
  ┌───────────────────────────▼─────────────────────────────────────────┐
- │  nvim (the $EDITOR child)  ◄── loads pi-editor.nvim                  │
- │     • VimEnter: vim.env.PI_EDITOR_BRIDGE present? → activate         │
+ │  nvim (the $EDITOR child)  ◄── loads pi-bridge.nvim                  │
+ │     • VimEnter: vim.env.PI_NVIM_BRIDGE present? → activate         │
  │     • bridge.lua: luv pipe client, handshake (token), RPC dispatch   │
  │     • completion.lua: triggers, debounce, accept flow                │
  │     • menu.lua: dependency-free floating completion popup            │
@@ -212,19 +212,19 @@ Step‑by‑step, this is how the two halves cooperate:
    paths. (Wrappers registered *after* ours won't be visible; see §11.)
 
 2. **Bridge opens a local server and advertises it via `process.env`.** It binds
-   a Unix domain socket at `os.tmpdir()/pi-editor-bridge-<rand>.sock`, generates
+   a Unix domain socket at `os.tmpdir()/pi-nvim-bridge-<rand>.sock`, generates
    a random secret token, and writes a single‑line JSON descriptor to
-   `process.env.PI_EDITOR_BRIDGE`:
+   `process.env.PI_NVIM_BRIDGE`:
 
    ```json
-   {"transport":"unix","path":"/tmp/pi-editor-bridge-xxxx.sock","token":"<32 hex>","pid":12345,"cwd":"/home/u/proj","fdAvailable":true,"version":"0.0.1"}
+   {"transport":"unix","path":"/tmp/pi-nvim-bridge-xxxx.sock","token":"<32 hex>","pid":12345,"cwd":"/home/u/proj","fdAvailable":true,"version":"0.0.1"}
    ```
 
    Because the editor is spawned with `stdio:"inherit"` and no `env`, the child
-   Neovim **sees `PI_EDITOR_BRIDGE`**.
+   Neovim **sees `PI_NVIM_BRIDGE`**.
 
 3. **Neovim activates only when the env var is set.** On `VimEnter`, the plugin
-   reads & `vim.json.decode`s `PI_EDITOR_BRIDGE`. If absent/unparseable → do
+   reads & `vim.json.decode`s `PI_NVIM_BRIDGE`. If absent/unparseable → do
    nothing (plugin stays dormant — this is why it is safe to ship in a normal
    config). If present → start the bridge client for the current buffer.
 
@@ -251,7 +251,7 @@ Step‑by‑step, this is how the two halves cooperate:
 
 - **Primary: Unix domain socket** (`net.createServer` + `listen(path)` on the pi
   side; `vim.uv.new_pipe()` + `:connect(path)` on the Lua side).
-  - Socket path: `${os.tmpdir()}/pi-editor-bridge-${crypto.randomUUID()}.sock`
+  - Socket path: `${os.tmpdir()}/pi-nvim-bridge-${crypto.randomUUID()}.sock`
   - Created with restrictive permissions (`0o600`); the token (§12) is the real
     auth boundary.
 - **Future/Windows: TCP loopback.** Same JSONL framing; descriptor
@@ -269,7 +269,7 @@ must buffer partial lines and decode on `\n`.
 
 1. Client connects.
 2. Client sends the **hello** line immediately:
-   `{"jsonrpc":"2.0","method":"hello","id":"h1","params":{"token":"…","client":"pi-editor.nvim","clientVersion":"…"}}`
+   `{"jsonrpc":"2.0","method":"hello","id":"h1","params":{"token":"…","client":"pi-bridge.nvim","clientVersion":"…"}}`
 3. Server validates `token` against its own; replies
    `{"jsonrpc":"2.0","id":"h1","result":{"ok":true,"serverVersion":"…","cwd":"…","fdAvailable":true}}`.
    On mismatch → `{"jsonrpc":"2.0","id":"h1","error":{"code":-32600,"message":"bad token"}}`
@@ -327,13 +327,13 @@ Use JSON‑RPC 2.0 envelopes for future‑proofing:
 
 ---
 
-## 6. Component A — `pi-editor-bridge` (pi extension)
+## 6. Component A — `pi-nvim-bridge` (pi extension)
 
 ### 6.1 Responsibilities
 
 - Capture the live `AutocompleteProvider`.
 - Run a JSONL socket server for the session lifetime.
-- Advertise the socket + token via `process.env.PI_EDITOR_BRIDGE`.
+- Advertise the socket + token via `process.env.PI_NVIM_BRIDGE`.
 - Implement §5.4 methods by delegating to the captured provider.
 - Clean up the socket on `session_shutdown` / process exit.
 - Best‑effort `commandsChanged` notifications when the provider is rebuilt
@@ -381,7 +381,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const BRIDGE_ENV = "PI_EDITOR_BRIDGE";
+const BRIDGE_ENV = "PI_NVIM_BRIDGE";
 let server: ReturnType<typeof createServer> | undefined;
 let socketPath: string | undefined;
 let token: string | undefined;
@@ -389,7 +389,7 @@ let token: string | undefined;
 function startBridge(ctx: ExtensionContext, cwd: string) {
   stopBridge(); // idempotent
   token = randomUUID().replace(/-/g, "").slice(0, 32);
-  socketPath = join(tmpdir(), `pi-editor-bridge-${randomUUID()}.sock`);
+  socketPath = join(tmpdir(), `pi-nvim-bridge-${randomUUID()}.sock`);
   server = createServer((sock) => onConnection(sock, cwd));
   server.listen(socketPath);
   if (process.platform !== "win32") chmod(socketPath, 0o600);
@@ -448,7 +448,7 @@ export default function (pi: ExtensionAPI) {
 
 ### 6.7 Requirements checklist (extension)
 
-- [ ] Single‑file extension installable at `~/.pi/agent/extensions/pi-editor-bridge.ts` (or as a pi package directory).
+- [ ] Single‑file extension installable at `~/.pi/agent/extensions/pi-nvim-bridge.ts` (or as a pi package directory).
 - [ ] No npm runtime dependencies (Node builtins only: `net`, `crypto`, `fs`, `os`, `path`).
 - [ ] Never throws from handlers (wrap in try/catch, return JSON‑RPC `error`).
 - [ ] Never blocks pi's event loop synchronously (all `getSuggestions` are awaited; `fd` is async inside the provider).
@@ -458,14 +458,14 @@ export default function (pi: ExtensionAPI) {
 
 ---
 
-## 7. Component B — `pi-editor.nvim` (Neovim plugin)
+## 7. Component B — `pi-bridge.nvim` (Neovim plugin)
 
 ### 7.1 Activation gate
 
-On `VimEnter` (once), read `vim.env.PI_EDITOR_BRIDGE`:
+On `VimEnter` (once), read `vim.env.PI_NVIM_BRIDGE`:
 
 ```lua
-local raw = vim.env.PI_EDITOR_BRIDGE
+local raw = vim.env.PI_NVIM_BRIDGE
 if not raw then return end                       -- dormant in normal nvim use
 local ok, desc = pcall(vim.json.decode, raw)
 if not ok or desc.transport ~= "unix" then return end
@@ -512,7 +512,7 @@ function M.connect(path, token, on_ready, on_event)
   pipe:connect(path, function(err)
     if err then return on_ready(err) end
     -- handshake
-    M.send({ jsonrpc="2.0", id="h1", method="hello", params={ token=token, client="pi-editor.nvim" } })
+    M.send({ jsonrpc="2.0", id="h1", method="hello", params={ token=token, client="pi-bridge.nvim" } })
     on_ready(nil)
   end)
   pipe:read_start(function(err, chunk)
@@ -654,14 +654,14 @@ fix is one place.
 Simplest (single file):
 
 ```
-~/.pi/agent/extensions/pi-editor-bridge.ts        # the whole extension
+~/.pi/agent/extensions/pi-nvim-bridge.ts        # the whole extension
 ```
 
 Or as a pi package (for sharing/`pi install`):
 
 ```
-pi-editor-bridge/
-  package.json          # { "name":"pi-editor-bridge", "main":"./index.ts", "pi":{ "extensions":["./index.ts"] } }
+pi-nvim-bridge/
+  package.json          # { "name":"pi-nvim-bridge", "main":"./index.ts", "pi":{ "extensions":["./index.ts"] } }
   index.ts              # default factory
   server.ts             # JSONL server + framing
   protocol.ts           # shared types/enums (optional)
@@ -671,7 +671,7 @@ pi-editor-bridge/
 ### 9.2 Plugin (Neovim side)
 
 ```
-pi-editor.nvim/
+pi-bridge.nvim/
   lua/pi-editor/
     init.lua  bridge.lua  completion.lua  menu.lua  coords.lua  health.lua
     blink_source.lua  cmp_source.lua          # optional
@@ -696,14 +696,14 @@ pi-editor.nvim/
 
 ```bash
 # Option A: drop‑in single file
-cp pi-editor-bridge.ts ~/.pi/agent/extensions/pi-editor-bridge.ts
+cp pi-nvim-bridge.ts ~/.pi/agent/extensions/pi-nvim-bridge.ts
 # Option B: pi package
 pi install <git-or-npm-source>
 ```
 
-Verify: start pi; `:env`/`echo $PI_EDITOR_BRIDGE` won't be visible from a shell
+Verify: start pi; `:env`/`echo $PI_NVIM_BRIDGE` won't be visible from a shell
 (it's process‑local), but `/reload` and opening the editor should "just work". Add
-a `notify("pi-editor-bridge ready", "info")` on `session_start` during development.
+a `notify("pi-nvim-bridge ready", "info")` on `session_start` during development.
 
 ### 10.3 Install the Neovim plugin
 
@@ -711,7 +711,7 @@ a `notify("pi-editor-bridge ready", "info")` on `session_start` during developme
 
 ```lua
 {
-  "you/pi-editor.nvim",
+  "you/pi-bridge.nvim",
   lazy = false,           -- must load before VimEnter in the editor instance
   config = function() require("pi-editor").setup({}) end,
 }
@@ -719,7 +719,7 @@ a `notify("pi-editor-bridge ready", "info")` on `session_start` during developme
 
 **vim.pack / manual:** clone into `~/.local/share/nvim/site/pack/...`.
 
-Because activation is gated on `PI_EDITOR_BRIDGE`, leaving `lazy=false` is fine —
+Because activation is gated on `PI_NVIM_BRIDGE`, leaving `lazy=false` is fine —
 the plugin no‑ops in every other Neovim session.
 
 ### 10.4 `$EDITOR` wiring
@@ -733,7 +733,7 @@ Set Neovim as pi's external editor (any of):
 For faster editor startup with a minimal config, the bridge extension may
 **additionally** set `process.env.NVIM_APPNAME = "pi-editor"` (documented
 opt‑in), and the user maintains a tiny `~/.config/pi-editor/` that loads only
-`pi-editor.nvim`. This is an **optional optimization**, not required.
+`pi-bridge.nvim`. This is an **optional optimization**, not required.
 
 ### 10.5 Default `setup()` options
 
@@ -745,7 +745,7 @@ require("pi-editor").setup({
   autosave_on_exit = true,      -- write the temp file on VimLeavePre if modified
   engine = "builtin",           -- "builtin" | "blink" | "cmp" (auto-detect if unset)
   -- optional: override how the bridge descriptor is read
-  -- env_var = "PI_EDITOR_BRIDGE",
+  -- env_var = "PI_NVIM_BRIDGE",
 })
 ```
 
@@ -798,7 +798,7 @@ require("pi-editor").setup({
   local, not on disk) and validated in `hello`.
 - Optionally, the server can `getpeercred`/`SO_PEERCRED` (Linux) to verify the
   connecting PID is a descendant of pi — nice‑to‑have, not required.
-- Never log the token. Treat `PI_EDITOR_BRIDGE` as sensitive (it's already
+- Never log the token. Treat `PI_NVIM_BRIDGE` as sensitive (it's already
   process‑local, but don't echo it in completion descriptions / status).
 - The bridge must reject any method before a valid `hello`.
 
@@ -810,8 +810,8 @@ require("pi-editor").setup({
 1. Write a 40‑line extension that captures `current` and logs
    `await current.getSuggestions(["/mo"], 0, 3, {signal})`. Confirm it returns the
    `/model…` items.
-2. Add `process.env.PI_EDITOR_BRIDGE = "hello"` and confirm a launched `nvim` sees
-   it (`:lua print(vim.env.PI_EDITOR_BRIDGE)`).
+2. Add `process.env.PI_NVIM_BRIDGE = "hello"` and confirm a launched `nvim` sees
+   it (`:lua print(vim.env.PI_NVIM_BRIDGE)`).
 3. ✔ Gate passed → proceed.
 
 **Phase 1 — Bridge core.**
@@ -914,7 +914,7 @@ All under `~/projects/pi`:
 
 A pi extension captures pi's **live** `AutocompleteProvider` via a pass‑through
 `addAutocompleteProvider` factory, serves it over a **Unix socket advertised
-through `process.env.PI_EDITOR_BRIDGE`** (which the spawned `$EDITOR` inherits),
+through `process.env.PI_NVIM_BRIDGE`** (which the spawned `$EDITOR` inherits),
 and a dormant Neovim plugin connects to that socket whenever the env var is
 present — rendering `/commands`, `skill:` templates, argument completions,
 `@files`, and paths through a dependency‑free floating menu, with acceptance

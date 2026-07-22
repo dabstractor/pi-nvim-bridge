@@ -15,7 +15,7 @@ pi's package loader, replacing the now-impossible single-file drop-in install.
   `type:"module"`, `keywords`, `license`, `peerDependencies`, optional
   `devDependencies` + `scripts`).
 - **CREATE** `README.md` (repo root) — the extension's README: install (git/local),
-  `$EDITOR` wiring, the `PI_EDITOR_BRIDGE` env var, troubleshooting (PRD §11),
+  `$EDITOR` wiring, the `PI_NVIM_BRIDGE` env var, troubleshooting (PRD §11),
   security (PRD §12), and development commands. Complete for the EXTENSION; notes
   the companion Neovim plugin is forthcoming (P2).
 - **NO source code changes** — `pi-editor-bridge.ts`, `connection.ts`,
@@ -39,8 +39,8 @@ pi's package loader, replacing the now-impossible single-file drop-in install.
 and wants pi's in-prompt completion (slash commands, `skill:`, templates, `@file`,
 paths) inside that Neovim instance.
 
-**Use Case**: Installing this extension so pi advertises a `PI_EDITOR_BRIDGE`
-socket descriptor to the Neovim it launches; the companion `pi-editor.nvim` plugin
+**Use Case**: Installing this extension so pi advertises a `PI_NVIM_BRIDGE`
+socket descriptor to the Neovim it launches; the companion `pi-bridge.nvim` plugin
 (P2) then connects and renders completion.
 
 **User Journey**: clone/copy repo → `pi install git:github.com/dabstractor/pi-nvim-bridge`
@@ -90,7 +90,7 @@ loads the existing entry with jiti resolving the sibling imports.
 - [ ] `package.json` has `"pi": { "extensions": ["./extension/pi-editor-bridge.ts"] }` and that file exists.
 - [ ] `package.json` `name` is `"pi-editor-bridge"`; `version` is `"0.1.0"` (matches `BRIDGE_VERSION`); `type` is `"module"`; `keywords` includes `"pi-package"`.
 - [ ] `package.json` lists `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` in `peerDependencies` with `"*"` (packages.md convention).
-- [ ] `README.md` exists at repo root and covers: what it does, prerequisites, install (git + local + "no single-file drop-in"), `$EDITOR` wiring, `PI_EDITOR_BRIDGE` env var, troubleshooting (≥ the PRD §11 items), security, development commands.
+- [ ] `README.md` exists at repo root and covers: what it does, prerequisites, install (git + local + "no single-file drop-in"), `$EDITOR` wiring, `PI_NVIM_BRIDGE` env var, troubleshooting (≥ the PRD §11 items), security, development commands.
 - [ ] `pi -e .` loads the extension with no error (or, if `-e` rejects a local dir in your pi build, `pi install . && pi list` shows `pi-editor-bridge`).
 - [ ] `npx tsc --noEmit -p extension/tsconfig.json` exits 0 (regression).
 - [ ] `node --import "$JITI_REG" extension/tests/bridge-env.test.ts` ⇒ `ℹ fail 0` (regression).
@@ -135,7 +135,7 @@ No guesswork remains.
 
 # MUST READ — the extension being packaged (read-only; do NOT modify)
 - file: extension/pi-editor-bridge.ts
-  why: "The ENTRY file the manifest must point at. Confirms `export default function (pi: ExtensionAPI): void` at L983 (valid pi factory) + module exports (BRIDGE_VERSION='0.1.0' L272, BRIDGE_ENV='PI_EDITOR_BRIDGE' L281). Lines 142-160 import ./connection.ts, ./jsonl-reader.ts, ./protocol.ts (the multi-file reason a manifest is required)."
+  why: "The ENTRY file the manifest must point at. Confirms `export default function (pi: ExtensionAPI): void` at L983 (valid pi factory) + module exports (BRIDGE_VERSION='0.1.0' L272, BRIDGE_ENV='PI_NVIM_BRIDGE' L281). Lines 142-160 import ./connection.ts, ./jsonl-reader.ts, ./protocol.ts (the multi-file reason a manifest is required)."
   pattern: "default-export factory; type-only imports from @earendil-works/pi-tui (L130) + pi-coding-agent (L131-136) — ALL `import type` (erased by jiti)."
 
 - file: extension/tsconfig.json
@@ -219,8 +219,8 @@ pi-nvim-bridge/
 # conventions. Include version+keywords as best-practice; omit private (defaults false;
 # this package IS distributable, unlike the with-deps example).
 
-# GOTCHA #6: PI_EDITOR_BRIDGE is PROCESS-LOCAL (written to process.env inside pi),
-# NOT exported to the shell. README MUST say `echo $PI_EDITOR_BRIDGE` shows nothing —
+# GOTCHA #6: PI_NVIM_BRIDGE is PROCESS-LOCAL (written to process.env inside pi),
+# NOT exported to the shell. README MUST say `echo $PI_NVIM_BRIDGE` shows nothing —
 # this is the #1 user confusion. It is only visible to the child $EDITOR pi spawns.
 
 # GOTCHA #7: the test runner is node:test + jiti, NOT vitest.
@@ -295,8 +295,8 @@ Task 2: CREATE README.md  (repo root: /home/dustin/projects/pi-nvim-bridge/READM
       1. Title + one-line tagline ("Bridge pi's completion into the Neovim pi launches as $EDITOR").
       2. **What it does** (2-4 sentences): captures pi's live AutocompleteProvider via a pass-through
          factory, serves it over a Unix-domain-socket JSON-RPC server for the session lifetime, and
-         advertises the socket+token to the spawned $EDITOR via the PI_EDITOR_BRIDGE env var. The
-         companion Neovim plugin (pi-editor.nvim, forthcoming) connects and renders /commands,
+         advertises the socket+token to the spawned $EDITOR via the PI_NVIM_BRIDGE env var. The
+         companion Neovim plugin (pi-bridge.nvim, forthcoming) connects and renders /commands,
          skill:, templates, @file, and path completion.
       3. **Prerequisites**: pi with extension support; Neovim 0.10+ (0.12 verified) for the companion
          plugin; the `fd` binary (optional — enables fuzzy @file search; without it @file silently
@@ -306,25 +306,25 @@ Task 2: CREATE README.md  (repo root: /home/dustin/projects/pi-nvim-bridge/READM
               from a local clone. Then `pi list` should show `pi-editor-bridge`.
            b. NOTE (prominent): this extension is MULTI-FILE; you CANNOT install it by copying a
               single .ts into ~/.pi/agent/extensions/. It must be installed as a package (Gotcha #2).
-           c. Companion plugin: install `pi-editor.nvim` via your Neovim plugin manager (lazy.nvim)
+           c. Companion plugin: install `pi-bridge.nvim` via your Neovim plugin manager (lazy.nvim)
               — see that plugin's README (P2, forthcoming).
       5. **Configuration** ($EDITOR wiring — PRD §10.4): any of `export EDITOR=nvim` / `export VISUAL=nvim`
          / pi settings.json `{ "externalEditor": "nvim" }` (externalEditor takes precedence). Optional
          NVIM_APPNAME minimal-config optimization (PRD §10.4 last paragraph) — link forward, mark optional.
       6. **How it works** (brief — PRD §4 TL;DR + §16): list the live-provider capture, the
-         process.env.PI_EDITOR_BRIDGE discovery (the KEY insight — pi spawns $EDITOR with stdio:inherit
+         process.env.PI_NVIM_BRIDGE discovery (the KEY insight — pi spawns $EDITOR with stdio:inherit
          and no env:, so the child inherits process.env), and the JSON-RPC methods (getSuggestions /
          applyCompletion / shouldTriggerFileCompletion) with acceptance delegated to pi's applyCompletion
          (byte-for-byte identical insertion).
-      7. **The PI_EDITOR_BRIDGE environment variable** (Gotcha #6 — PRD §6.4): it is a single-line JSON
+      7. **The PI_NVIM_BRIDGE environment variable** (Gotcha #6 — PRD §6.4): it is a single-line JSON
          descriptor {transport,path,token,pid,cwd,fdAvailable,serverVersion} written to process.env INSIDE
-         pi. CRITICAL NOTE: `echo $PI_EDITOR_BRIDGE` in a shell shows NOTHING — it is process-local, visible
+         pi. CRITICAL NOTE: `echo $PI_NVIM_BRIDGE` in a shell shows NOTHING — it is process-local, visible
          only to the Neovim pi launches. This is expected, not a bug.
       8. **Troubleshooting** (bullet list — PRD §11, the user-facing subset):
            - "I typed and quit (:q) and lost my prompt" → the companion plugin autosaves on VimLeavePre;
              until P2 lands, remember to :w before :q (pi reads the file only after the editor exits 0).
            - "Completion doesn't appear" → confirm the extension loaded (`pi list`), confirm EDITOR=nvim,
-             confirm the companion plugin is installed & PI_EDITOR_BRIDGE gated it on.
+             confirm the companion plugin is installed & PI_NVIM_BRIDGE gated it on.
            - "@file finds nothing" → install `fd`; the bridge reports fdAvailable; without fd, @file is
              empty but path completion (readdir) still works.
            - "Reload (/reload) while the editor is open" → the bridge re-captures the provider and
@@ -338,7 +338,7 @@ Task 2: CREATE README.md  (repo root: /home/dustin/projects/pi-nvim-bridge/READM
      10. **Development**: typecheck (`npm run typecheck` or `npx tsc --noEmit -p extension/tsconfig.json`);
          run a test (the jiti invocation — document the JITI_REG command from Gotcha #7; note node:test +
          jiti, NOT vitest); repo layout (extension/ holds the 4 .ts + tests/ + tsconfig.json).
-     11. **Links**: PRD reference, pi docs (packages.md, extensions.md), companion pi-editor.nvim (P2).
+     11. **Links**: PRD reference, pi docs (packages.md, extensions.md), companion pi-bridge.nvim (P2).
   - FOLLOW pattern: a standard OSS extension README (see any examples/extensions/*/README.md for tone;
     doom-overlay/README.md exists as a reference). Keep it skimmable with clear headings + code fences.
   - NAMING/PLACEMENT: `README.md` at REPO ROOT (companion to root package.json; npm convention).
@@ -402,11 +402,11 @@ Task 3: VALIDATE (no file changes — verification only)
 > Bridge pi's in-prompt completion into the Neovim instance pi launches as `$EDITOR`.
 
 ## What it does
-…(2-4 sentences; live-provider capture + Unix-socket JSON-RPC + PI_EDITOR_BRIDGE env)…
+…(2-4 sentences; live-provider capture + Unix-socket JSON-RPC + PI_NVIM_BRIDGE env)…
 
 ## Prerequisites
 - pi (with extension support)
-- Neovim ≥ 0.10 (0.12 verified) + the companion **pi-editor.nvim** plugin (forthcoming)
+- Neovim ≥ 0.10 (0.12 verified) + the companion **pi-bridge.nvim** plugin (forthcoming)
 - `fd` (optional — fuzzy `@file` search)
 
 ## Installation
@@ -422,10 +422,10 @@ pi list   # should show pi-editor-bridge
 `{ "externalEditor": "nvim" }` (takes precedence).
 
 ## How it works
-…(PI_EDITOR_BRIDGE discovery insight; JSON-RPC methods; applyCompletion delegation)…
+…(PI_NVIM_BRIDGE discovery insight; JSON-RPC methods; applyCompletion delegation)…
 
-## The `PI_EDITOR_BRIDGE` environment variable
-…(single-line JSON descriptor; PROCESS-LOCAL — `echo $PI_EDITOR_BRIDGE` is empty
+## The `PI_NVIM_BRIDGE` environment variable
+…(single-line JSON descriptor; PROCESS-LOCAL — `echo $PI_NVIM_BRIDGE` is empty
 in a shell by design; visible only to the spawned Neovim)…
 
 ## Troubleshooting
@@ -443,7 +443,7 @@ node --import "$JITI_REG" extension/tests/bridge-env.test.ts   # node:test + jit
 ```
 
 ## Links
-- PRD · pi packages.md · pi extensions.md · companion **pi-editor.nvim** (P2)
+- PRD · pi packages.md · pi extensions.md · companion **pi-bridge.nvim** (P2)
 ```
 
 ### Integration Points
@@ -537,7 +537,7 @@ test -f "$(node -e "console.log(require('path').resolve('.', require('./package.
 # 1. Ensure EDITOR=nvim and the companion plugin is installed (or skip if P2 not ready).
 # 2. pi -e .   (or pi after `pi install .`)
 # 3. In the prompt, press Ctrl+G to open the external editor.
-# 4. In Neovim, :lua print(vim.env.PI_EDITOR_BRIDGE) should print the JSON descriptor.
+# 4. In Neovim, :lua print(vim.env.PI_NVIM_BRIDGE) should print the JSON descriptor.
 # (Until P2 lands, step 4 is the meaningful proof the package wired the bridge correctly.)
 ```
 
@@ -554,7 +554,7 @@ test -f "$(node -e "console.log(require('path').resolve('.', require('./package.
 - [ ] `name=pi-editor-bridge`, `version=0.1.0`, `type=module`, `keywords` includes `pi-package`.
 - [ ] `peerDependencies` lists both `@earendil-works/pi-coding-agent` and `pi-tui` at `"*"`.
 - [ ] README covers install (git + local + "no single-file drop-in"), `$EDITOR` wiring,
-      `PI_EDITOR_BRIDGE` env var (process-local caveat), troubleshooting (PRD §11), security (PRD §12), dev.
+      `PI_NVIM_BRIDGE` env var (process-local caveat), troubleshooting (PRD §11), security (PRD §12), dev.
 - [ ] The extension's runtime behavior is unchanged (regression suites green).
 
 ### Code Quality Validation
@@ -566,7 +566,7 @@ test -f "$(node -e "console.log(require('path').resolve('.', require('./package.
 ### Documentation & Deployment
 - [ ] README's install commands are copy-pasteable and correct for this repo's remote.
 - [ ] README flags the LICENSE-file gap (license field is MIT but no LICENSE file exists yet).
-- [ ] README forward-links the companion pi-editor.nvim plugin (P2) without documenting its API.
+- [ ] README forward-links the companion pi-bridge.nvim plugin (P2) without documenting its API.
 
 ---
 

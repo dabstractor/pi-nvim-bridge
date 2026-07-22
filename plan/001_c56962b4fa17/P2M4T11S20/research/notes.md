@@ -116,7 +116,7 @@ mock is invoked. **Verified**.
 
 ## 8. Scope boundary — what this task does NOT do
 
-- Does NOT read `PI_EDITOR_BRIDGE` (that parsing/gating is **S21**).
+- Does NOT read `PI_NVIM_BRIDGE` (that parsing/gating is **S21**).
 - Does NOT implement `activate()` (**S21**).
 - Does NOT call `setup()` (the user's config does, per PRD §10.3; `activate` /
   S21 handles `M.config == nil`).

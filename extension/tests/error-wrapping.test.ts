@@ -41,7 +41,7 @@ import {
 	makeApplyCompletionHandler,
 	makeShouldTriggerFileCompletionHandler,
 	makeGetCommandsHandler,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 
 const TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef";
 

@@ -18,7 +18,7 @@
 -- NO plenary. Reuses the menu_smoke.lua fake-server bootstrap + check/footer pattern.
 -- NEVER pipe a heredoc into nvim stdin (AGENTS.md).
 
--- Add the plugin root to runtimepath so `require("pi-editor.*")` resolves (the
+-- Add the plugin root to runtimepath so `require("pi-bridge.*")` resolves (the
 -- coords_smoke.lua bootstrap pattern). Works whether run from plugin/ or repo root.
 local me = debug.getinfo(1, "S").source:sub(2)
 me = vim.fn.fnamemodify(me, ":p")
@@ -26,11 +26,11 @@ local plugin_root = vim.fn.fnamemodify(me, ":h:h") -- .../plugin (the runtimepat
 vim.opt.runtimepath:append(plugin_root)
 
 local uv = vim.uv
-local jreader = require("pi-editor.jsonlreader")
-local bridge = require("pi-editor.bridge")
-local pi = require("pi-editor")
-local completion = require("pi-editor.completion")
-local menu = require("pi-editor.menu")
+local jreader = require("pi-bridge.jsonlreader")
+local bridge = require("pi-bridge.bridge")
+local pi = require("pi-bridge")
+local completion = require("pi-bridge.completion")
+local menu = require("pi-bridge.menu")
 
 if pi.config == nil then pi.setup({ debounce_ms = 5 }) end -- self-sufficient (GOTCHA D)
 

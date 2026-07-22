@@ -2,26 +2,26 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/activate_spec.lua")'
-describe("pi-editor.activate gate", function()
+describe("pi-bridge.activate gate", function()
   local pi
 
   before_each(function()
-    package.loaded["pi-editor"] = nil   -- fresh module per test
-    pi = require("pi-editor")
-    require("pi-editor.notify").reset()  -- S39: clear the dedup set so each case starts clean
-    vim.env.PI_EDITOR_BRIDGE = nil      -- clean dormant baseline
+    package.loaded["pi-bridge"] = nil   -- fresh module per test
+    pi = require("pi-bridge")
+    require("pi-bridge.notify").reset()  -- S39: clear the dedup set so each case starts clean
+    vim.env.PI_NVIM_BRIDGE = nil      -- clean dormant baseline
     pi.descriptor = nil
     pi.bridge = nil                     -- S39: clear any stale bridge publication
     vim.bo[0].filetype = ""             -- deterministic "untouched" assertion
   end)
 
   -- S39: an async handshake started by a prior case can leak across the module reload
-  -- (package.loaded["pi-editor"]=nil reloads the entry module but NOT pi-editor.bridge /
-  -- pi-editor.notify). Close the bridge + reset the notify dedup so no stale connect/timer/
+  -- (package.loaded["pi-bridge"]=nil reloads the entry module but NOT pi-bridge.bridge /
+  -- pi-bridge.notify). Close the bridge + reset the notify dedup so no stale connect/timer/
   -- scheduled notify bleeds into the next case.
   after_each(function()
-    pcall(function() require("pi-editor.bridge").close() end)
-    require("pi-editor.notify").reset()
+    pcall(function() require("pi-bridge.bridge").close() end)
+    require("pi-bridge.notify").reset()
   end)
 
   local function valid_desc()
@@ -45,7 +45,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("valid unix descriptor -> activates (descriptor fields set, filetype=pi-prompt)", function()
-    vim.env.PI_EDITOR_BRIDGE = valid_desc()
+    vim.env.PI_NVIM_BRIDGE = valid_desc()
     local r = pi.activate()
     assert.is_not_nil(r)
     assert.are.equals("/tmp/a.sock", pi.descriptor.path)
@@ -55,7 +55,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("malformed JSON -> dormant, no throw (pcall ok)", function()
-    vim.env.PI_EDITOR_BRIDGE = "{not json"
+    vim.env.PI_NVIM_BRIDGE = "{not json"
     local ok, r = pcall(pi.activate)
     assert.is_true(ok)          -- proves activate did not throw
     assert.is_nil(r)
@@ -63,7 +63,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("valid-JSON-number (123) -> dormant via the type guard, no throw", function()
-    vim.env.PI_EDITOR_BRIDGE = "123"
+    vim.env.PI_NVIM_BRIDGE = "123"
     local ok, r = pcall(pi.activate)
     assert.is_true(ok)          -- the type() guard prevented desc.transport from throwing
     assert.is_nil(r)
@@ -71,7 +71,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("transport=tcp -> dormant (v1 is Unix-only)", function()
-    vim.env.PI_EDITOR_BRIDGE = '{"transport":"tcp","path":"x","token":"t"}'
+    vim.env.PI_NVIM_BRIDGE = '{"transport":"tcp","path":"x","token":"t"}'
     local r = pi.activate()
     assert.is_nil(r)
     assert.is_nil(pi.descriptor)
@@ -87,7 +87,7 @@ describe("pi-editor.activate gate", function()
 
   it("self-initializes config when setup() was not called (no error)", function()
     pi.config = nil             -- simulate user never calling setup()
-    vim.env.PI_EDITOR_BRIDGE = valid_desc()
+    vim.env.PI_NVIM_BRIDGE = valid_desc()
     local r = pi.activate()
     assert.is_not_nil(r)
     assert.is_not_nil(pi.config)          -- setup({}) ran inside activate()
@@ -100,21 +100,21 @@ describe("pi-editor.activate gate", function()
   -- dedup'd notify.once("bridge", …). pi.bridge stays nil (silent degrade).
 
   it("bad socket path -> activate() fires ONE notify, pi.bridge stays nil", function()
-    local path = "/tmp/pi-editor-NOPE-" .. tostring(os.time()) .. "-" .. math.random(1e6) .. ".sock"
+    local path = "/tmp/pi-bridge-NOPE-" .. tostring(os.time()) .. "-" .. math.random(1e6) .. ".sock"
     os.remove(path) -- ensure non-existent
-    vim.env.PI_EDITOR_BRIDGE = '{"transport":"unix","path":"' .. path
+    vim.env.PI_NVIM_BRIDGE = '{"transport":"unix","path":"' .. path
       .. '","token":"t","pid":1,"cwd":"/p","fdAvailable":true,"serverVersion":"0.1.0"}'
     local r = pi.activate()
     assert.is_not_nil(r) -- activated (valid unix descriptor) — the handshake fails async
     -- the handshake connect fails ENOENT -> handshake cb -> notify.once("bridge", …)
-    local notify = require("pi-editor.notify")
+    local notify = require("pi-bridge.notify")
     vim.wait(500, function() return notify.did_notify("bridge") end, 5)
     assert.is_true(notify.did_notify("bridge"), "a bad-socket handshake must fire ONE notify")
     assert.is_nil(pi.bridge, "pi.bridge must stay nil after a failed handshake")
   end)
 
   it("dormant (no env var) -> NO notify ever", function()
-    local notify = require("pi-editor.notify")
+    local notify = require("pi-bridge.notify")
     local r = pi.activate()
     assert.is_nil(r)
     vim.wait(50) -- give any (must-not-exist) scheduled notify a chance
@@ -122,25 +122,25 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("dedup: a second activate()-time failure does not re-notify", function()
-    local path = "/tmp/pi-editor-NOPE2-" .. tostring(os.time()) .. "-" .. math.random(1e6) .. ".sock"
+    local path = "/tmp/pi-bridge-NOPE2-" .. tostring(os.time()) .. "-" .. math.random(1e6) .. ".sock"
     os.remove(path)
     local desc = '{"transport":"unix","path":"' .. path
       .. '","token":"t","pid":1,"cwd":"/p","fdAvailable":true,"serverVersion":"0.1.0"}'
-    local notify = require("pi-editor.notify")
+    local notify = require("pi-bridge.notify")
     -- stub vim.notify to COUNT actual toasts (the dedup collapses to one)
     local calls = 0
     local orig = vim.notify
     vim.notify = function(_msg, _level, _opts) calls = calls + 1 end
-    vim.env.PI_EDITOR_BRIDGE = desc
+    vim.env.PI_NVIM_BRIDGE = desc
     pi.activate()
     -- wait for the dedup flag (set synchronously in once()) AND for the scheduled toast
     vim.wait(500, function() return notify.did_notify("bridge") end, 5)
     vim.wait(300, function() return calls >= 1 end, 5) -- flush the 1st scheduled toast
     local first = calls
     -- a second activate() (the gate re-runs the handshake) must NOT add a second toast
-    package.loaded["pi-editor"] = nil
-    pi = require("pi-editor")
-    vim.env.PI_EDITOR_BRIDGE = desc
+    package.loaded["pi-bridge"] = nil
+    pi = require("pi-bridge")
+    vim.env.PI_NVIM_BRIDGE = desc
     pi.activate()
     vim.wait(300, function() return calls > first end, 5)
     assert.are.equals(first, calls, "a second failure must NOT re-notify (dedup by category)")

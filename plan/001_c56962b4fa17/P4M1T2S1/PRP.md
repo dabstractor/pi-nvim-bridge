@@ -37,7 +37,7 @@ plenary spec (`plugin/tests/cmp_source_spec.lua`).
   **blink.compat** adapter — the authoritative nvim-cmp source-API consumer; nvim-cmp itself is NOT
   installed locally).
 - `source.new(opts)` returns an object with `is_available`, `get_trigger_characters`, `complete`.
-- `source:is_available()` is `true` iff `vim.env.PI_EDITOR_BRIDGE ~= nil and require("pi-editor").bridge ~= nil`.
+- `source:is_available()` is `true` iff `vim.env.PI_NVIM_BRIDGE ~= nil and require("pi-editor").bridge ~= nil`.
 - `source:get_trigger_characters()` returns `{ "/", "@" }`.
 - `source:complete(params, callback)` extracts the **full buffer** + cursor from `params.context`,
   converts nvim→pi coords (with the **`params.context.cursor.col - 1`** correction — cmp cols are
@@ -60,7 +60,7 @@ as their completion UI (instead of the plugin's dependency-free builtin popup or
 nvim-cmp shows pi's completion candidates; accepting one inserts it exactly as pi's TUI would.
 
 **User Journey**:
-1. pi launches Neovim with `PI_EDITOR_BRIDGE` set → the plugin activates + connects the bridge
+1. pi launches Neovim with `PI_NVIM_BRIDGE` set → the plugin activates + connects the bridge
    (`require("pi-editor").bridge` becomes non-nil).
 2. The user's cmp config registers the source + the confirm override:
    `sources = { { name = 'pi-editor' } }` and `mapping['<CR>'] = cmp.mapping(require('pi-editor.cmp_source').confirm(), {'i'})`.
@@ -470,7 +470,7 @@ end
 --- Active iff pi spawned this editor (env var set) AND the bridge connected (pi.bridge ~= nil).
 --- (PRD §7.7; mirrors external_deps §3.) Reads the env var + bridge LIVE.
 function M:is_available()
-  return vim.env.PI_EDITOR_BRIDGE ~= nil and require("pi-editor").bridge ~= nil
+  return vim.env.PI_NVIM_BRIDGE ~= nil and require("pi-editor").bridge ~= nil
 end
 
 --- Trigger characters (PRD §7.7): "/" (file/slash completion) + "@" (mentions).

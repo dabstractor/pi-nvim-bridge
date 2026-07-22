@@ -1,6 +1,6 @@
 -- === plugin/tests/completion_spec.lua — plenary/busted spec (the Level-2 gate) ===
 -- Covers every Success Criterion from PRP P2.M7.T18.S30. MOCKS the bridge (sets
--- require("pi-editor").bridge = fake with controllable request/cancel/is_connected) so
+-- require("pi-bridge").bridge = fake with controllable request/cancel/is_connected) so
 -- it tests the debounce / supersession / seam logic FAST without a socket (the bridge
 -- transport is already exhaustively tested by bridge_request_spec). Mirrors the
 -- vim.wait(ms, predicate, interval) async style of bridge_request_spec.lua.
@@ -11,9 +11,9 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/completion_spec.lua")'
-local completion = require("pi-editor.completion")
-local menu = require("pi-editor.menu")
-local pi = require("pi-editor")
+local completion = require("pi-bridge.completion")
+local menu = require("pi-bridge.menu")
+local pi = require("pi-bridge")
 
 if pi.config == nil then pi.setup({ debounce_ms = 10 }) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -88,7 +88,7 @@ local function wait_for(ms, predicate)
   return vim.wait(ms, predicate, 5)
 end
 
-describe("pi-editor.completion", function()
+describe("pi-bridge.completion", function()
   before_each(reset)
   after_each(reset)
 

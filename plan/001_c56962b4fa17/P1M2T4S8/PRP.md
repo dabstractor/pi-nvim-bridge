@@ -1394,7 +1394,7 @@ diff <(echo 'parse try/catch -> error response; narrow; dispatch try/catch -> re
 
 # Security cross-check (PRD §12): the sock.on("error") log line MUST NOT include the token or
 # the BridgeDescriptor. Confirm the handler logs only the Error message:
-grep -nA2 'sock.on("error"' extension/connection.ts | grep -iE 'token|descriptor|PI_EDITOR_BRIDGE' \
+grep -nA2 'sock.on("error"' extension/connection.ts | grep -iE 'token|descriptor|PI_NVIM_BRIDGE' \
   && echo "FAIL: token/descriptor leaked into the error log (PRD §12 violation)" \
   || echo "PASS: error log emits only the Error message (PRD §12 honored)"
 ```

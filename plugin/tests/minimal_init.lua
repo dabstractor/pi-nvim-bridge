@@ -9,4 +9,4 @@ local plenary = os.getenv("PLENARY_PATH")
   or "/home/dustin/.local/share/nvim/lazy/plenary.nvim"    -- verified install location
 
 vim.opt.runtimepath:prepend(plenary)                       -- so require("plenary.busted") resolves
-vim.opt.runtimepath:append(plugin_root)                    -- so require("pi-editor") resolves
+vim.opt.runtimepath:append(plugin_root)                    -- so require("pi-bridge") resolves

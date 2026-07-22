@@ -57,7 +57,7 @@ import {
 	makeShouldTriggerFileCompletionHandler,
 	makeHelloHandler,
 	BRIDGE_VERSION,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 const TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -523,7 +523,7 @@ test("REAL: hello → shouldTriggerFileCompletion(\"/set\") ⇒ false; shouldTri
 		makeShouldTriggerFileCompletionHandler({ getProvider: () => stub }),
 	);
 
-	const sockpath = join(tmpdir(), `pi-editor-stfc-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-stfc-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");

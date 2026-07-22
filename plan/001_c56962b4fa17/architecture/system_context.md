@@ -20,16 +20,16 @@ are **CONFIRMED**. Key refinements discovered during research are noted.
 │                                                                      │
 │  pi-editor-bridge extension:                                         │
 │    • session_start → capture provider + start Unix socket server     │
-│    • sets process.env.PI_EDITOR_BRIDGE = {json descriptor}           │
+│    • sets process.env.PI_NVIM_BRIDGE = {json descriptor}           │
 │    • JSONL RPC over Unix domain socket                               │
 │    • session_shutdown → close server, unlink socket                  │
 │                                                                      │
 └──────────────────────────────────│───────────────────────────────────┘
-                                   │ process.env.PI_EDITOR_BRIDGE
+                                   │ process.env.PI_NVIM_BRIDGE
                                    │ Unix domain socket (JSONL)
 ┌──────────────────────────────────▼───────────────────────────────────┐
 │  Neovim ($EDITOR child process)                                      │
-│    • plugin/pi-editor.lua: VimEnter → read PI_EDITOR_BRIDGE env var  │
+│    • plugin/pi-editor.lua: VimEnter → read PI_NVIM_BRIDGE env var  │
 │    • If present → activate; if absent → dormant (no-op)             │
 │    • bridge.lua: luv pipe client → connect, handshake, RPC dispatch  │
 │    • completion.lua: triggers, debounce, accept flow                 │
@@ -165,7 +165,7 @@ The repo at `/home/dustin/projects/pi-nvim-bridge` is a fresh git repo with:
 
 The output will be two components, which can live in this monorepo:
 1. `extension/` — the pi-editor-bridge TypeScript extension
-2. `plugin/` — the pi-editor.nvim Neovim plugin (Lua)
+2. `plugin/` — the pi-bridge.nvim Neovim plugin (Lua)
 
 ## Residual Risks
 

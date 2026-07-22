@@ -1,5 +1,5 @@
 /**
- * connection.ts — the connection-handling half of the pi-editor-bridge IPC server.
+ * connection.ts — the connection-handling half of the pi-nvim-bridge IPC server.
  *
  * Sibling of {@link "./jsonl-reader.ts"} (which owns the FRAMING half of parent task
  * P1.M2.T4). For each accepted `net.Socket`, this module wires S7's line reader,
@@ -118,9 +118,9 @@ export type MethodHandler = (
  * handlers don't vary per connection). EMPTY in S8; S9–S14 populate it via
  * {@link registerBridgeHandler}.
  *
- * Registered FROM `pi-editor-bridge.ts` (S9–S14), NOT here — so each handler closure
+ * Registered FROM `pi-nvim-bridge.ts` (S9–S14), NOT here — so each handler closure
  * references `getToken()`/`getProvider()` in THAT module and `connection.ts` never
- * imports `pi-editor-bridge.ts` (no import cycle — research §2).
+ * imports `pi-nvim-bridge.ts` (no import cycle — research §2).
  */
 const handlers = new Map<string, MethodHandler>();
 
@@ -215,7 +215,7 @@ export function broadcastNotification(method: string, params?: unknown): void {
  * `'close'`→`delete` mid-loop cannot mutate the map under us, then `connections.clear()`
  * guarantees the empty state. Idempotent (empty registry → no-op).
  *
- * REQUIRED in {@link stopBridge} (pi-editor-bridge.ts) because Node's
+ * REQUIRED in {@link stopBridge} (pi-nvim-bridge.ts) because Node's
  * `net.Server.close()` only stops ACCEPTING new connections — it does NOT close
  * already-accepted sockets (verified, scout Q2). Without this, `stopBridge` would
  * orphan any editor socket open during a `/reload` (still connected, untracked,
@@ -357,7 +357,7 @@ export async function handleLine(
 			} catch (handlerError) {
 				// Notifications have no id → no response. Log (NEVER the token — PRD §12); do not throw.
 				console.error(
-					`pi-editor-bridge: notification "${method}" handler threw: ${
+					`pi-nvim-bridge: notification "${method}" handler threw: ${
 						handlerError instanceof Error ? handlerError.message : String(handlerError)
 					}`,
 				);
@@ -431,7 +431,7 @@ export async function handleLine(
  *    (idempotent) so no `data`/`end` listener leaks across the many editor open/close
  *    cycles one session sees (PRD §6.7).
  *
- * STATUS (P1.M2.T4.S8): the entry point `pi-editor-bridge.ts`'s `startBridge` wires into
+ * STATUS (P1.M2.T4.S8): the entry point `pi-nvim-bridge.ts`'s `startBridge` wires into
  * `__deps.createServer((sock) => onConnection(sock))`. State starts `handshakeComplete:false`;
  * S9's hello handler flips it true; S10's gate reads it. S8 creates the state but does NOT
  * gate (S10) or validate (S9).
@@ -446,7 +446,7 @@ export function onConnection(sock: Socket): void {
 
 	sock.on("error", (err: Error) => {
 		// CRITICAL: no listener here = process crash. Log message ONLY (never the token — PRD §12).
-		console.error(`pi-editor-bridge: socket error: ${err?.message ?? err}`);
+		console.error(`pi-nvim-bridge: socket error: ${err?.message ?? err}`);
 		try {
 			detach();
 		} catch {

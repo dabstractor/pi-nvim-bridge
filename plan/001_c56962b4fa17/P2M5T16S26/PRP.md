@@ -1,7 +1,7 @@
 ---
 name: "P2.M5.T16.S26 — request(method, params, cb): auto-id, correlation, stale drop"
 description: >
-  Add the GENERIC JSON-RPC request layer to the pi-editor.nvim bridge client (`plugin/lua/pi-editor/bridge.lua`):
+  Add the GENERIC JSON-RPC request layer to the pi-bridge.nvim bridge client (`plugin/lua/pi-editor/bridge.lua`):
   a `request(method, params, on_result)` that auto-assigns monotonic string ids, correlates each
   response by id via a module-level `pending` map, drops stale/late/duplicate/stray responses, fires
   a per-request luv timeout, and resolves EVERY outstanding callback on `close()` (LSP invariant:
@@ -98,7 +98,7 @@ surface S25 centralized for the handshake). A single, tested RPC primitive is th
 
 User-visible: nothing directly (this is a library layer). The observable effect is that
 `require("pi-editor").bridge` gains `request`/`cancel` methods once the S25 handshake publishes it; a
-dormant session (no `PI_EDITOR_BRIDGE`) still has `pi.bridge == nil` and never touches this code.
+dormant session (no `PI_NVIM_BRIDGE`) still has `pi.bridge == nil` and never touches this code.
 
 Technical requirements:
 - `request(method, params, on_result)`: validate args (never throws); if not connected, fire `on_result("not connected")`
@@ -760,12 +760,12 @@ cd plugin && nvim --headless --clean -u NORC +"luafile tests/smoke.lua" +qa ; ec
 
 ```bash
 # End-to-end: a REAL bridge server (the DONE extension) + a headless nvim request round-trip.
-# 1. Start pi with the bridge extension so the socket server is up and PI_EDITOR_BRIDGE is set in
+# 1. Start pi with the bridge extension so the socket server is up and PI_NVIM_BRIDGE is set in
 #    pi's process. (Manual / scripted — see extension README; the handshake auto-runs on VimEnter.)
 # 2. From that pi process's env, launch headless nvim on a temp pi-editor file, let the handshake
 #    complete, then fire a `ping` request and assert the result:
 TMP=$(mktemp --suffix=.pi.md); echo "hello world" > "$TMP"
-PI_EDITOR_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/minimal_init.lua \
+PI_NVIM_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/minimal_init.lua \
   +"luafile plugin/plugin/pi-editor.lua" \
   -c 'lua vim.defer_fn(function()
         local pi=require("pi-editor")
@@ -783,7 +783,7 @@ PI_EDITOR_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/
 # Expected: stdout "E2E_OK pid=<n>", exit 0. (The 500ms defer lets the async handshake + RPC complete.)
 
 # NEGATIVE e2e — request() before the handshake completes (pi.bridge still nil) must not crash:
-PI_EDITOR_BRIDGE='' nvim --headless --clean -u plugin/tests/minimal_init.lua +"luafile plugin/plugin/pi-editor.lua" \
+PI_NVIM_BRIDGE='' nvim --headless --clean -u plugin/tests/minimal_init.lua +"luafile plugin/plugin/pi-editor.lua" \
   -c 'lua vim.defer_fn(function()
         local pi=require("pi-editor")
         assert(pi.bridge == nil, "no-env bridge must be nil")

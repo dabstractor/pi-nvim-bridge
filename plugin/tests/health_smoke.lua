@@ -13,7 +13,7 @@ me = vim.fn.fnamemodify(me, ":p")
 local plugin_root = vim.fn.fnamemodify(me, ":h:h") -- .../plugin (the runtimepath entry)
 vim.opt.runtimepath:append(plugin_root)
 
-local health = require("pi-editor.health")
+local health = require("pi-bridge.health")
 
 local fails = 0
 local function check(cond, msg)
@@ -24,7 +24,7 @@ local function check(cond, msg)
 end
 
 -- (1) require loads + check is a function + min_nvim is the floor
-check(type(health) == "table", "require('pi-editor.health') returns a table")
+check(type(health) == "table", "require('pi-bridge.health') returns a table")
 check(type(health.check) == "function", "check is a function")
 check(health.min_nvim == "0.11", "min_nvim == '0.11'")
 
@@ -45,8 +45,8 @@ do
     info = stub("info"),
   }
   -- dormant state (no env var) — the default, but be explicit
-  local real_env = vim.env.PI_EDITOR_BRIDGE
-  vim.env.PI_EDITOR_BRIDGE = nil
+  local real_env = vim.env.PI_NVIM_BRIDGE
+  vim.env.PI_NVIM_BRIDGE = nil
 
   local ok, err = pcall(health.check)
   check(ok, "check() does not throw" .. (ok and "" or (" (err=" .. tostring(err) .. ")")))
@@ -62,7 +62,7 @@ do
     io.stdout:write(("[smoke] %s: %s\n"):format(captured[i].method:upper(), tostring(captured[i].msg)))
   end
 
-  vim.env.PI_EDITOR_BRIDGE = real_env
+  vim.env.PI_NVIM_BRIDGE = real_env
   vim.health = real_health
 end
 

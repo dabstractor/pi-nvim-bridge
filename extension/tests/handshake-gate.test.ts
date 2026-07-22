@@ -30,7 +30,7 @@ import {
 	__resetHandlersForTest,
 	type ConnectionState,
 } from "../connection.ts";
-import { makeHelloHandler, BRIDGE_VERSION } from "../pi-editor-bridge.ts";
+import { makeHelloHandler, BRIDGE_VERSION } from "../pi-nvim-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 const TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -183,7 +183,7 @@ test("REAL: pre-handshake ping ⇒ -32600, then hello ⇒ HelloResult, then ping
 			version: BRIDGE_VERSION,
 		}),
 	);
-	const sockpath = join(tmpdir(), `pi-editor-gate-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-gate-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");

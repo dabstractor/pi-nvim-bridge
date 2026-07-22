@@ -7,7 +7,7 @@ description: |
   (`JsonRpcRequest`/`JsonRpcResponse`/`JsonRpcNotification`) with `string` `id`,
   `method: string`, `params?: unknown`, and error `{ code: number; message: string }`;
   (b) `BridgeDescriptor` (`{ transport:"unix"; path; token; pid; cwd; fdAvailable;
-  serverVersion }`) JSON-serialized later to `process.env.PI_EDITOR_BRIDGE`; (c) a
+  serverVersion }`) JSON-serialized later to `process.env.PI_NVIM_BRIDGE`; (c) a
   `BridgeMethod` name union + named params/result interfaces for all 8 §5.4 methods
   (`hello`, `ping`, `getSuggestions`, `applyCompletion`,
   `shouldTriggerFileCompletion`, `getCommands`, `commandsChanged`, `bye`) matching
@@ -31,7 +31,7 @@ description: |
 **Feature Goal**: A self-contained, types-only `extension/protocol.ts` that is
 the authoritative wire contract for the entire pi-editor-bridge IPC layer, so
 that every later task — the M2 socket server (`onConnection`/dispatcher S8,
-handshake S9, RPC handlers S11–S14), the S16 `PI_EDITOR_BRIDGE` env-var
+handshake S9, RPC handlers S11–S14), the S16 `PI_NVIM_BRIDGE` env-var
 advertisement, and the S15 JSON-RPC error wrapping — imports these exact types
 instead of re-deriving shapes. The module provides the three raw JSON-RPC 2.0
 envelopes (the parse targets for a JSONL line), a `BridgeDescriptor` for the env
@@ -91,7 +91,7 @@ parses it, it narrows `JsonRpcMessage` → `JsonRpcRequest`, switches on
 `method`, then narrows `params` via `BridgeParams<typeof method>` and returns a
 `BridgeResult<typeof method>` — all type-checked against THIS module. The S16
 task builds a `BridgeDescriptor` literal and `JSON.stringify`s it to
-`process.env.PI_EDITOR_BRIDGE`. Without a single source of truth, each task
+`process.env.PI_NVIM_BRIDGE`. Without a single source of truth, each task
 re-derives the wire shapes and drifts.
 
 **Pain Points Addressed**: PRD §5 specifies the protocol prose + a table; without
@@ -543,7 +543,7 @@ export type JsonRpcMessage = JsonRpcRequest | JsonRpcResponse | JsonRpcNotificat
 
 // ============================================================================
 // 2. BRIDGE DESCRIPTOR  (item contract (d) — exact fields)
-//    JSON.stringify'd to process.env.PI_EDITOR_BRIDGE in S16; vim.json.decode'd
+//    JSON.stringify'd to process.env.PI_NVIM_BRIDGE in S16; vim.json.decode'd
 //    by the Lua client (PRD §7.1). MUST be plain JSON (no functions/undefined).
 // ============================================================================
 
@@ -552,7 +552,7 @@ export type JsonRpcMessage = JsonRpcRequest | JsonRpcResponse | JsonRpcNotificat
  *  added, make BridgeDescriptor a discriminated union on this field. */
 export type BridgeTransport = "unix";
 
-/** Connection descriptor advertised via process.env.PI_EDITOR_BRIDGE (S16).
+/** Connection descriptor advertised via process.env.PI_NVIM_BRIDGE (S16).
  *  Fields: path = socket path (`${tmpdir}/pi-editor-bridge-${uuid}.sock`, S5);
  *  token = the REAL auth boundary (PRD §5.1, §12 — socket perms 0o600 are
  *  defense-in-depth; the token is what the client must present in `hello`);
@@ -869,7 +869,7 @@ test("BridgeDescriptor carries all seven v1 fields with unix transport", () => {
 });
 
 test("per-method params/results match PRD §5.4 shapes", () => {
-	const hello: HelloParams = { token: "t", client: "pi-editor.nvim", clientVersion: "1.0" };
+	const hello: HelloParams = { token: "t", client: "pi-bridge.nvim", clientVersion: "1.0" };
 	const helloRes: HelloResult = { ok: true, serverVersion: "0.1.0", cwd: "/", fdAvailable: false };
 	const pingRes: PingResult = { ok: true, pid: 1, cwd: "/", fdAvailable: true, serverVersion: "0.1.0" };
 	const gs: GetSuggestionsParams = { lines: ["@/sr"], cursorLine: 0, cursorCol: 4, force: true };
@@ -966,7 +966,7 @@ INTERNAL consumers (later tasks, NOT this one — they import FROM protocol.ts):
   - S13 shouldTriggerFileCompletion — ShouldTriggerFileCompletionParams/Result.
   - S14 ping/bye/getCommands        — PingResult, ByeResult, GetCommandsResult (maps pi SlashCommandInfo[] → CommandInfo[]).
   - S15 error wrapping              — JsonRpcError + standard codes.
-  - S16 PI_EDITOR_BRIDGE env        — BridgeDescriptor (JSON.stringify'd).
+  - S16 PI_NVIM_BRIDGE env        — BridgeDescriptor (JSON.stringify'd).
   - S17 commandsChanged broadcast   — TypedNotification<"commandsChanged">.
   - Lua client (P2.M5)              — consumes the JSON shapes (no TS import; the
         wire is the contract). coords.lua (S28/S29) implements the UTF-16 cursorCol semantics documented in JSDoc.

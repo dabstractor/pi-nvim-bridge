@@ -1,6 +1,6 @@
 -- === plugin/tests/blink_source_spec.lua — plenary/busted spec (the Level-2 gate) ===
 -- Covers every Success Criterion from PRP P4.M12.T29.S45. MOCKS the bridge (sets
--- require("pi-editor").bridge = fake with controllable request/cancel/is_connected) so it
+-- require("pi-bridge").bridge = fake with controllable request/cancel/is_connected) so it
 -- tests the supersession / item-mapping / execute logic FAST without a socket (the bridge
 -- transport is already exhaustively tested by bridge_request_spec). Mirrors the
 -- vim.wait(ms, predicate, interval) async style of completion_spec.lua.
@@ -11,8 +11,8 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/blink_source_spec.lua")'
-local blink = require("pi-editor.blink_source")
-local pi = require("pi-editor")
+local blink = require("pi-bridge.blink_source")
+local pi = require("pi-bridge")
 
 if pi.config == nil then pi.setup({ debounce_ms = 10 }) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -73,7 +73,7 @@ end
 local function reset()
   pi.bridge = nil
   -- reset the module-level supersession state (current_id / inflight_id)
-  pcall(function() require("pi-editor.blink_source")._reset_for_test() end)
+  pcall(function() require("pi-bridge.blink_source")._reset_for_test() end)
 end
 
 --- Wait helper: vim.wait until `predicate()` is true (mirrors completion_spec).
@@ -94,7 +94,7 @@ local function make_ctx(bufnr, id)
   }
 end
 
-describe("pi-editor.blink_source", function()
+describe("pi-bridge.blink_source", function()
   before_each(reset)
   after_each(reset)
 
@@ -108,7 +108,7 @@ describe("pi-editor.blink_source", function()
     assert.are.equals("function", type(src.execute))
     -- new() ignores opts (pi config read live)
     assert.is_not_nil(blink.new(nil))
-    assert.is_not_nil(blink.new({ name = "pi", module = "pi-editor.blink_source" }))
+    assert.is_not_nil(blink.new({ name = "pi", module = "pi-bridge.blink_source" }))
   end)
 
   -- (2) get_trigger_characters contains "/" + "@"

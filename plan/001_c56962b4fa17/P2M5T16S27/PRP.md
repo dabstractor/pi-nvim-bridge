@@ -1,7 +1,7 @@
 ---
 name: "P2.M5.T16.S27 — Notification handler for commandsChanged (Neovim client)"
 description: >
-  Add the THIRD protocol consumer to the pi-editor.nvim bridge client
+  Add the THIRD protocol consumer to the pi-bridge.nvim bridge client
   (`plugin/lua/pi-editor/bridge.lua`): a notification dispatch branch + a public
   `on_notification(method, handler)` registration API so a server→client `commandsChanged`
   notification (JSON-RPC 2.0: a message with `method` and NO `id`) routes to a handler the
@@ -116,7 +116,7 @@ notification consumer keys on.
 
 User-visible: nothing directly (this is a library layer beneath completion). The observable
 effect is that `require("pi-editor").bridge` gains an `on_notification` method once the S25
-handshake publishes it; a dormant session (no `PI_EDITOR_BRIDGE`) still has `pi.bridge == nil`
+handshake publishes it; a dormant session (no `PI_NVIM_BRIDGE`) still has `pi.bridge == nil`
 and never touches this code.
 
 Technical requirements:
@@ -683,10 +683,10 @@ cd plugin && nvim --headless --clean -u NORC +"luafile tests/smoke.lua" +qa ; ec
 # Level-2 spec IS the e2e proof for the client half; this block documents the manual cross-check.)
 
 # 1. From a shell, start the bridge extension's server standalone (or via pi in tui mode) so the socket
-#    is up and PI_EDITOR_BRIDGE is set in pi's process env.
+#    is up and PI_NVIM_BRIDGE is set in pi's process env.
 # 2. Launch headless nvim from that env, register a handler, and assert it fires:
 TMP=$(mktemp --suffix=.pi.md); echo "hello world" > "$TMP"
-PI_EDITOR_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/minimal_init.lua \
+PI_NVIM_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/minimal_init.lua \
   +"luafile plugin/plugin/pi-editor.lua" \
   -c 'lua vim.defer_fn(function()
         local pi=require("pi-editor")
@@ -705,7 +705,7 @@ PI_EDITOR_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/
 # Expected (when a broadcast is forced): stdout "E2E_NOTIFY fired; params=nil", exit 0.
 
 # NEGATIVE e2e — on_notification before the handshake (pi.bridge still nil) must not crash:
-PI_EDITOR_BRIDGE='' nvim --headless --clean -u plugin/tests/minimal_init.lua +"luafile plugin/plugin/pi-editor.lua" \
+PI_NVIM_BRIDGE='' nvim --headless --clean -u plugin/tests/minimal_init.lua +"luafile plugin/plugin/pi-editor.lua" \
   -c 'lua vim.defer_fn(function()
         local pi=require("pi-editor")
         assert(pi.bridge == nil, "no-env bridge must be nil")

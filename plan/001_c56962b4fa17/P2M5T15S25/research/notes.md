@@ -24,7 +24,7 @@
 
 **Client → Server (sent inside the S24 `on_ready(nil)` callback, i.e. once `state.connected==true`):**
 ```jsonc
-{"jsonrpc":"2.0","id":"h1","method":"hello","params":{"token":"<desc.token>","client":"pi-editor.nvim","clientVersion":"0.1.0"}}
+{"jsonrpc":"2.0","id":"h1","method":"hello","params":{"token":"<desc.token>","client":"pi-bridge.nvim","clientVersion":"0.1.0"}}
 ```
 Framed by `bridge.send(obj)` → `vim.json.encode(obj).."\n"` (S24 GOTCHA 11). The `id` is the
 literal **`"h1"`** — matches PRD §5.3 example AND the server's `hello-handler.test.ts`; the
@@ -170,7 +170,7 @@ selects the server behavior: `"success"` (echo HelloResult on token match), `"ba
 (reply `-32600` + close), `"close_silent"` (accept then close with no reply), `"slow"` (never
 reply, to exercise the timeout). Each test gets a unique socket path (isolation). Cases:
 
-1. success: sends `hello` with `id=="h1"` + `params.token==<expected>` + `client=="pi-editor.nvim"`;
+1. success: sends `hello` with `id=="h1"` + `params.token==<expected>` + `client=="pi-bridge.nvim"`;
    `on_result(nil, info)` with `info.serverVersion/cwd/fdAvailable`; `pi.bridge ~= nil`; `M.server_info` set.
 2. bad token: server replies `-32600`; `on_result(err)` (err mentions `-32600`/`bad token`); `pi.bridge == nil`; transport closed.
 3. malformed-but-id response (`{id:"h1"}` with no result/error): treated as failure; `pi.bridge == nil`.

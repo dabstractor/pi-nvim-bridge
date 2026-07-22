@@ -272,7 +272,7 @@ handling — both resolved in §3 above with explicit reasoning.
   method-agnostic — it doesn't need to know which methods exist.)
 - S15: wrapping each handler's OWN domain errors into `BridgeRpcError` codes.
   (The gate uses `sendError` directly; it doesn't throw.)
-- S16: `process.env.PI_EDITOR_BRIDGE` advertisement.
+- S16: `process.env.PI_NVIM_BRIDGE` advertisement.
 - S17: `commandsChanged` S→C notification.
 - "Reject by CLOSING": explicitly NOT doing this (§3). If wanted later, it's a
   one-line `try { sock.end() } catch {}` addition — but the PRD doesn't require

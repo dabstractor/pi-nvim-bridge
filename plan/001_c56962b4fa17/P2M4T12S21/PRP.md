@@ -5,7 +5,7 @@ description: |
   S19). This is the plugin's **activation gate**: the single place that decides whether
   pi-editor does anything in a given Neovim session. On `VimEnter` the auto-sourced shim
   (S20, COMPLETE) calls `require("pi-editor").activate()`. `activate()` reads the bridge
-  descriptor from `vim.env[M.config.env_var or "PI_EDITOR_BRIDGE"]`, validates it, and —
+  descriptor from `vim.env[M.config.env_var or "PI_NVIM_BRIDGE"]`, validates it, and —
   ONLY on a valid Unix-transport descriptor — (e) stores it on a new `M.descriptor` field
   and (f) marks the current buffer's filetype as `"pi-prompt"` (the handshake that will
   trigger S22's `ftplugin/pi-prompt.lua` when that ships). Every other case (env var
@@ -28,10 +28,10 @@ description: |
 
 ## Goal
 
-**Feature Goal**: Add the VimEnter **activation gate** to `pi-editor.nvim` by implementing
+**Feature Goal**: Add the VimEnter **activation gate** to `pi-bridge.nvim` by implementing
 `M.activate()` (plus a typed `M.descriptor` field) in the existing
 `plugin/lua/pi-editor/init.lua`. `activate()` is the sole decision point that turns the
-plugin from dormant to active: it reads + JSON-validates the `PI_EDITOR_BRIDGE` env var
+plugin from dormant to active: it reads + JSON-validates the `PI_NVIM_BRIDGE` env var
 that pi's bridge extension writes (`extension/pi-editor-bridge.ts:startBridge`,
 P1.M3.T8.S16 — DONE), and on a valid Unix descriptor it stores it and flags the current
 buffer as a pi prompt. The auto-sourced shim (S20 — DONE) already calls
@@ -62,7 +62,7 @@ call actually do the gate work.
 - **Valid JSON but not an object** (`"123"` decodes to a Lua number) → returns `nil`, no
   throw (the `type(desc) == "table"` guard prevents `desc.transport` from throwing).
 - **`transport == "tcp"`** → returns `nil`, dormant (v1 is Unix-only).
-- **`config.env_var` override** → reads the custom env-var name instead of `PI_EDITOR_BRIDGE`.
+- **`config.env_var` override** → reads the custom env-var name instead of `PI_NVIM_BRIDGE`.
 - **`M.config == nil`** (user never called `setup()`) → `activate()` self-initializes via
   `M.setup({})` and still works (no error).
 - End-to-end (Level 3): the REAL S20 shim's `VimEnter` callback runs the REAL `activate()`
@@ -74,13 +74,13 @@ call actually do the gate work.
 
 ## User Persona (if applicable)
 
-**Target User**: The `pi-editor.nvim` plugin author and the downstream implementers of
+**Target User**: The `pi-bridge.nvim` plugin author and the downstream implementers of
 **S22** (ftplugin), **S24** (bridge.lua), **S28** (coords), **S30+** (completion), **S39**
 (failure notify), **S42** (health). This is the activation seam, not end-user-facing.
 
 **Use Case**: Wires the (complete) S20 VimEnter shim to the (complete, P1) bridge
 extension's env-var advertisement. Once S21 lands, a pi-launched `nvim` whose env carries
-`PI_EDITOR_BRIDGE` activates and flags its buffer as a pi prompt; every other nvim session
+`PI_NVIM_BRIDGE` activates and flags its buffer as a pi prompt; every other nvim session
 stays inert. De-risks "does the env var survive the spawn, and can we validate it safely
 without ever crashing VimEnter?" before any socket/completion logic (M5+) lands.
 
@@ -129,7 +129,7 @@ Technical requirements (the `activate()` body — exact, LIVE-VERIFIED):
 - `function M.activate()`:
   1. `if M.config == nil then M.setup({}) end` (self-init — GOTCHA D; `M.config` may be nil
      if the user never called `setup()`, e.g. the future NVIM_APPNAME minimal config S47).
-  2. `local env_name = M.config.env_var or "PI_EDITOR_BRIDGE"` (S19 forward contract).
+  2. `local env_name = M.config.env_var or "PI_NVIM_BRIDGE"` (S19 forward contract).
   3. `local raw = vim.env[env_name]`
   4. `if raw == nil then return nil end` — dormant (GOTCHA: `vim.env[unset]` returns nil).
   5. `local ok, desc = pcall(vim.json.decode, raw)` — decode **THROWS** on bad JSON (GOTCHA B).
@@ -206,7 +206,7 @@ Level-3 end-to-end command) is spelled out too.
 
 - url: https://neovim.io/doc/user/lua.html#vim.env
   why: "vim.env.NAME reads an env var; returns nil for unset (no error); assignable +
-        clearable (vim.env.NAME = nil clears). This is how activate() reads PI_EDITOR_BRIDGE
+        clearable (vim.env.NAME = nil clears). This is how activate() reads PI_NVIM_BRIDGE
         and how tests inject/clear it."
   critical: "LIVE-VERIFIED: vim.env.UNSET == nil (nil, not error). So `if raw == nil` is the
              correct dormancy guard."
@@ -236,7 +236,7 @@ Level-3 end-to-end command) is spelled out too.
         stays identical to the extension's advertisement."
 
 - file: extension/pi-editor-bridge.ts
-  why: "The COMPLETE extension that WRITES process.env.PI_EDITOR_BRIDGE in startBridge().
+  why: "The COMPLETE extension that WRITES process.env.PI_NVIM_BRIDGE in startBridge().
         Confirms the env-var name and single-line-JSON shape that activate() parses."
 
 - file: plan/001_c56962b4fa17/architecture/system_context.md
@@ -246,11 +246,11 @@ Level-3 end-to-end command) is spelled out too.
 
 - file: plan/001_c56962b4fa17/P2M4T11S20/PRP.md
   why: "The predecessor (the shim). Its FORWARD CONTRACTS section states 'S21 adds
-        M.activate() to init.lua and implements the PI_EDITOR_BRIDGE read + gate' — this
+        M.activate() to init.lua and implements the PI_NVIM_BRIDGE read + gate' — this
         task fulfills that contract. Also the source of the runtimepath/--cmd timing gotcha."
 
 - file: plan/001_c56962b4fa17/P2M4T11S19/PRP.md
-  why: "The S19 module's spec. Confirms `M.config.env_var or 'PI_EDITOR_BRIDGE'` is the
+  why: "The S19 module's spec. Confirms `M.config.env_var or 'PI_NVIM_BRIDGE'` is the
         intended read (env_var is optional, NOT in defaults) and that setup() is
         side-effect-free — activate() reuses it for self-init."
 
@@ -265,7 +265,7 @@ Level-3 end-to-end command) is spelled out too.
 ```bash
 pi-nvim-bridge/                  # repo root (monorepo: extension/ + plugin/)
 ├── extension/                   # P1 — pi-editor-bridge (TypeScript) — COMPLETE
-│   ├── pi-editor-bridge.ts      # writes process.env.PI_EDITOR_BRIDGE in startBridge()
+│   ├── pi-editor-bridge.ts      # writes process.env.PI_NVIM_BRIDGE in startBridge()
 │   └── protocol.ts              # BridgeDescriptor type (the env-var payload) — MIRROR this
 ├── plugin/                      # <-- Neovim plugin root (the runtimepath entry)
 │   ├── lua/pi-editor/init.lua   # S19 (DONE) — MODIFY HERE: add M.descriptor + M.activate()
@@ -380,7 +380,7 @@ plugin/                          # runtimepath entry (unchanged)
 --   activate_smoke.lua exists (and why the spec is a plenary file, not an inline -c chunk).
 
 -- GOTCHA J — clearing an env var in a test: `vim.env.NAME = nil` (NOT os.setenv).
--- LIVE-VERIFIED: `vim.env.PI_EDITOR_BRIDGE = nil` makes the next `vim.env[NAME]` read return
+-- LIVE-VERIFIED: `vim.env.PI_NVIM_BRIDGE = nil` makes the next `vim.env[NAME]` read return
 --   nil. Use this in before_each to guarantee a clean dormant baseline. (Setting it:
 --   `vim.env.NAME = '<json>'.`)
 ```
@@ -436,7 +436,7 @@ Task 2: CREATE plugin/tests/activate_smoke.lua  (plenary-FREE fast smoke — the
         requires "pi-editor", and runs check(cond,msg) assertions covering: activate is a fn;
         descriptor nil pre-activate; no-env→dormant+filetype-untouched; valid→activates+
         descriptor+filetype=pi-prompt. Calls vim.cmd('cquit 1') on any failure (reliable exit).
-  - ENV handling: set `vim.env.PI_EDITOR_BRIDGE = nil` before the dormant check; set it to a
+  - ENV handling: set `vim.env.PI_NVIM_BRIDGE = nil` before the dormant check; set it to a
         valid JSON string before the activate check. `vim.bo[0].filetype = ""` to assert
         "untouched" deterministically.
   - WHY: instant, dependency-free feedback (no plenary). activate_spec.lua is the formal suite.
@@ -446,7 +446,7 @@ Task 2: CREATE plugin/tests/activate_smoke.lua  (plenary-FREE fast smoke — the
 
 Task 3: CREATE plugin/tests/activate_spec.lua  (plenary/busted spec — the Level-2 gate)
   - CONTENT (see Implementation Patterns): a describe("pi-editor.activate gate", …) block.
-        before_each: `package.loaded["pi-editor"] = nil`; require fresh; `vim.env.PI_EDITOR_BRIDGE
+        before_each: `package.loaded["pi-editor"] = nil`; require fresh; `vim.env.PI_NVIM_BRIDGE
         = nil`; `pi.descriptor = nil`; `vim.bo[0].filetype = ""` (clean dormant baseline each test).
         Cover ALL Success Criteria as `it` blocks: (1) activate is a fn; (2) descriptor nil
         pre-activate; (3) no-env→dormant+filetype-untouched; (4) valid unix→activates+descriptor
@@ -498,7 +498,7 @@ M.descriptor = nil
 ---
 --- Called once per session by the auto-sourced shim (`plugin/pi-editor.lua`). Reads the
 --- bridge descriptor from the env var named by |pi-editor.Config.env_var| (default
---- "PI_EDITOR_BRIDGE"), validates it, and — ONLY on success — stores it on |descriptor|
+--- "PI_NVIM_BRIDGE"), validates it, and — ONLY on success — stores it on |descriptor|
 --- and marks the current buffer as a pi prompt (`vim.bo.filetype = "pi-prompt"`).
 ---
 --- DORMANT BY DESIGN (PRD §7.1, §11): in every ordinary (non-pi) nvim session the env var
@@ -517,7 +517,7 @@ function M.activate()
   -- Self-sufficient if the user's config never called setup() (e.g. the NVIM_APPNAME minimal
   -- config, S47). setup({}) applies the documented defaults and sets M.config. (GOTCHA D)
   if M.config == nil then M.setup({}) end
-  local env_name = M.config.env_var or "PI_EDITOR_BRIDGE"
+  local env_name = M.config.env_var or "PI_NVIM_BRIDGE"
   local raw = vim.env[env_name]
   if raw == nil then return nil end                       -- (b) no env var -> dormant
   local ok, desc = pcall(vim.json.decode, raw)            -- (c) decode (THROWS -> pcall)
@@ -553,14 +553,14 @@ check(type(pi.activate) == "function", "activate is not a function")
 check(pi.descriptor == nil, "descriptor should be nil before activate")
 
 -- Dormant: no env var.
-vim.env.PI_EDITOR_BRIDGE = nil
+vim.env.PI_NVIM_BRIDGE = nil
 vim.bo[0].filetype = ""
 check(pi.activate() == nil, "no env var -> activate should return nil")
 check(pi.descriptor == nil, "no env var -> descriptor should stay nil")
 check(vim.bo[0].filetype == "", "no env var -> filetype should be untouched")
 
 -- Activate: valid Unix descriptor.
-vim.env.PI_EDITOR_BRIDGE =
+vim.env.PI_NVIM_BRIDGE =
   '{"transport":"unix","path":"/tmp/x.sock","token":"t","pid":2,"cwd":"/p","fdAvailable":false,"serverVersion":"0.1.0"}'
 local d = pi.activate()
 check(d ~= nil, "valid descriptor -> activate should return non-nil")
@@ -585,7 +585,7 @@ describe("pi-editor.activate gate", function()
   before_each(function()
     package.loaded["pi-editor"] = nil   -- fresh module per test
     pi = require("pi-editor")
-    vim.env.PI_EDITOR_BRIDGE = nil      -- clean dormant baseline
+    vim.env.PI_NVIM_BRIDGE = nil      -- clean dormant baseline
     pi.descriptor = nil
     vim.bo[0].filetype = ""             -- deterministic "untouched" assertion
   end)
@@ -611,7 +611,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("valid unix descriptor -> activates (descriptor fields set, filetype=pi-prompt)", function()
-    vim.env.PI_EDITOR_BRIDGE = valid_desc()
+    vim.env.PI_NVIM_BRIDGE = valid_desc()
     local r = pi.activate()
     assert.is_not_nil(r)
     assert.are.equals("/tmp/a.sock", pi.descriptor.path)
@@ -621,7 +621,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("malformed JSON -> dormant, no throw (pcall ok)", function()
-    vim.env.PI_EDITOR_BRIDGE = "{not json"
+    vim.env.PI_NVIM_BRIDGE = "{not json"
     local ok, r = pcall(pi.activate)
     assert.is_true(ok)          -- proves activate did not throw
     assert.is_nil(r)
@@ -629,7 +629,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("valid-JSON-number (123) -> dormant via the type guard, no throw", function()
-    vim.env.PI_EDITOR_BRIDGE = "123"
+    vim.env.PI_NVIM_BRIDGE = "123"
     local ok, r = pcall(pi.activate)
     assert.is_true(ok)          -- the type() guard prevented desc.transport from throwing
     assert.is_nil(r)
@@ -637,7 +637,7 @@ describe("pi-editor.activate gate", function()
   end)
 
   it("transport=tcp -> dormant (v1 is Unix-only)", function()
-    vim.env.PI_EDITOR_BRIDGE = '{"transport":"tcp","path":"x","token":"t"}'
+    vim.env.PI_NVIM_BRIDGE = '{"transport":"tcp","path":"x","token":"t"}'
     local r = pi.activate()
     assert.is_nil(r)
     assert.is_nil(pi.descriptor)
@@ -653,7 +653,7 @@ describe("pi-editor.activate gate", function()
 
   it("self-initializes config when setup() was not called (no error)", function()
     pi.config = nil             -- simulate user never calling setup()
-    vim.env.PI_EDITOR_BRIDGE = valid_desc()
+    vim.env.PI_NVIM_BRIDGE = valid_desc()
     local r = pi.activate()
     assert.is_not_nil(r)
     assert.is_not_nil(pi.config)          -- setup({}) ran inside activate()
@@ -765,7 +765,7 @@ nvim --headless --clean -u NORC --cmd "lua vim.opt.runtimepath:append('$PLUGIN_R
 
 echo "--- (b) VALID env var: VimEnter -> activate runs -> filetype=pi-prompt + descriptor stored ---"
 nvim --headless --clean -u NORC --cmd "lua vim.opt.runtimepath:append('$PLUGIN_ROOT')" \
-  +"lua vim.env.PI_EDITOR_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/real.sock\",\"token\":\"sekret\",\"pid\":99,\"cwd\":\"/proj\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
+  +"lua vim.env.PI_NVIM_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/real.sock\",\"token\":\"sekret\",\"pid\":99,\"cwd\":\"/proj\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
   +"lua vim.api.nvim_exec_autocmds('VimEnter', {})" \
   +"lua local d=require('pi-editor').descriptor; print('activated: filetype=['..vim.bo[0].filetype..'] path='..tostring(d and d.path)..' token='..tostring(d and d.token))" \
   +qa 2>&1 | grep -v 'E216\|filetypedetect'
@@ -794,7 +794,7 @@ nvim --headless --clean -u NORC +"lua
 #     activate() returns nil and the process exits 0.
 PLUGIN_ROOT="$(pwd)/plugin"
 nvim --headless --clean -u NORC --cmd "lua vim.opt.runtimepath:append('$PLUGIN_ROOT')" \
-  +"lua vim.env.PI_EDITOR_BRIDGE='123'" \
+  +"lua vim.env.PI_NVIM_BRIDGE='123'" \
   +"lua local ok,r=pcall(require('pi-editor').activate); io.stdout:write('number-env: ok='..tostring(ok)..' r='..tostring(r)..'\n')" \
   +qa 2>&1 | grep '^number-env:'
 echo "   ^ Expected: number-env: ok=true r=nil   (the type() guard saved desc.transport)"
@@ -809,7 +809,7 @@ nvim --headless --clean -u NORC --cmd "lua vim.opt.runtimepath:append('$PLUGIN_R
 
 # 4c. Malformed env var is dormant SILENTLY (no throw escapes the VimEnter callback).
 nvim --headless --clean -u NORC --cmd "lua vim.opt.runtimepath:append('$PLUGIN_ROOT')" \
-  +"lua vim.env.PI_EDITOR_BRIDGE='{broken'" \
+  +"lua vim.env.PI_NVIM_BRIDGE='{broken'" \
   +"lua vim.bo[0].filetype=''" \
   +"lua local ok=pcall(vim.api.nvim_exec_autocmds,'VimEnter',{}); print('malformed: ok='..tostring(ok)..' ft=['..vim.bo[0].filetype..']')" \
   +qa 2>&1 | grep '^malformed:'
@@ -859,7 +859,7 @@ nvim --headless --clean -u NORC --cmd "lua vim.opt.runtimepath:append('$PLUGIN_R
 
 - [ ] [Mode A] docstring explains dormant-by-design, the 4 dormancy paths, never-throws/
       never-notifies, and the scope boundary (does NOT connect bridge / does NOT set opts).
-- [ ] No new env vars introduced (this READS `PI_EDITOR_BRIDGE`, set by the P1 extension).
+- [ ] No new env vars introduced (this READS `PI_NVIM_BRIDGE`, set by the P1 extension).
 - [ ] No config files, no socket, no RPC (the only side effects are storing a table + filetype).
 - [ ] (README / `doc/pi-editor.txt` are separate tasks — S43/S44, NOT this task.)
 

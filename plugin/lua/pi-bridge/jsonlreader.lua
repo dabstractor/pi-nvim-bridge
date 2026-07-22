@@ -1,4 +1,4 @@
---- jsonlreader.lua — strict-JSONL framing + decode for the pi-editor.nvim bridge CLIENT.
+--- jsonlreader.lua — strict-JSONL framing + decode for the pi-bridge.nvim bridge CLIENT.
 --
 -- Lua twin of the DONE extension-side `extension/jsonl-reader.ts` (P1.M2.T4.S7 — the
 -- authoritative framing mirror, PRD §16), ported to Lua's byte-string model and to the
@@ -43,14 +43,14 @@ local M = {}
 ---
 --- Use inside a luv `pipe:read_start` callback (PRD §7.3):
 --- >
----   local rx = require("pi-editor.jsonlreader").new(function(msg) ... end)
+---   local rx = require("pi-bridge.jsonlreader").new(function(msg) ... end)
 ---   pipe:read_start(function(err, chunk)
 ---     if err then return end            -- socket error -> bridge.lua handles
 ---     if chunk == nil then rx:flush()    -- EOF (data==nil, err==nil) -> final line
 ---     else rx:feed(chunk) end
 ---   end)
 --- <
----@class pi-editor.JsonlReader
+---@class pi-bridge.JsonlReader
 ---@field private buffer string Pending partial-line bytes accumulated across feed() calls.
 ---@field private on_message fun(msg:table) Called once per decoded JSON-RPC message.
 ---@field private on_error? fun(line:string, err:string) Optional decode-error callback.
@@ -62,7 +62,7 @@ local M = {}
 ---@param on_error? fun(line:string, err:string) Called when `vim.json.decode` throws on a
 ---  NON-empty line (the raw line string + the decode error string). If omitted, decode
 ---  failures are SILENT (PRD §11 silent-degrade). Never throws.
----@return pi-editor.JsonlReader reader A new reader with `feed`/`flush`/`reset` methods.
+---@return pi-bridge.JsonlReader reader A new reader with `feed`/`flush`/`reset` methods.
 function M.new(on_message, on_error)
   assert(type(on_message) == "function", "jsonlreader.new: on_message must be a function")
   -- GOTCHA 11: setmetatable {__index = M} so `rx:feed(chunk)` -> `M.feed(rx, chunk)`.
@@ -84,7 +84,7 @@ end
 --- `on_message(table)` on success — or `on_error(line, err)` on failure (silent if
 --- `on_error` is unset). Never throws.
 ---
----@param self pi-editor.JsonlReader
+---@param self pi-bridge.JsonlReader
 ---@param chunk string The raw byte chunk from a luv `read_start` callback.
 function M.feed(self, chunk)
   self.buffer = self.buffer .. chunk
@@ -116,7 +116,7 @@ end
 --- `onEnd`). Call on EOF — the luv `read_start` callback receiving `data == nil, err ==
 --- nil`. No-op on an empty buffer. Never throws.
 ---
----@param self pi-editor.JsonlReader
+---@param self pi-bridge.JsonlReader
 function M.flush(self)
   if self.buffer == "" then
     return -- GOTCHA 10: no-op on an empty buffer (no spurious empty-line decode)
@@ -139,7 +139,7 @@ end
 --- Clear the internal buffer (drop any partial line). For reconnect / test isolation.
 --- Does NOT decode or emit. Cheap; idempotent.
 ---
----@param self pi-editor.JsonlReader
+---@param self pi-bridge.JsonlReader
 function M.reset(self)
   self.buffer = ""
 end

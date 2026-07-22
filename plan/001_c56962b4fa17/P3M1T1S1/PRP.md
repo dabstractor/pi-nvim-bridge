@@ -1,7 +1,7 @@
 ---
 name: "P3.M10.T24.S39 (PRP path P3M1T1S1) — Graceful failure: degrade to normal buffer with single notify"
 description: |
-  **IMPLEMENT the graceful-degradation MECHANISM + state** for `pi-editor.nvim` (logical id
+  **IMPLEMENT the graceful-degradation MECHANISM + state** for `pi-bridge.nvim` (logical id
   **S39** / P3.M10.T24.S39; PRP output dir `P3M1T1S1`). PRD §11: "If `connect()` fails or `hello`
   errors, the plugin must degrade silently to a normal buffer (no completion), optionally with a
   single `vim.notify` the first time. Never block startup or spam." Also: "pi process dies while
@@ -39,7 +39,7 @@ description: |
 ## Goal
 
 **Feature Goal**: Add the graceful-failure / single-notify resilience layer to
-`pi-editor.nvim` so that **any** bridge connection failure (connect refused, bad handshake, or
+`pi-bridge.nvim` so that **any** bridge connection failure (connect refused, bad handshake, or
 the pi process dying mid-session → pipe EOF) degrades the buffer to a *normal, fully-editable*
 markdown buffer with **no** completion and **at most one** `vim.notify(WARN)` the first time —
 never blocking startup, never spamming. This is the PRD §11 "silent degradation" requirement,

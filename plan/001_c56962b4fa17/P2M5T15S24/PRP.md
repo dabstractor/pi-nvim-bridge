@@ -2,7 +2,7 @@
 name: "P2.M5.T15.S24 — bridge.lua: luv pipe connect(), read_start (→jsonlreader), write helper"
 description: |
   **CREATE `plugin/lua/pi-editor/bridge.lua`** — the luv (`vim.uv`) Unix-domain-socket CLIENT for the
-  pi-editor.nvim bridge. It owns exactly the TRANSPORT layer of parent task P2.M5.T15 ("Socket client &
+  pi-bridge.nvim bridge. It owns exactly the TRANSPORT layer of parent task P2.M5.T15 ("Socket client &
   handshake"): create a pipe, connect to the socket path from the (DONE, S21) `descriptor.path`, wire
   `read_start` to the (DONE, S23) `jsonlreader` so every decoded JSON-RPC message reaches an
   `on_event(table)` callback, expose a `send(obj)` write helper (`vim.json.encode(obj).."\n"` →
@@ -42,7 +42,7 @@ description: |
 ## Goal
 
 **Feature Goal**: Create `plugin/lua/pi-editor/bridge.lua` — the luv (`vim.uv`) Unix-domain-socket
-**client** for the pi-editor.nvim bridge. Given the socket `path` from the (DONE, S21) parsed
+**client** for the pi-bridge.nvim bridge. Given the socket `path` from the (DONE, S21) parsed
 `descriptor`, it opens a `vim.uv.new_pipe(false)`, connects, wires `read_start` to the (DONE, S23)
 `jsonlreader` (so every newline-delimited JSON-RPC message is framed + decoded into a Lua table and
 delivered to an `on_event(table)` callback), exposes a `send(obj)` write helper that serializes a
@@ -96,7 +96,7 @@ unit-tested CLIENT counterpart of the COMPLETE extension-side IPC server (`conne
 
 ## User Persona (if applicable)
 
-**Target User**: The `pi-editor.nvim` plugin author and the downstream implementers of **S25**
+**Target User**: The `pi-bridge.nvim` plugin author and the downstream implementers of **S25**
 (`hello` handshake), **S26** (`request()` RPC id-correlation/supersession), **S27** (`commandsChanged`
 notification handler), and **S38** (autosave + bridge teardown body). `bridge.lua` is the transport
 substrate all of them compose. End users never see it; they experience it as "the completion menu shows
@@ -297,7 +297,7 @@ is reported ONLY in the write callback (so `send` MUST always pass a callback th
 
 - file: extension/pi-editor-bridge.ts
   why: "The server ENTRY (COMPLETE). Shows startBridge(): socket path = ${tmpdir}/pi-editor-bridge-
-        <uuid>.sock, chmod 0o600, and process.env.PI_EDITOR_BRIDGE = JSON.stringify({transport:'unix',
+        <uuid>.sock, chmod 0o600, and process.env.PI_NVIM_BRIDGE = JSON.stringify({transport:'unix',
         path, token, pid, cwd, fdAvailable, serverVersion}) — the descriptor S21 parses (descriptor.path
         is what S24 connects to). Confirms the server is alive for the whole session (S24's client can
         assume a stable path once the descriptor is read)."
@@ -365,7 +365,7 @@ pi-nvim-bridge/                  # repo root (monorepo: extension/ + plugin/)
 ├── extension/                   # P1 — pi-editor-bridge (TypeScript) — COMPLETE (the SERVER counterpart)
 │   ├── jsonl-reader.ts          # serializeJsonLine = JSON.stringify(v)+'\n' (S7, DONE) — S24's send() twin
 │   ├── connection.ts            # onConnection/sendResponse/sock.on('error')/'close' (S8, DONE) — S24's twin
-│   ├── pi-editor-bridge.ts      # startBridge(): socket path + PI_EDITOR_BRIDGE descriptor (DONE)
+│   ├── pi-editor-bridge.ts      # startBridge(): socket path + PI_NVIM_BRIDGE descriptor (DONE)
 │   └── tests/jsonl-reader.test.ts connection.test.ts ...  # the server test pattern (DONE)
 ├── plugin/                      # <-- Neovim plugin root (the runtimepath entry)
 │   ├── lua/pi-editor/
@@ -575,7 +575,7 @@ Task 3: CREATE plugin/tests/bridge_spec.lua  (plenary/busted spec — the Level-
 
 ```lua
 -- === plugin/lua/pi-editor/bridge.lua — the FULL reference implementation (LIVE-VERIFIED primitives) ===
--- luv (vim.uv) Unix-domain-socket CLIENT for the pi-editor.nvim bridge. Owns the TRANSPORT layer of
+-- luv (vim.uv) Unix-domain-socket CLIENT for the pi-bridge.nvim bridge. Owns the TRANSPORT layer of
 -- parent task P2.M5.T15 ("Socket client & handshake"): connect, read_start (→ jsonlreader), write
 -- helper, idempotent close. The CLIENT counterpart of the COMPLETE extension-side
 -- connection.ts + jsonl-reader.ts IPC server (P1.M2 — PRD §16).
@@ -924,7 +924,7 @@ MODULE SURFACE EXPOSED (the forward contracts S25/S26/S27/S38 consume):
 CONSUMER WIRING (NOT in S24 — S25's job):
   - S25 reads require("pi-editor").descriptor, calls bridge.connect(descriptor.path, …), and in
     on_ready(nil) sends hello via bridge.send({jsonrpc="2.0", id="h1", method="hello",
-    params={token=descriptor.token, client="pi-editor.nvim"}}). on_event validates the hello response
+    params={token=descriptor.token, client="pi-bridge.nvim"}}). on_event validates the hello response
     and then sets require("pi-editor").bridge = <rpc facade> (the S26 request() API). Until S25,
     require("pi-editor").bridge stays the nil placeholder (init.lua S19).
 

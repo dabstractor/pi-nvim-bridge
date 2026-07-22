@@ -100,7 +100,7 @@ field; M2/S16 compute the value):
   (`"transport":"tcp","host":"127.0.0.1","port":…`). For v1 the descriptor is
   unix-only; JSDoc notes the discriminated-union extension point for TCP.
 
-`BridgeDescriptor` is JSON-serialized to `process.env.PI_EDITOR_BRIDGE` (S16) and
+`BridgeDescriptor` is JSON-serialized to `process.env.PI_NVIM_BRIDGE` (S16) and
 `vim.json.decode`d by the Lua side (PRD §7.1). So it MUST be a plain JSON object
 (no functions, no `undefined`-valued optional fields). All fields are required
 (strings/number/boolean) — exactly as the contract enumerates.

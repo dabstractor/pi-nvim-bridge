@@ -1,7 +1,7 @@
 ---
 name: "P2.M4.T11.S20 — plugin/plugin/pi-editor.lua VimEnter auto-activation shim"
 description: |
-  **Create the startup auto-source shim** for `pi-editor.nvim` at
+  **Create the startup auto-source shim** for `pi-bridge.nvim` at
   `plugin/plugin/pi-editor.lua`. Neovim auto-sources `plugin/*.lua` at startup step 12
   (`:help load-plugins`), strictly **before** the `VimEnter` event fires at step 19
   (`:help VimEnter`) — so the shim can register a `VimEnter` autocmd that is guaranteed
@@ -15,7 +15,7 @@ description: |
   STATUS (planning): every validation command in this PRP was LIVE-VERIFIED against the
   installed Neovim 0.12.4 (+ plenary.nvim) — see `research/notes.md` transcript.
   NARROW scope guard — this task does NOT: implement `activate()` (**S21**), read or
-  parse `PI_EDITOR_BRIDGE` (**S21**), create `ftplugin/pi-prompt.lua` (**S22**),
+  parse `PI_NVIM_BRIDGE` (**S21**), create `ftplugin/pi-prompt.lua` (**S22**),
   `bridge.lua` (**S24**), or `health.lua` (**S42**), and it does NOT call `setup()`
   (that is the user's config per PRD §10.3).
 ---
@@ -51,7 +51,7 @@ must be a harmless no-op in every ordinary (non-pi) nvim session.
   `VimEnter` does not error and the process exits 0 (proves dormant-safe).
 - Re-sourcing the shim (`runtime plugin/pi-editor.lua`, e.g. `:source %` or a plugin
   manager reload) leaves **exactly 1** autocmd (proves `clear = true` idempotency).
-- The shim performs **no** activation work itself (it does not read `PI_EDITOR_BRIDGE`,
+- The shim performs **no** activation work itself (it does not read `PI_NVIM_BRIDGE`,
   does not call `setup()`, does not require `bridge.lua`) — verified by code inspection
   + the "no env var, no mock" session sourcing cleanly with no pi-editor errors.
 - `nvim --headless --clean -u NORC` smoke test prints `SMOKE_PASS` / exit 0.
@@ -59,7 +59,7 @@ must be a harmless no-op in every ordinary (non-pi) nvim session.
 
 ## User Persona (if applicable)
 
-**Target User**: The `pi-editor.nvim` plugin author and the downstream implementer of
+**Target User**: The `pi-bridge.nvim` plugin author and the downstream implementer of
 **S21** (the `activate()` function / env-var gate). This is developer plumbing, not
 end-user-facing.
 
@@ -82,7 +82,7 @@ exactly once per session, idempotently, with no crash if shipped out of order.
   than deferred. This shim IS that entry point.
 - **Faithful to pi's dormancy contract (PRD §7.1, §11).** The plugin "stays dormant in
   normal nvim use and activates only when pi launches the editor." The *decision* to
-  activate lives in `activate()` / S21 (it reads `PI_EDITOR_BRIDGE`); this shim only
+  activate lives in `activate()` / S21 (it reads `PI_NVIM_BRIDGE`); this shim only
   *triggers* `activate()` on `VimEnter`. Keeping that boundary clean (shim = trigger,
   activate = gate) is why S20 and S21 don't overlap.
 - **Ships safely out of order.** Because the orchestrator implements S20 before S21,
@@ -98,7 +98,7 @@ exactly once per session, idempotently, with no crash if shipped out of order.
 
 User-visible behavior: none directly at runtime in ordinary sessions (the shim's
 autocmd registers, then `activate` either doesn't exist yet or returns early because
-`PI_EDITOR_BRIDGE` is unset). The user-visible contract is structural: install the
+`PI_NVIM_BRIDGE` is unset). The user-visible contract is structural: install the
 plugin with `lazy = false`, and on the next pi-launched editor session the
 `VimEnter` → `activate()` wiring is in place.
 
@@ -126,7 +126,7 @@ Technical requirements:
       the process exits 0.
 - [ ] `runtime plugin/pi-editor.lua` twice leaves **exactly 1** autocmd (proves
       `clear = true` idempotency — safe for `:source %` / plugin-manager reload).
-- [ ] The shim does **not** read `PI_EDITOR_BRIDGE`, call `setup()`, or `require` any
+- [ ] The shim does **not** read `PI_NVIM_BRIDGE`, call `setup()`, or `require` any
       module other than `pi-editor` (boundary vs S21/S19/S24 — code inspection).
 - [ ] `nvim --headless --clean -u NORC` smoke test prints `SMOKE_PASS` and exits 0.
 - [ ] `tests/shim_spec.lua` passes under plenary (exit 0).
@@ -327,7 +327,7 @@ plugin/                          # runtimepath entry (unchanged)
 -- validation, write a file and source it via :luafile. That's why shim_smoke.lua exists.
 
 -- GOTCHA #10 — scope guard. This task is ONLY plugin/pi-editor.lua + its tests. Do NOT:
---   read PI_EDITOR_BRIDGE (S21), implement activate() (S21), call setup() (user config),
+--   read PI_NVIM_BRIDGE (S21), implement activate() (S21), call setup() (user config),
 --   create ftplugin/pi-prompt.lua (S22), bridge.lua (S24), health.lua (S42).
 --   The shim's ONLY job: auto-source → register one idempotent fire-once VimEnter autocmd
 --   → call activate() (guarded). Keeping it that narrow is what makes it independently
@@ -407,7 +407,7 @@ Task 3: CREATE plugin/tests/shim_spec.lua  (plenary/busted spec — the Level-2 
 -- (The implementer may ship this verbatim; it satisfies every Success Criterion and is
 --  LIVE-VERIFIED to pass the smoke + plenary gates.)
 
---- pi-editor.nvim — VimEnter auto-activation shim.
+--- pi-bridge.nvim — VimEnter auto-activation shim.
 ---
 --- This file is auto-sourced by Neovim at startup step 12 (`:help load-plugins`): every
 --- `plugin/*.lua` on `runtimepath` is sourced, in alphabetical order, strictly BEFORE
@@ -421,7 +421,7 @@ Task 3: CREATE plugin/tests/shim_spec.lua  (plenary/busted spec — the Level-2 
 ---
 --- The callback calls `require("pi-editor").activate()` (implemented by a later task,
 --- S21). The plugin stays DORMANT in every ordinary nvim session: `activate()` itself
---- returns early unless pi spawned this editor with `PI_EDITOR_BRIDGE` set (PRD §7.1,
+--- returns early unless pi spawned this editor with `PI_NVIM_BRIDGE` set (PRD §7.1,
 --- §11). The guard below also keeps this shim crash-free while `activate` is absent
 --- (interim build / broken install) — it degrades silently instead of throwing.
 ---
@@ -429,7 +429,7 @@ Task 3: CREATE plugin/tests/shim_spec.lua  (plenary/busted spec — the Level-2 
 --- this file is sourced at startup rather than deferred past `VimEnter`. With lazy=true
 --- the shim may source after VimEnter and activation is skipped.
 ---
---- Scope: this shim ONLY triggers activation. It does NOT read `PI_EDITOR_BRIDGE`, call
+--- Scope: this shim ONLY triggers activation. It does NOT read `PI_NVIM_BRIDGE`, call
 --- `setup()`, or `require` any module other than `pi-editor` (those belong to S21 / the
 --- user's config / S24 respectively).
 local group = vim.api.nvim_create_augroup("pi-editor", { clear = true })
@@ -512,7 +512,7 @@ check(#autovims() == 1, "re-source should not stack duplicates (got " .. #autovi
 
 -- CHECK 6 (structural + no env-read): assert the core tokens are present AND the shim
 -- does NOT read the environment. We use only ROBUST literals: the doc-comment header
--- mentions "PI_EDITOR_BRIDGE"/"setup()" by name to explain they are NOT used here, so a
+-- mentions "PI_NVIM_BRIDGE"/"setup()" by name to explain they are NOT used here, so a
 -- naive "does NOT contain those words" search would FALSE-POSITIVE on the comment.
 -- Instead we assert no env access (vim.env / os.getenv) + presence of the structural
 -- tokens. (No-setup-call / no-bridge-require are code-inspection checklist items.)
@@ -520,7 +520,7 @@ local src = table.concat(vim.fn.readfile(plugin_root .. "/plugin/pi-editor.lua")
 check(src:find('nvim_create_autocmd("VimEnter"', 1, true) ~= nil, "shim must register a VimEnter autocmd")
 check(src:find("once = true", 1, true) ~= nil, "shim must set once = true")
 check(src:find("clear = true", 1, true) ~= nil, "shim must set clear = true")
-check(src:find("vim.env", 1, true) == nil, "shim must NOT read the env (PI_EDITOR_BRIDGE is S21's job)")
+check(src:find("vim.env", 1, true) == nil, "shim must NOT read the env (PI_NVIM_BRIDGE is S21's job)")
 check(src:find("getenv", 1, true) == nil, "shim must NOT call os.getenv (S21's job)")
 
 if fails > 0 then
@@ -588,7 +588,7 @@ describe("pi-editor VimEnter shim", function()
   end)
 
   it("contains the required structural tokens and does not read the environment", function()
-    -- Robust literals only. The doc-comment header mentions "PI_EDITOR_BRIDGE"/"setup()"
+    -- Robust literals only. The doc-comment header mentions "PI_NVIM_BRIDGE"/"setup()"
     -- by name to explain they are NOT used here, so a naive "does NOT contain those words"
     -- search would FALSE-POSITIVE on the comment. Instead: assert no env access
     -- (vim.env / os.getenv) + presence of the structural tokens. (No-setup-call /
@@ -597,7 +597,7 @@ describe("pi-editor VimEnter shim", function()
     assert.is_true(src:find('nvim_create_autocmd("VimEnter"', 1, true) ~= nil)
     assert.is_true(src:find("once = true", 1, true) ~= nil)
     assert.is_true(src:find("clear = true", 1, true) ~= nil)
-    assert.is_nil(src:find("vim.env", 1, true))   -- no env read (PI_EDITOR_BRIDGE is S21)
+    assert.is_nil(src:find("vim.env", 1, true))   -- no env read (PI_NVIM_BRIDGE is S21)
     assert.is_nil(src:find("getenv", 1, true))    -- no os.getenv (S21)
   end)
 end)
@@ -621,7 +621,7 @@ PUBLIC SURFACE (no change):
     the (future, S21) .activate field. No change to init.lua (S19) is required.
 
 FORWARD CONTRACTS (do NOT implement here — just don't break them):
-  - S21 adds M.activate() to init.lua and implements the PI_EDITOR_BRIDGE read + gate.
+  - S21 adds M.activate() to init.lua and implements the PI_NVIM_BRIDGE read + gate.
     The shim's guard `type(pi.activate) == "function"` becomes a no-op until S21 ships,
     then transparently starts invoking the real activate() — NO shim change needed.
   - S22 (ftplugin/pi-prompt.lua) and S24 (bridge.lua) are NOT referenced by this shim.
@@ -705,7 +705,7 @@ echo "   ^ Expected: ACTIVATED  (the shim's VimEnter callback invoked the mock a
 ### Level 4: Creative & Domain-Specific Validation
 
 ```bash
-# 4a. Dormancy / no-spam: in a session with NO PI_EDITOR_BRIDGE and NO mock activate,
+# 4a. Dormancy / no-spam: in a session with NO PI_NVIM_BRIDGE and NO mock activate,
 #     the shim sources + its VimEnter fires and produces NO pi-editor error (interim-safe).
 PLUGIN_ROOT="$(pwd)/plugin"
 nvim --headless --clean -u NORC --cmd "let &runtimepath = '$PLUGIN_ROOT'" \
@@ -785,7 +785,7 @@ nvim --headless --clean -u NORC --cmd "let &runtimepath = '$PLUGIN_ROOT'" \
   would call `activate` repeatedly (GOTCHA #6).
 - ❌ Don't `pcall` the `activate()` call itself — only `pcall` the `require`. Hiding
   genuine `activate` bugs makes them undebuggable; `activate`/S21+S39 own their resilience.
-- ❌ Don't read `PI_EDITOR_BRIDGE`, call `setup()`, or `require` bridge/health/etc. from the
+- ❌ Don't read `PI_NVIM_BRIDGE`, call `setup()`, or `require` bridge/health/etc. from the
   shim — those are S21 / user config / S24 / S42 (GOTCHA #10). The no-env-read rule is
   asserted by the tests (`vim.env`/`getenv` literals); setup/bridge are code-inspection items.
 - ❌ Don't make validation depend on stylua/selene — they aren't installed here. The

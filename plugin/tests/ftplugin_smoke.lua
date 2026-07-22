@@ -10,11 +10,11 @@ me = vim.fn.fnamemodify(me, ":p")
 local plugin_root = vim.fn.fnamemodify(me, ":h:h")           -- .../plugin (rtp entry)
 vim.opt.runtimepath:append(plugin_root)
 
--- Simulate S20's startup: create the shared "pi-editor" augroup with the VimEnter
+-- Simulate S20's startup: create the shared "pi-bridge" augroup with the VimEnter
 -- autocmd BEFORE any ftplugin sources, so we can verify GOTCHA C (clear=false does
--- NOT wipe it). In a real session the auto-sourced plugin/pi-editor.lua does this.
-vim.api.nvim_create_augroup("pi-editor", { clear = true })
-vim.api.nvim_create_autocmd("VimEnter", { group = "pi-editor", once = true, callback = function() end })
+-- NOT wipe it). In a real session the auto-sourced plugin/pi-bridge.lua does this.
+vim.api.nvim_create_augroup("pi-bridge", { clear = true })
+vim.api.nvim_create_autocmd("VimEnter", { group = "pi-bridge", once = true, callback = function() end })
 
 local fails = 0
 local function check(cond, msg)
@@ -34,19 +34,19 @@ check(vim.bo[buf].textwidth == 0, "textwidth should be 0")
 check(vim.wo[0].wrap == true, "wrap should be true")
 check(vim.wo[0].spell == false, "spell should be false")
 
--- ── Keymaps (6 insert, buffer-local, 'pi-editor:' desc) ────────────────────────
+-- ── Keymaps (6 insert, buffer-local, 'pi-bridge:' desc) ────────────────────────
 local kms = {}
 for _, m in ipairs(vim.api.nvim_buf_get_keymap(buf, "i")) do kms[m.lhs] = m.desc end
 for _, k in ipairs({ "<Tab>", "<S-Tab>", "<C-N>", "<C-P>", "<C-E>", "<CR>" }) do
-  -- NOTE: use `sub` not `find("^pi-editor:")` — `-` is a Lua pattern metachar so the
-  -- anchored find silently fails. `sub(1,11) == "pi-editor: " is literal & robust.
+  -- NOTE: use `sub` not `find("^pi-bridge:")` — `-` is a Lua pattern metachar so the
+  -- anchored find silently fails. `sub(1,11) == "pi-bridge: " is literal & robust.
   local d = kms[k]
-  check(type(d) == "string" and d:sub(1, 11) == "pi-editor: ", "keymap " .. k .. " missing/bad desc")
+  check(type(d) == "string" and d:sub(1, 11) == "pi-bridge: ", "keymap " .. k .. " missing/bad desc")
 end
 
--- ── Autocmds (buffer-scoped, in the pi-editor group) ───────────────────────────
+-- ── Autocmds (buffer-scoped, in the pi-bridge group) ───────────────────────────
 local acs = {}
-local okac, list = pcall(vim.api.nvim_get_autocmds, { buffer = buf, group = "pi-editor" })
+local okac, list = pcall(vim.api.nvim_get_autocmds, { buffer = buf, group = "pi-bridge" })
 check(okac, "get_autocmds ok")
 if okac then for _, a in ipairs(list) do acs[a.event] = true end end
 for _, ev in ipairs({ "InsertEnter", "TextChangedI", "CursorMovedI", "VimLeavePre", "ExitPre" }) do
@@ -62,12 +62,12 @@ local sib = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_set_current_buf(sib)
 local sib_km = 0
 for _ in ipairs(vim.api.nvim_buf_get_keymap(sib, "i")) do sib_km = sib_km + 1 end
-check(sib_km == 0, "sibling buffer should have no pi-editor keymaps")
+check(sib_km == 0, "sibling buffer should have no pi-bridge keymaps")
 -- switch back so buffer-scoped queries below target `buf`
 vim.api.nvim_set_current_buf(buf)
 
 -- ── S20's VimEnter autocmd in the shared group is preserved (GOTCHA C) ─────────
-local ve = vim.api.nvim_get_autocmds({ event = "VimEnter", group = "pi-editor" })
+local ve = vim.api.nvim_get_autocmds({ event = "VimEnter", group = "pi-bridge" })
 check(#ve >= 1, "S20 VimEnter autocmd should still exist (clear=false)")
 
 if fails > 0 then

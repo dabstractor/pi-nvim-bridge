@@ -1,17 +1,17 @@
-# PRP — P1.M3.T8.S16: Write BridgeDescriptor JSON to `process.env.PI_EDITOR_BRIDGE`
+# PRP — P1.M3.T8.S16: Write BridgeDescriptor JSON to `process.env.PI_NVIM_BRIDGE`
 
 ## Goal
 
 **Feature Goal**: Make pi's spawned `$EDITOR` (Neovim) discoverable to the
-`pi-editor.nvim` plugin by writing a single-line JSON `BridgeDescriptor` to
-`process.env.PI_EDITOR_BRIDGE` inside the `pi-editor-bridge` extension's
+`pi-bridge.nvim` plugin by writing a single-line JSON `BridgeDescriptor` to
+`process.env.PI_NVIM_BRIDGE` inside the `pi-editor-bridge` extension's
 `startBridge()`, and symmetrically deleting it in `stopBridge()`. This is the
 **discovery mechanism** that lets the dormant Neovim plugin find the bridge's Unix
 socket + auth token and activate.
 
 **Deliverable**:
 - Modify `extension/pi-editor-bridge.ts`:
-  - Add `export const BRIDGE_ENV = "PI_EDITOR_BRIDGE";`
+  - Add `export const BRIDGE_ENV = "PI_NVIM_BRIDGE";`
   - In `startBridge(ctx)` (after `listen` + `chmod`), write
     `process.env[BRIDGE_ENV] = JSON.stringify(<BridgeDescriptor> satisfies BridgeDescriptor)`.
   - In `stopBridge()` (after `token = undefined;`), `delete process.env[BRIDGE_ENV];`.
@@ -24,11 +24,11 @@ socket + auth token and activate.
   non-tui never sets) tests.
 
 **Success Definition**:
-- `process.env.PI_EDITOR_BRIDGE` is a single-line JSON string after `startBridge`,
+- `process.env.PI_NVIM_BRIDGE` is a single-line JSON string after `startBridge`,
   parses to an object with EXACTLY 7 keys — `transport:"unix"`, `path` (the live
   socket path), `token` (32-hex), `pid` (`process.pid`), `cwd` (`ctx.cwd`),
   `fdAvailable` (real `getFdAvailable()` value), `serverVersion:"0.1.0"`.
-- `process.env.PI_EDITOR_BRIDGE === undefined` after `stopBridge`.
+- `process.env.PI_NVIM_BRIDGE === undefined` after `stopBridge`.
 - `tsc --noEmit -p extension/tsconfig.json` exits 0; all regression suites
   (`bridge-lifecycle`, `bridge-lifecycle-wiring`, `mode-guard`, `provider-capture`,
   `protocol`) still pass.
@@ -41,8 +41,8 @@ socket + auth token and activate.
   §2.1: *"This is the discovery that makes the whole design work."*). pi spawns the
   external editor with `stdio:"inherit"` and **no `env:` option**, so the child
   Neovim inherits pi's `process.env`. Anything the extension writes to
-  `process.env.PI_EDITOR_BRIDGE` before the launch is visible to Neovim as
-  `vim.env.PI_EDITOR_BRIDGE`. The Neovim plugin's `VimEnter` gate decodes it to find
+  `process.env.PI_NVIM_BRIDGE` before the launch is visible to Neovim as
+  `vim.env.PI_NVIM_BRIDGE`. The Neovim plugin's `VimEnter` gate decodes it to find
   the socket path + token; without this write, the plugin never activates and the
   bridge is unreachable.
 - Closes out `P1.M3` dependency "env advertisement" which the upcoming Neovim-side
@@ -56,17 +56,17 @@ socket + auth token and activate.
 ## What
 
 User-visible behavior: none directly (this is a pi extension writing a process-local
-env var). Indirectly, it is what causes `pi-editor.nvim` to wake up inside the
+env var). Indirectly, it is what causes `pi-bridge.nvim` to wake up inside the
 launched Neovim and show `/command`, `@file`, and path completion.
 
 Technical requirement: a flat JSON object (the `BridgeDescriptor` type already
 declared in `extension/protocol.ts` §B) is `JSON.stringify`'d and assigned to
-`process.env.PI_EDITOR_BRIDGE` at the end of `startBridge`, and `delete`'d in
+`process.env.PI_NVIM_BRIDGE` at the end of `startBridge`, and `delete`'d in
 `stopBridge`.
 
 ### Success Criteria
 
-- [ ] `process.env.PI_EDITOR_BRIDGE` set after `startBridge`; deleted after `stopBridge`.
+- [ ] `process.env.PI_NVIM_BRIDGE` set after `startBridge`; deleted after `stopBridge`.
 - [ ] Descriptor field is **`serverVersion: "0.1.0"`** (NOT `version`/`"0.0.1"`).
 - [ ] Descriptor `fdAvailable` is the **real `getFdAvailable()`** value (consistent
       with `hello`/`ping`), not a hardcoded literal.
@@ -96,7 +96,7 @@ build/test commands. Every pattern (`__deps` seam, getters, `captureHandlers`/
 
 - file: extension/pi-editor-bridge.ts
   why: "The ONLY source file to modify. Read `startBridge`, `stopBridge`, the getters (`getSocketPath/getToken/getPid/getCwd/getFdAvailable`), `BRIDGE_VERSION`, `__deps`, and the default-export factory's `session_start`/`session_shutdown`."
-  pattern: "module-level `let server/socketPath/token/cwd` + getters; `__deps` mutable seam; `startBridge(ctx)` ends with `// NOTE: NO process.env.PI_EDITOR_BRIDGE write here — that is P1.M3.T8.S16.` and `void ctx;`; `stopBridge()` ends with the matching OMITTED NOTE; factory `session_start` has `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE` and `session_shutdown` has `// NOTE: clearing process.env.PI_EDITOR_BRIDGE belongs to S16`."
+  pattern: "module-level `let server/socketPath/token/cwd` + getters; `__deps` mutable seam; `startBridge(ctx)` ends with `// NOTE: NO process.env.PI_NVIM_BRIDGE write here — that is P1.M3.T8.S16.` and `void ctx;`; `stopBridge()` ends with the matching OMITTED NOTE; factory `session_start` has `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE` and `session_shutdown` has `// NOTE: clearing process.env.PI_NVIM_BRIDGE belongs to S16`."
   gotcha: "All THREE NOTE comments must be resolved/updated by this task. `ctx.cwd` is read via `cwd = ctx.cwd;` in session_start AFTER startBridge returns — so inside startBridge use `ctx.cwd` DIRECTLY for the descriptor (the module `cwd` is not yet set there). See Implementation Notes."
 
 - file: extension/protocol.ts
@@ -236,7 +236,7 @@ The runtime value S16 produces:
 
 ```yaml
 Task 1: MODIFY extension/pi-editor-bridge.ts — add the BRIDGE_ENV constant + BridgeDescriptor import
-  - ADD: `export const BRIDGE_ENV = "PI_EDITOR_BRIDGE";` at module level, placed near the
+  - ADD: `export const BRIDGE_ENV = "PI_NVIM_BRIDGE";` at module level, placed near the
           `server`/`socketPath`/`token` state declarations (alongside the other exported
           constants like BRIDGE_VERSION). Exporting it lets the test reference the NAME
           (not a hardcoded string) and makes a future rename one-line.
@@ -248,7 +248,7 @@ Task 1: MODIFY extension/pi-editor-bridge.ts — add the BRIDGE_ENV constant + B
 
 Task 2: MODIFY startBridge(ctx) — write the descriptor AFTER listen+chmod
   - REMOVE the `void ctx;` line (startBridge now dereferences `ctx.cwd`).
-  - REMOVE/REPLACE the trailing `// NOTE: NO process.env.PI_EDITOR_BRIDGE write here — that is P1.M3.T8.S16.`
+  - REMOVE/REPLACE the trailing `// NOTE: NO process.env.PI_NVIM_BRIDGE write here — that is P1.M3.T8.S16.`
     comment with the actual write + its [Mode A] JSDoc (Task 4).
   - ADD (as the LAST statement of startBridge, AFTER the `if (process.platform !== "win32") { … chmod … }` block):
         process.env[BRIDGE_ENV] = JSON.stringify({
@@ -270,14 +270,14 @@ Task 2: MODIFY startBridge(ctx) — write the descriptor AFTER listen+chmod
 
 Task 3: MODIFY stopBridge() — delete the env var
   - ADD (AFTER the `token = undefined;` line, REPLACING the trailing NOTE comment
-          `// NOTE: delete process.env.PI_EDITOR_BRIDGE is intentionally OMITTED here …`):
+          `// NOTE: delete process.env.PI_NVIM_BRIDGE is intentionally OMITTED here …`):
         delete process.env[BRIDGE_ENV];
   - WHY HERE: matches PRD §6.4 (stopBridge is the symmetric teardown). `delete` never
           throws and is a no-op if absent → safe whether or not startBridge ran
           (idempotent, consistent with the surrounding try/catch idiom — though delete
           itself needs no try/catch).
   - DEPENDENCIES: Task 1 (BRIDGE_ENV).
-  - NOTE: session_shutdown's `// NOTE: clearing process.env.PI_EDITOR_BRIDGE belongs to S16`
+  - NOTE: session_shutdown's `// NOTE: clearing process.env.PI_NVIM_BRIDGE belongs to S16`
           comment is resolved automatically — session_shutdown calls stopBridge, which now
           deletes the env. Update/trim that comment to avoid a stale reference.
 
@@ -286,9 +286,9 @@ Task 4: ADD [Mode A] JSDoc — process.env inheritance discovery + criticality
           startBridge. It MUST state (one tight paragraph is fine):
         - pi spawns the external editor via spawn() with `stdio:"inherit"` and NO
           `env:` option (interactive-mode.ts:3811-3816), so the child inherits pi's
-          process.env. Writing PI_EDITOR_BRIDGE on session_start (before any Ctrl+G
+          process.env. Writing PI_NVIM_BRIDGE on session_start (before any Ctrl+G
           launch) makes it visible to the spawned Neovim as
-          `vim.env.PI_EDITOR_BRIDGE`.
+          `vim.env.PI_NVIM_BRIDGE`.
         - The Neovim plugin's VimEnter gate decodes this descriptor to find the socket
           path + token; absent/unparseable → plugin stays dormant (PRD §7.1).
         - CRITICALITY: this write is THE discovery that makes the two-component design
@@ -373,8 +373,8 @@ export function startBridge(ctx: ExtensionContext): void {
 	 * DISCOVERY: pi spawns the external editor with `spawn(editor, [tmpFile], {
 	 * stdio:"inherit", shell: process.platform==="win32" })` and NO `env:` option
 	 * (interactive-mode.ts:3811-3816), so the child Neovim INHERITS pi's process.env.
-	 * Writing PI_EDITOR_BRIDGE here (on session_start, before any Ctrl+G launch) makes
-	 * it visible to the spawned Neovim as `vim.env.PI_EDITOR_BRIDGE`. The plugin's
+	 * Writing PI_NVIM_BRIDGE here (on session_start, before any Ctrl+G launch) makes
+	 * it visible to the spawned Neovim as `vim.env.PI_NVIM_BRIDGE`. The plugin's
 	 * VimEnter gate vim.json.decode's it to find the socket path + token; absent/
 	 * unparseable → the plugin stays dormant (PRD §7.1). This write is THE discovery
 	 * that makes the two-component design work (PRD §2.1). CRITICALITY: without it the
@@ -415,7 +415,7 @@ import {
 	__setFdAvailableForTest,
 } from "../pi-editor-bridge.ts";
 
-test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_EDITOR_BRIDGE", () => {
+test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_NVIM_BRIDGE", () => {
 	const realCreateServer = __deps.createServer;
 	const realChmodSync = __deps.chmodSync;
 	let listenArg: string | undefined;
@@ -456,9 +456,9 @@ test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_
 
 ```yaml
 ENVIRONMENT (process.env):
-  - add to: "process.env.PI_EDITOR_BRIDGE (single-line JSON BridgeDescriptor) — written in startBridge, deleted in stopBridge"
+  - add to: "process.env.PI_NVIM_BRIDGE (single-line JSON BridgeDescriptor) — written in startBridge, deleted in stopBridge"
   - pattern: "PRD §6.4 skeleton: process.env[BRIDGE_ENV] = JSON.stringify({...} satisfies BridgeDescriptor)"
-  - constant: "export const BRIDGE_ENV = \"PI_EDITOR_BRIDGE\"; (module-level, near BRIDGE_VERSION)"
+  - constant: "export const BRIDGE_ENV = \"PI_NVIM_BRIDGE\"; (module-level, near BRIDGE_VERSION)"
 
 TYPES (type-only import, no runtime cost):
   - add to: "the existing import type { … } from \"./protocol.ts\"; block in pi-editor-bridge.ts"
@@ -517,7 +517,7 @@ pi --no-extensions -e ./extension/pi-editor-bridge.ts --print "ok"
 # Expected: exit 0, no error lines, "ok" echoed.
 
 # (A full TUI end-to-end — launch pi, Ctrl+G to open $EDITOR=nvim, assert
-# vim.env.PI_EDITOR_BRIDGE is set inside nvim — is exercised by the Neovim-side
+# vim.env.PI_NVIM_BRIDGE is set inside nvim — is exercised by the Neovim-side
 # activation-gate task P2.M4.T12.S21. S16's job is the WRITE; the READ is the
 # plugin's. The factory-wiring test (TEST 4) covers the session_start/session_shutdown
 # lifecycle at the unit level.)
@@ -553,7 +553,7 @@ node -e '
 
 ### Feature Validation
 
-- [ ] `process.env.PI_EDITOR_BRIDGE` set after `startBridge`; deleted after `stopBridge`.
+- [ ] `process.env.PI_NVIM_BRIDGE` set after `startBridge`; deleted after `stopBridge`.
 - [ ] Descriptor field is `serverVersion:"0.1.0"` (NOT `version`/`"0.0.1"`) — pinned by
       TEST 1's `Object.keys(desc).length === 7` + `desc.serverVersion === "0.1.0"`.
 - [ ] Descriptor `fdAvailable` is the real `getFdAvailable()` value (consistent with
@@ -577,7 +577,7 @@ node -e '
 ### Documentation & Deployment
 
 - [ ] [Mode A] JSDoc inline with the `process.env[BRIDGE_ENV]` write (Task 4).
-- [ ] No new env vars beyond `PI_EDITOR_BRIDGE` (scope guard §8).
+- [ ] No new env vars beyond `PI_NVIM_BRIDGE` (scope guard §8).
 - [ ] (README/doc/pi-editor.txt are separate tasks — S18/P3.M11 — NOT this task.)
 
 ---

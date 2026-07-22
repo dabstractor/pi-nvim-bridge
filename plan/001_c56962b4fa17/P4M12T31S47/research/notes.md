@@ -9,7 +9,7 @@ PRD §10.4 (the spec line we implement):
 > For faster editor startup with a minimal config, the bridge extension may
 > **additionally** set `process.env.NVIM_APPNAME = "pi-editor"` (documented
 > opt‑in), and the user maintains a tiny `~/.config/pi-editor/` that loads only
-> `pi-editor.nvim`. This is an **optional optimization**, not required.
+> `pi-bridge.nvim`. This is an **optional optimization**, not required.
 
 So the EXTENSION sets NVIM_APPNAME (not the user manually exporting it), and it
 must be **opt-in** (default OFF). Docs are part of the deliverable.
@@ -42,7 +42,7 @@ must be **opt-in** (default OFF). Docs are part of the deliverable.
 clean, idiomatic, "set once" opt-in surface available to an extension is a
 **dedicated environment variable** the user sets in their shell/rc (or in the
 launch wrapper). The bridge already relies on `process.env` for its core
-discovery (`PI_EDITOR_BRIDGE`), so this is consistent.
+discovery (`PI_NVIM_BRIDGE`), so this is consistent.
 
 ### 1.2 pi's own env-var-toggle precedent (the clincher)
 
@@ -61,7 +61,7 @@ opt-in mechanism.** It is:
 - opt-in (absent ⇒ feature OFF, zero behavior change — S16/regression-safe),
 - set once by the user in their shell/rc,
 - readable inside the extension with no pi API beyond `process.env`,
-- symmetric with the existing `PI_EDITOR_BRIDGE` write/delete lifecycle.
+- symmetric with the existing `PI_NVIM_BRIDGE` write/delete lifecycle.
 
 ### 1.3 Value semantics for PI_EDITOR_NVIM_APPNAME
 
@@ -112,11 +112,11 @@ Key facts:
    `process.env.NVIM_APPNAME` holds at spawn time is what nvim sees. So
    writing it inside pi before any Ctrl+G launch is sufficient.
 
-## 3. SAVE/RESTORE — why this is NOT a plain write/delete like PI_EDITOR_BRIDGE
+## 3. SAVE/RESTORE — why this is NOT a plain write/delete like PI_NVIM_BRIDGE
 
 CRITICAL asymmetry vs S16:
 
-- `PI_EDITOR_BRIDGE` is a name pi **invents and owns**. `delete` on stop is
+- `PI_NVIM_BRIDGE` is a name pi **invents and owns**. `delete` on stop is
   correct and harmless — no one else uses that var.
 - `NVIM_APPNAME` is a **standard Neovim var the USER may already export**
   globally (e.g. `NVIM_APPNAME=work` in their shell for a daily-driver
@@ -156,12 +156,12 @@ never reached in non-tui.
 ## 5. Testability seam
 
 `process.env` IS the natural seam here (bridge-env.test.ts already manipulates
-`process.env.PI_EDITOR_BRIDGE` directly). No new `__deps` entry needed. Export
+`process.env.PI_NVIM_BRIDGE` directly). No new `__deps` entry needed. Export
 `resolveNvimAppname()` (pure parse of `PI_EDITOR_NVIM_APPNAME` →
 `string | undefined`) so its value table (§1.3) can be unit-tested without
 touching startBridge. Apply/restore state can be inspected via
 `process.env.NVIM_APPNAME` before/after, mirroring how S16 inspects
-`process.env.PI_EDITOR_BRIDGE`. Provide
+`process.env.PI_NVIM_BRIDGE`. Provide
 `__resetNvimAppnameStateForTest()` to zero the module's `nvimAppnameApplied`/
 `nvimAppnameBaseline` between tests (parallels `__setFdAvailableForTest`).
 

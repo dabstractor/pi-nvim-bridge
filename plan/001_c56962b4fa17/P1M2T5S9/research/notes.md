@@ -167,5 +167,5 @@ NOT the received/expected values.
 - S11–S14: getSuggestions/applyCompletion/shouldTriggerFileCompletion/ping/bye/getCommands.
 - S15: making domain handlers catch their OWN errors into `BridgeRpcError`.
   S9 lands the class + handleLine mapping; S15 uses it broadly.
-- S16: writing `process.env.PI_EDITOR_BRIDGE` (reuses `BRIDGE_VERSION`/`getCwd`/`getFdAvailable`).
+- S16: writing `process.env.PI_NVIM_BRIDGE` (reuses `BRIDGE_VERSION`/`getCwd`/`getFdAvailable`).
 - S17: `commandsChanged` notification.

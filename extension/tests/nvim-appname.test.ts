@@ -1,6 +1,6 @@
 /**
  * nvim-appname.test.ts — S47: asserts the optional `NVIM_APPNAME` minimal-config
- * opt-in (`PI_EDITOR_NVIM_APPNAME`) resolves correctly, applies/ restores cleanly
+ * opt-in (`PI_NVIM_APPNAME`) resolves correctly, applies/ restores cleanly
  * through `startBridge`/`stopBridge`, is OFF by default (a no-op that never touches
  * `process.env.NVIM_APPNAME`), never clobbers a pre-existing user value, is idempotent
  * across two `startBridge` calls, and is gated to TUI mode only.
@@ -11,7 +11,7 @@
  * (TUI vs non-tui) test. Because `process.env` is SHARED across tests in one process
  * (GOTCHA #6), EVERY test tears down in a `finally`: restore `__deps`, reset the fd
  * cache (`__setFdAvailableForTest(undefined)`), `__resetNvimAppnameStateForTest()`,
- * delete BOTH `process.env.NVIM_APPNAME` AND `process.env.PI_EDITOR_NVIM_APPNAME`, and
+ * delete BOTH `process.env.NVIM_APPNAME` AND `process.env.PI_NVIM_APPNAME`, and
  * `stopBridge()`.
  */
 import { test } from "node:test";
@@ -32,8 +32,8 @@ import {
 	NVIM_APPNAME_ENV,
 	NVIM_APPNAME_OPTIN_ENV,
 	DEFAULT_NVIM_APPNAME,
-} from "../pi-editor-bridge.ts";
-import bridgeFactory from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
+import bridgeFactory from "../pi-nvim-bridge.ts";
 
 type StartHandler = (event: SessionStartEvent, ctx: ExtensionContext) => void;
 type ShutdownHandler = (event: SessionShutdownEvent) => void;
@@ -74,8 +74,8 @@ function mockDeps() {
 
 // ============================================================================
 // TEST 1 — PURE resolver value table (no startBridge). unset → undefined;
-// "" → "pi-editor"; "1"/"TRUE"/"yes"/"On" → "pi-editor"; "pi-fast" → "pi-fast";
-// "  pi-editor  " (whitespace) → "pi-editor" (trim). Set/restore the opt-in env in
+// "" → "pi-bridge"; "1"/"TRUE"/"yes"/"On" → "pi-bridge"; "pi-fast" → "pi-fast";
+// "  pi-bridge  " (whitespace) → "pi-bridge" (trim). Set/restore the opt-in env in
 // a finally (process.env is shared across tests — GOTCHA #6).
 // ============================================================================
 test("resolveNvimAppname() value table: unset→undefined, sentinels→default, literal→literal, trimmed", () => {
@@ -84,13 +84,13 @@ test("resolveNvimAppname() value table: unset→undefined, sentinels→default, 
 		delete process.env[NVIM_APPNAME_OPTIN_ENV];
 		assert.equal(resolveNvimAppname(), undefined, "unset ⇒ undefined (OFF)");
 
-		// empty / truthy sentinels ⇒ DEFAULT_NVIM_APPNAME ("pi-editor")
+		// empty / truthy sentinels ⇒ DEFAULT_NVIM_APPNAME ("pi-bridge")
 		for (const v of ["", "1", "TRUE", "yes", "On"]) {
 			process.env[NVIM_APPNAME_OPTIN_ENV] = v;
 			assert.equal(
 				resolveNvimAppname(),
 				DEFAULT_NVIM_APPNAME,
-				`sentinel ${JSON.stringify(v)} ⇒ default "pi-editor"`,
+				`sentinel ${JSON.stringify(v)} ⇒ default "pi-bridge"`,
 			);
 		}
 
@@ -98,8 +98,8 @@ test("resolveNvimAppname() value table: unset→undefined, sentinels→default, 
 		process.env[NVIM_APPNAME_OPTIN_ENV] = "pi-fast";
 		assert.equal(resolveNvimAppname(), "pi-fast", "custom literal ⇒ that literal");
 
-		// whitespace is trimmed (so "  pi-editor  " ⇒ "pi-editor", NOT a custom literal)
-		process.env[NVIM_APPNAME_OPTIN_ENV] = "  pi-editor  ";
+		// whitespace is trimmed (so "  pi-bridge  " ⇒ "pi-bridge", NOT a custom literal)
+		process.env[NVIM_APPNAME_OPTIN_ENV] = "  pi-bridge  ";
 		assert.equal(
 			resolveNvimAppname(),
 			DEFAULT_NVIM_APPNAME,
@@ -117,8 +117,8 @@ test("resolveNvimAppname() value table: unset→undefined, sentinels→default, 
 });
 
 // ============================================================================
-// TEST 2 — apply lifecycle (opt-in ON, default appname): PI_EDITOR_NVIM_APPNAME=1;
-// startBridge ⇒ process.env.NVIM_APPNAME === "pi-editor".
+// TEST 2 — apply lifecycle (opt-in ON, default appname): PI_NVIM_APPNAME=1;
+// startBridge ⇒ process.env.NVIM_APPNAME === "pi-bridge".
 // ============================================================================
 test("startBridge applies the default NVIM_APPNAME when opt-in is a truthy sentinel", () => {
 	const mock = mockDeps();
@@ -129,7 +129,7 @@ test("startBridge applies the default NVIM_APPNAME when opt-in is a truthy senti
 		assert.equal(
 			process.env[NVIM_APPNAME_ENV],
 			DEFAULT_NVIM_APPNAME,
-			'opt-in=1 ⇒ NVIM_APPNAME === "pi-editor" after startBridge',
+			'opt-in=1 ⇒ NVIM_APPNAME === "pi-bridge" after startBridge',
 		);
 	} finally {
 		__setFdAvailableForTest(undefined);
@@ -142,7 +142,7 @@ test("startBridge applies the default NVIM_APPNAME when opt-in is a truthy senti
 });
 
 // ============================================================================
-// TEST 3 — apply lifecycle (custom appname): PI_EDITOR_NVIM_APPNAME=pi-fast;
+// TEST 3 — apply lifecycle (custom appname): PI_NVIM_APPNAME=pi-fast;
 // startBridge ⇒ process.env.NVIM_APPNAME === "pi-fast".
 // ============================================================================
 test("startBridge applies a custom NVIM_APPNAME when the opt-in is a literal", () => {
@@ -167,9 +167,9 @@ test("startBridge applies a custom NVIM_APPNAME when the opt-in is a literal", (
 });
 
 // ============================================================================
-// TEST 4 — opt-in OFF is a no-op: leave PI_EDITOR_NVIM_APPNAME unset; startBridge ⇒
+// TEST 4 — opt-in OFF is a no-op: leave PI_NVIM_APPNAME unset; startBridge ⇒
 // NVIM_APPNAME stays undefined (never touched). ALSO re-asserts the S16 contract still
-// holds (PI_EDITOR_BRIDGE parses, 7 keys, serverVersion "0.1.0") — proves no regression.
+// holds (PI_NVIM_BRIDGE parses, 7 keys, serverVersion "0.1.0") — proves no regression.
 // ============================================================================
 test("opt-in OFF (unset) ⇒ startBridge never touches NVIM_APPNAME; S16 descriptor contract intact", () => {
 	const mock = mockDeps();
@@ -185,8 +185,8 @@ test("opt-in OFF (unset) ⇒ startBridge never touches NVIM_APPNAME; S16 descrip
 		);
 
 		// S16 regression: the descriptor contract is byte-identical to today.
-		const raw = process.env.PI_EDITOR_BRIDGE;
-		assert.equal(typeof raw, "string", "PI_EDITOR_BRIDGE still set");
+		const raw = process.env.PI_NVIM_BRIDGE;
+		assert.equal(typeof raw, "string", "PI_NVIM_BRIDGE still set");
 		const desc = JSON.parse(raw!);
 		assert.equal(desc.serverVersion, "0.1.0");
 		assert.equal(Object.keys(desc).length, 7, "descriptor stays EXACTLY 7 keys");
@@ -202,7 +202,7 @@ test("opt-in OFF (unset) ⇒ startBridge never touches NVIM_APPNAME; S16 descrip
 
 // ============================================================================
 // TEST 5 — restore after stopBridge (NO pre-existing baseline): opt-in=1; startBridge ⇒
-// "pi-editor"; stopBridge ⇒ undefined (was undefined before).
+// "pi-bridge"; stopBridge ⇒ undefined (was undefined before).
 // ============================================================================
 test("stopBridge restores NVIM_APPNAME to undefined when the user had none", () => {
 	const mock = mockDeps();
@@ -264,8 +264,8 @@ test("a pre-existing user NVIM_APPNAME is RESTORED after stopBridge (never clobb
 
 // ============================================================================
 // TEST 7 — IDEMPOTENT across two startBridge calls (GOTCHA #3): opt-in=1; pre-set
-// NVIM_APPNAME="work"; startBridge ⇒ "pi-editor"; startBridge again (internal
-// stopBridge restores to "work", then re-applies) ⇒ "pi-editor"; stopBridge ⇒ "work".
+// NVIM_APPNAME="work"; startBridge ⇒ "pi-bridge"; startBridge again (internal
+// stopBridge restores to "work", then re-applies) ⇒ "pi-bridge"; stopBridge ⇒ "work".
 // Proves the baseline capture on the 2nd apply reads the genuine environment, not the
 // bridge's own prior override.
 // ============================================================================
@@ -305,7 +305,7 @@ test("idempotent across two startBridge calls: 2nd apply captures the genuine ba
 
 // ============================================================================
 // TEST 8 — FACTORY WIRING (TUI guard — GOTCHA #8): reuse bridge-env TEST 4's
-// captureHandlers(). session_start(tui) ⇒ NVIM_APPNAME === "pi-editor";
+// captureHandlers(). session_start(tui) ⇒ NVIM_APPNAME === "pi-bridge";
 // session_shutdown ⇒ undefined; for each non-tui mode ("rpc"/"json"/"print")
 // session_start ⇒ NVIM_APPNAME stays undefined (TUI guard intact).
 // ============================================================================

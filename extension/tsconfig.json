@@ -18,5 +18,5 @@
       ]
     }
   },
-  "include": ["pi-editor-bridge.ts", "protocol.ts", "jsonl-reader.ts", "connection.ts", "tests/**/*.ts"]
+  "include": ["pi-nvim-bridge.ts", "protocol.ts", "jsonl-reader.ts", "connection.ts", "tests/**/*.ts"]
 }

@@ -1,7 +1,7 @@
 ---
 name: "P2.M5.T15.S25 — hello handshake (Lua bridge client)"
 description: >
-  After the S24 transport connects, the pi-editor.nvim bridge client must complete the
+  After the S24 transport connects, the pi-bridge.nvim bridge client must complete the
   JSON-RPC `hello` handshake: send the descriptor token to pi's bridge server, validate the
   success/error response, extract server identity (`serverVersion`/`cwd`/`fdAvailable`), set
   `require("pi-editor").bridge` on success, and wire connect+handshake into the VimEnter
@@ -49,7 +49,7 @@ quietly authenticate to pi's live autocomplete bridge so subsequent keystrokes c
 result (a working completion menu, or, on failure, an ordinary markdown buffer).
 
 **User Journey**: pi `Ctrl+G` → `openExternalEditor()` spawns `nvim <tmpfile>` (inherits
-`PI_EDITOR_BRIDGE`) → Neovim `VimEnter` → `init.lua activate()` reads descriptor →
+`PI_NVIM_BRIDGE`) → Neovim `VimEnter` → `init.lua activate()` reads descriptor →
 `bridge.handshake(desc, …)` → `connect` → `on_ready` → `send hello` → server validates token
 → success response → `pi.bridge` set, `M.server_info` populated → ftplugin keymaps live →
 user types, completion flows. On any handshake failure: buffer is plain markdown, no crash.
@@ -89,7 +89,7 @@ Technical requirements:
 
 ### Success Criteria
 
-- [ ] `bridge.handshake(desc, cb)` sends `{"jsonrpc":"2.0","id":"h1","method":"hello","params":{"token":desc.token,"client":"pi-editor.nvim","clientVersion":"0.1.0"}}` (LF-terminated) once the transport connects.
+- [ ] `bridge.handshake(desc, cb)` sends `{"jsonrpc":"2.0","id":"h1","method":"hello","params":{"token":desc.token,"client":"pi-bridge.nvim","clientVersion":"0.1.0"}}` (LF-terminated) once the transport connects.
 - [ ] On a success response (`result.ok == true`): `on_result(nil, {serverVersion,cwd,fdAvailable})` is called; `require("pi-editor").bridge` is set to the bridge module; `M.server_info` holds the extracted triple.
 - [ ] On an `error` response (e.g. `code == -32600` "bad token"): transport is closed; `pi.bridge` stays `nil`; `on_result(<err>)` is called exactly once.
 - [ ] On malformed-but-`id=="h1"` response (no `result`/`error`): treated as failure (above).
@@ -97,7 +97,7 @@ Technical requirements:
 - [ ] `on_result` fires EXACTLY ONCE across the response/timeout/close races.
 - [ ] `bridge.handshake` NEVER throws — invalid descriptor (`nil`/missing `token`) calls `on_result("invalid descriptor")` and touches no socket.
 - [ ] `init.lua activate()` calls `handshake` inside a `pcall`; activation still returns the descriptor and sets filetype even if the bridge module is absent/broken.
-- [ ] In a dormant session (no `PI_EDITOR_BRIDGE` env var), `require("pi-editor").bridge` remains `nil` (the `smoke.lua` assertion still holds).
+- [ ] In a dormant session (no `PI_NVIM_BRIDGE` env var), `require("pi-editor").bridge` remains `nil` (the `smoke.lua` assertion still holds).
 - [ ] `bridge_spec.lua` (S24) and `jsonlreader_spec.lua` (S23) pass UNCHANGED.
 - [ ] New `bridge_handshake_spec.lua` passes all cases in §Validation Loop → Level 2.
 
@@ -393,7 +393,7 @@ Task 4: ADD `M.handshake(desc, on_result)` to bridge.lua
           if connerr then resolve_handshake(nil, connerr) return end   -- ENOENT/ECONNREFUSED/EACCES
           -- transport connected (state.connected==true per S24): send hello
           M.send({ jsonrpc = "2.0", id = "h1", method = "hello",
-            params = { token = desc.token, client = "pi-editor.nvim", clientVersion = M.version } })
+            params = { token = desc.token, client = "pi-bridge.nvim", clientVersion = M.version } })
         end,
         dispatch,  -- on_event (the Task 2 dispatcher)
         function(reason) resolve_handshake(nil, reason) end  -- on_close (silent server close / transport error)
@@ -446,7 +446,7 @@ Task 6: CREATE plugin/tests/bridge_handshake_spec.lua (plenary/busted — the Le
     - DEPENDENCIES: Tasks 1-5.
 
 Task 7: MODIFY plugin/tests/smoke.lua — dormant-session assertion
-  - ADD (near the existing `pi.bridge == nil` check): assert that WITHOUT the PI_EDITOR_BRIDGE
+  - ADD (near the existing `pi.bridge == nil` check): assert that WITHOUT the PI_NVIM_BRIDGE
     env var, calling activate() (or just not calling handshake) leaves pi.bridge == nil. This
     guards against S25 accidentally setting pi.bridge in a non-pi session.
   - FOLLOW pattern: the existing `check(cond, msg)` + cquit-on-fail.
@@ -463,7 +463,7 @@ M.send({
   jsonrpc   = "2.0",
   id        = "h1",
   method    = "hello",
-  params    = { token = desc.token, client = "pi-editor.nvim", clientVersion = M.version },
+  params    = { token = desc.token, client = "pi-bridge.nvim", clientVersion = M.version },
 })
 -- M.send frames this as vim.json.encode(obj) .. "\n" (S24 GOTCHA 11).
 
@@ -540,7 +540,7 @@ function M.handshake(desc, on_result)
       function(connerr)
         if connerr then resolve_handshake(nil, connerr); return end   -- ENOENT/ECONNREFUSED/EACCES
         M.send({ jsonrpc = "2.0", id = "h1", method = "hello",
-          params = { token = desc.token, client = "pi-editor.nvim", clientVersion = M.version } })
+          params = { token = desc.token, client = "pi-bridge.nvim", clientVersion = M.version } })
       end,
       dispatch,
       function(reason) resolve_handshake(nil, reason) end)
@@ -628,11 +628,11 @@ cd plugin && nvim --headless --clean -u NORC +"luafile tests/smoke.lua" +qa ; ec
 ```bash
 # End-to-end: a REAL bridge server (the DONE extension) + a headless nvim handshake.
 # 1. Start pi with the bridge extension in RPC/print mode so the socket server is up and the
-#    PI_EDITOR_BRIDGE env var is set in pi's process. (Manual / scripted — see extension README.)
+#    PI_NVIM_BRIDGE env var is set in pi's process. (Manual / scripted — see extension README.)
 # 2. From that pi process's env, launch headless nvim on a temp pi-editor file and assert the
 #    handshake completed:
 TMP=$(mktemp --suffix=.pi.md); echo "hello world" > "$TMP"
-PI_EDITOR_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/minimal_init.lua \
+PI_NVIM_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/minimal_init.lua \
   +"luafile plugin/plugin/pi-editor.lua" \
   -c 'lua vim.defer_fn(function()
         local pi=require(\"pi-editor\")
@@ -645,7 +645,7 @@ PI_EDITOR_BRIDGE='<descriptor-from-pi>' nvim --headless --clean -u plugin/tests/
 # Expected: stdout "E2E_OK 0.1.0", exit 0. (The 500ms defer lets the async handshake complete.)
 
 # NEGATIVE e2e — a deliberately WRONG token must leave pi.bridge nil and NOT crash:
-PI_EDITOR_BRIDGE='{"transport":"unix","path":"/tmp/<real-socket>","token":"WRONG","pid":1,"cwd":"/tmp","fdAvailable":false,"serverVersion":"0.1.0"}' \
+PI_NVIM_BRIDGE='{"transport":"unix","path":"/tmp/<real-socket>","token":"WRONG","pid":1,"cwd":"/tmp","fdAvailable":false,"serverVersion":"0.1.0"}' \
   nvim --headless --clean -u plugin/tests/minimal_init.lua +"luafile plugin/plugin/pi-editor.lua" \
   -c 'lua vim.defer_fn(function()
         local pi=require(\"pi-editor\")

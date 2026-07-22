@@ -89,7 +89,7 @@ build on.
 in S6). startBridge mints a token + binds the socket so a Neovim `$EDITOR`
 process can `vim.uv.new_pipe():connect(socketPath)` and present the token in
 `hello`. The token + path are later JSON-serialized to
-`process.env.PI_EDITOR_BRIDGE` (S16) for the editor to discover.
+`process.env.PI_NVIM_BRIDGE` (S16) for the editor to discover.
 
 **Pain Points Addressed**: Without an idempotent startBridge, repeated
 `session_start` events (reload/new/resume/fork) would leak servers + socket
@@ -155,7 +155,7 @@ reset. NO edits to the existing `session_start`/`session_shutdown` handler bodie
 - [ ] `stopBridge()` is idempotent and safe when nothing is running: `server?.close()`
       guarded, `rmSync(socketPath, { force: true })` guarded, then resets
       `server`/`socketPath`/`token` to `undefined`. It does NOT clear
-      `process.env.PI_EDITOR_BRIDGE` (S5 writes none — that is S16).
+      `process.env.PI_NVIM_BRIDGE` (S5 writes none — that is S16).
 - [ ] `__deps = { createServer, chmodSync }` defaults to the real node builtins;
       overriding `__deps.createServer`/`__deps.chmodSync` in tests is observable
       (plain mutable object).
@@ -318,7 +318,7 @@ extension/
 //   introduced in THIS task (S5) even though plan-task S6 nominally owns it — S6
 //   should REUSE this stopBridge, not recreate it.
 
-// CRITICAL: S5's stopBridge must NOT `delete process.env.PI_EDITOR_BRIDGE`. S5
+// CRITICAL: S5's stopBridge must NOT `delete process.env.PI_NVIM_BRIDGE`. S5
 //   writes no env var (S16 does). Adding the delete now would be dead code that
 //   misleads; S16 adds BOTH the write (startBridge) and the delete (stopBridge).
 
@@ -456,14 +456,14 @@ let server: Server | undefined;
  * Absolute path of the bound socket
  * (`<tmpdir>/pi-editor-bridge-<uuid>.sock`). Populated by {@link startBridge},
  * cleared by {@link stopBridge}. The future S16 advertisement JSON-serializes
- * this into `process.env.PI_EDITOR_BRIDGE.path`.
+ * this into `process.env.PI_NVIM_BRIDGE.path`.
  */
 let socketPath: string | undefined;
 
 /**
  * The 32-hex-char session auth token (the REAL auth boundary — PRD §12).
  * Populated by {@link startBridge}, cleared by {@link stopBridge}. NEVER log this.
- * The future S16 advertisement carries it in `process.env.PI_EDITOR_BRIDGE.token`.
+ * The future S16 advertisement carries it in `process.env.PI_NVIM_BRIDGE.token`.
  */
 let token: string | undefined;
 
@@ -527,7 +527,7 @@ function onConnection(_sock: Socket): void {
  *   chmod immediately after listen does not race.)
  *
  * @param ctx `ExtensionContext` from `session_start`. `ctx.cwd` is RESERVED for
- *   the S16 `BridgeDescriptor` (`process.env.PI_EDITOR_BRIDGE.cwd`); S5 derives
+ *   the S16 `BridgeDescriptor` (`process.env.PI_NVIM_BRIDGE.cwd`); S5 derives
  *   the socket path from `os.tmpdir()`, not cwd, so `ctx` is not dereferenced
  *   here yet.
  *
@@ -561,9 +561,9 @@ export function startBridge(ctx: ExtensionContext): void {
  * operations are guarded). Returns silently on any error so reload/new/resume/
  * fork churn (PRD §6.2) never throws out of a lifecycle handler.
  *
- * NOTE (S5): this does NOT clear `process.env.PI_EDITOR_BRIDGE` because S5 writes
+ * NOTE (S5): this does NOT clear `process.env.PI_NVIM_BRIDGE` because S5 writes
  * no env var. When S16 adds the advertisement WRITE to {@link startBridge}, it
- * will also add `delete process.env.PI_EDITOR_BRIDGE` here.
+ * will also add `delete process.env.PI_NVIM_BRIDGE` here.
  */
 export function stopBridge(): void {
 	try {
@@ -774,8 +774,8 @@ INTERNAL consumers (later tasks — they read S5's state/getters, not new wiring
   - S8 (onConnection): replace the no-op placeholder with the JSONL reader + RPC
         dispatcher (imports protocol.ts + getProvider()).
   - S16 (env advertisement): JSON.stringify a BridgeDescriptor to
-        process.env.PI_EDITOR_BRIDGE using getSocketPath()/getToken() + ctx.cwd +
-        process.pid; add `delete process.env.PI_EDITOR_BRIDGE` to stopBridge.
+        process.env.PI_NVIM_BRIDGE using getSocketPath()/getToken() + ctx.cwd +
+        process.pid; add `delete process.env.PI_NVIM_BRIDGE` to stopBridge.
 SESSION-LEVEL SIDE EFFECTS (only when startBridge is actually called — deferred wiring):
   - FILESYSTEM: creates `<tmpdir>/pi-editor-bridge-<uuid>.sock` (mode 0o600 on
         non-Windows); removed by stopBridge.
@@ -886,7 +886,7 @@ grep -iE "error|cannot|fail|throw|TypeError" /tmp/s5-regression.out && echo "REG
 - ❌ Don't expose state via `export let server` — jiti doesn't propagate the reassignment to importers (verified). Use getter functions (like `getProvider()`).
 - ❌ Don't chmod before `server.listen(socketPath)` — the socket file doesn't exist yet → ENOENT. listen THEN chmod.
 - ❌ Don't skip the `stopBridge()` call at the top of `startBridge` — reload/new/resume/fork would leak servers + sockets.
-- ❌ Don't `delete process.env.PI_EDITOR_BRIDGE` in S5's stopBridge — nothing writes it yet (S16 owns both the write and the delete).
+- ❌ Don't `delete process.env.PI_NVIM_BRIDGE` in S5's stopBridge — nothing writes it yet (S16 owns both the write and the delete).
 - ❌ Don't wire `startBridge` into the `session_start` handler in S5 — it would make mode-guard.test.ts bind a real socket mid-unit-test. Defer the wiring to S6.
 - ❌ Don't edit `extension/tsconfig.json` — `pi-editor-bridge.ts` is already included and the new test is glob-covered; editing it risks colliding with the in-parallel S1 task.
 - ❌ Don't dereference `ctx.cwd` in S5 — it is reserved for the S16 descriptor; the socket path uses `os.tmpdir()`.

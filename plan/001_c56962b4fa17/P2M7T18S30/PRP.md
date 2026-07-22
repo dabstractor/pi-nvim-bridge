@@ -38,7 +38,7 @@ description: |
 
 ## Goal
 
-**Feature Goal**: Ship the **per-keystroke completion trigger layer** of pi-editor.nvim — `completion.lua`
+**Feature Goal**: Ship the **per-keystroke completion trigger layer** of pi-bridge.nvim — `completion.lua`
 — whose `refresh(buf)` is the autocmd entry point. It debounces insert-mode changes (`InsertEnter`/
 `TextChangedI`/`CursorMovedI`, already wired buffer-local by the COMPLETE ftplugin S22), reads the buffer
 + cursor, converts to pi coordinates via the COMPLETE S29 `coords.nvim_to_pi_coords`, and issues a

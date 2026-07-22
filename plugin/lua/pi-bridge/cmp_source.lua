@@ -11,7 +11,7 @@
 ---     sources = cmp.config.sources({ { name = "pi" } }),
 ---   })
 ---   -- register ONCE (e.g. in the cmp config or a lazy.nvim `config` fn):
----   require("cmp").register_source("pi", require("pi-editor.cmp_source").new())
+---   require("cmp").register_source("pi", require("pi-bridge.cmp_source").new())
 ---
 --- [Mode A] header — read before editing:
 ---  * ROLE: an `nvim-cmp` SOURCE ADAPTER (the classic module convention used by
@@ -70,7 +70,7 @@
 ---    EXACTLY that). NO `-1` (PRD §7.4's `bytecol - 1` is superseded by coords.lua's
 ---    exact-UTF-16 design — see coords.lua header).
 ---
----  * GOTCHA: read the bridge + coords FRESH at call time (`require("pi-editor").bridge`
+---  * GOTCHA: read the bridge + coords FRESH at call time (`require("pi-bridge").bridge`
 ---    INSIDE the fn, NOT a module-load local). The handshake resolves ASYNC after
 ---    VimEnter; tests swap fakes in AFTER require; /reload re-runs activate. Caching
 ---    breaks all three. (Same rule as completion.lua do_refresh.)
@@ -118,8 +118,8 @@
 ---    module READS `config.engine` only to degrade (no behavioral change in S46).
 ---
 --- Node builtins analog: pure Lua + the COMPLETE in-tree bridge
---- (`require("pi-editor").bridge`) + coords (`require("pi-editor.coords")`) + config
---- (`require("pi-editor")`). No sockets of its own — the smoke's fake luv server is the
+--- (`require("pi-bridge").bridge`) + coords (`require("pi-bridge.coords")`) + config
+--- (`require("pi-bridge")`). No sockets of its own — the smoke's fake luv server is the
 --- integration surface. Singleton state (mirrors completion.lua's `state` shape, NOT
 --- coords.lua's stateless shape — the source HAS supersession state).
 
@@ -131,7 +131,7 @@ local source = {}
 --- guard — cmp passes NO id to `complete`, unlike blink's `ctx.id`; mirrors
 --- completion.lua's `state.gen`); `inflight_id` is the bridge.request id of the in-flight
 --- getSuggestions (for bridge.cancel).
----@class pi-editor.CmpSourceState
+---@class pi-bridge.CmpSourceState
 ---@field gen         integer the latest complete-call generation (the supersession guard; cmp gives no id)
 ---@field inflight_id string? the bridge.request id of the in-flight getSuggestions (for bridge.cancel)
 local state = { gen = 0, inflight_id = nil }
@@ -160,7 +160,7 @@ local guess_kind -- (pi_item) → vim.lsp.protocol.CompletionItemKind (cosmetic 
 
 --- Construct an nvim-cmp source object. `params` is the cmp option table (e.g. from the
 --- registration config); accepted + ignored — the source reads pi's config LIVE at call
---- time (`require("pi-editor").config`). Returns a fresh table whose metatable is
+--- time (`require("pi-bridge").config`). Returns a fresh table whose metatable is
 --- `source` (the cmp-buffer / codecompanion-cmp pattern). The object is stateless;
 --- supersession state is module-level (one pi-prompt buffer per session).
 ---@param params table? The cmp option table (ignored — pi config is read live).
@@ -219,7 +219,7 @@ end
 ---   * value ends with `/` → Folder (19) — a directory.
 ---   * else → Text (1) — defensive default.
 --- Never throws (type-guard `pi_item`).
----@param pi_item pi-editor.AutocompleteItem The pi item.
+---@param pi_item pi-bridge.AutocompleteItem The pi item.
 ---@return integer kind A `vim.lsp.protocol.CompletionItemKind` value.
 guess_kind = function(pi_item)
   local ItemKind = vim.lsp.protocol.CompletionItemKind
@@ -242,7 +242,7 @@ end
 ---                   range is a valid lsp.Range (0-based line + 0-based UTF-16 character)
 ---                   covering pi's `prefix` at the cursor.
 ---   * `data`      — the round-trip snapshot: `{ bufnr, pi, prefix, lines, cursorLine,
----                   cursorCol }` (see pi-editor.CmpItemData). `bufnr` is REQUIRED (cmp's
+---                   cursorCol }` (see pi-bridge.CmpItemData). `bufnr` is REQUIRED (cmp's
 ---                   execute has NO ctx — the buffer to mutate on accept is read from
 ---                   here). Forwarded VERBATIM to applyCompletion.
 ---
@@ -255,13 +255,13 @@ end
 --- forwarded VERBATIM (the bridge server forwards it verbatim to pi; pi keys on the whole
 --- table — completion.lua accept does the same). PORT VERBATIM from blink_source.lua
 --- map_item; ADD `data.bufnr`.
----@param pi_item  pi-editor.AutocompleteItem The pi item (forwarded VERBATIM in data.pi).
----@param pi_coords pi-editor.PiCoords          The pi coords {lines, cursorLine, cursorCol} (from nvim_to_pi_coords).
+---@param pi_item  pi-bridge.AutocompleteItem The pi item (forwarded VERBATIM in data.pi).
+---@param pi_coords pi-bridge.PiCoords          The pi coords {lines, cursorLine, cursorCol} (from nvim_to_pi_coords).
 ---@param prefix    string                      The getSuggestions result.prefix (applyCompletion's prefix).
 ---@param bufnr     integer                     The buffer to mutate on accept (cmp's execute has NO ctx — carried here).
 ---@return table item A cmp lsp.CompletionItem.
 map_item = function(pi_item, pi_coords, prefix, bufnr)
-  local coords = require("pi-editor.coords")
+  local coords = require("pi-bridge.coords")
   local line = pi_coords.cursorLine or 0
   local end_char = pi_coords.cursorCol or 0
   -- start_char = end_char - utf16_len(prefix). Compute utf16_len(prefix) from the cursor
@@ -324,7 +324,7 @@ function source:complete(request, callback)
   -- DEFENSIVE: a nil/non-table request is a caller bug (cmp always passes one) — degrade to callback().
   if type(request) ~= "table" then return callback() end
   -- READ BRIDGE FRESH (handshake resolves async + test mocks swap in after require).
-  local bridge = require("pi-editor").bridge
+  local bridge = require("pi-bridge").bridge
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
@@ -340,7 +340,7 @@ function source:complete(request, callback)
   local cur   = vim.api.nvim_win_get_cursor(0)       -- {row 1-based, col 0-based byte}
   -- CONVERT nvim→pi (S29 — THE centralized seam). `pi_coords.lines` is the SAME reference as
   -- `lines`, so the result drops straight into the RPC params.
-  local pi_coords = require("pi-editor.coords").nvim_to_pi_coords(lines, cur[1], cur[2])
+  local pi_coords = require("pi-bridge.coords").nvim_to_pi_coords(lines, cur[1], cur[2])
   -- SUPERSEDE layer 1 (cancel prev in-flight — optimization; frees the round-trip).
   if state.inflight_id and type(bridge.cancel) == "function" then
     pcall(bridge.cancel, state.inflight_id)
@@ -401,7 +401,7 @@ function source:execute(completion_item, callback)
   local d = completion_item and completion_item.data
   if type(d) ~= "table" or type(d.pi) ~= "table" then return callback(completion_item) end
   -- READ BRIDGE FRESH (handshake resolves async + test mocks swap in after require).
-  local bridge = require("pi-editor").bridge
+  local bridge = require("pi-bridge").bridge
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
@@ -421,14 +421,14 @@ function source:execute(completion_item, callback)
   pcall(bridge.request, "applyCompletion", params, function(err, result)
     -- async, schedule_wrap'd by bridge → nvim main loop (api-safe; NO extra vim.schedule).
     if err or type(result) ~= "table" then return end -- degrade: buffer left as cmp's textEdit
-    local nv = require("pi-editor.coords").pi_to_nvim_coords(result.lines, result.cursorLine, result.cursorCol)
+    local nv = require("pi-bridge.coords").pi_to_nvim_coords(result.lines, result.cursorLine, result.cursorCol)
     -- WHOLE buffer replace on the snapshot buf (nvim_buf_set_lines does NOT fire TextChangedI →
     -- no refresh loop; completion.lua §5 Q2). pcall so a wiped buf / odd state never throws.
     pcall(vim.api.nvim_buf_set_lines, bufnr, 0, -1, false, nv.lines)
     pcall(vim.api.nvim_win_set_cursor, 0, { nv.row, nv.col }) -- 0-based byte col, NO -1
     -- close a stale builtin menu if open (defensive; never throws). Avoids a lingering
     -- builtin popup when the user accepted via cmp.
-    pcall(function() require("pi-editor.menu").close() end)
+    pcall(function() require("pi-bridge.menu").close() end)
   end)
   callback(completion_item)                         -- IMMEDIATE: never stall cmp (RPC is fire-and-forget)
 end

@@ -1,12 +1,12 @@
 -- === plugin/tests/cmp_source_spec.lua — plenary/busted spec (the Level-2 gate) ===
 -- Covers every Success Criterion from PRP P4.M12.T30.S46. MOCKS the bridge (sets
--- require("pi-editor").bridge = fake with controllable request/cancel/is_connected) so it
+-- require("pi-bridge").bridge = fake with controllable request/cancel/is_connected) so it
 -- tests the supersession / item-mapping / execute logic FAST without a socket (the bridge
 -- transport is already exhaustively tested by bridge_request_spec). Mirrors the
 -- vim.wait(ms, predicate, interval) async style of completion_spec.lua / blink_source_spec.
 --
 -- DIFFERENCES vs blink_source_spec (the DIRECT analog):
---   * describe: pi-editor.cmp_source (NOT blink_source)
+--   * describe: pi-bridge.cmp_source (NOT blink_source)
 --   * reset: source._reset_for_test() clears gen/inflight_id (NOT current_id)
 --   * new(): returns is_available/get_trigger_characters/get_keyword_pattern/complete/execute
 --     (NOT enabled/get_completions; cmp adds get_keyword_pattern)
@@ -27,8 +27,8 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/cmp_source_spec.lua")'
-local cmpsrc = require("pi-editor.cmp_source")
-local pi = require("pi-editor")
+local cmpsrc = require("pi-bridge.cmp_source")
+local pi = require("pi-bridge")
 
 if pi.config == nil then pi.setup({ debounce_ms = 10 }) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -90,7 +90,7 @@ end
 local function reset()
   pi.bridge = nil
   -- reset the module-level supersession state (gen / inflight_id)
-  pcall(function() require("pi-editor.cmp_source")._reset_for_test() end)
+  pcall(function() require("pi-bridge.cmp_source")._reset_for_test() end)
 end
 
 --- Wait helper: vim.wait until `predicate()` is true (mirrors completion_spec / blink_source_spec).
@@ -117,7 +117,7 @@ local function make_request(bufnr)
   }
 end
 
-describe("pi-editor.cmp_source", function()
+describe("pi-bridge.cmp_source", function()
   before_each(reset)
   after_each(reset)
 

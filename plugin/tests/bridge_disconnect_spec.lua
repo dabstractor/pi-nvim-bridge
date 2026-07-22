@@ -12,9 +12,9 @@
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/bridge_disconnect_spec.lua")'
 local uv = vim.uv
-local bridge = require("pi-editor.bridge")
-local jreader = require("pi-editor.jsonlreader")
-local pi = require("pi-editor")
+local bridge = require("pi-bridge.bridge")
+local jreader = require("pi-bridge.jsonlreader")
+local pi = require("pi-bridge")
 
 if pi.config == nil then pi.setup({}) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -135,7 +135,7 @@ local function with_handshaken_server(server_opts, spec)
   end)
 end
 
-describe("pi-editor.bridge on_disconnect (S39)", function()
+describe("pi-bridge.bridge on_disconnect (S39)", function()
   before_each(function() reset_module() end)
   after_each(function() reset_module() end)
 

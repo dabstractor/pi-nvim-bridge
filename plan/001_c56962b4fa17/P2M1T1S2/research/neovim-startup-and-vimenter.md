@@ -216,13 +216,13 @@ test which calls `cquit 1` itself and omits a trailing command.
 ## Recommended shim implementation (`plugin/plugin/pi-editor.lua`, ~12 lines)
 
 ```lua
---- pi-editor.nvim — VimEnter auto-activation shim.
+--- pi-bridge.nvim — VimEnter auto-activation shim.
 -- Auto-sourced by Neovim at startup (:help load-plugins) BEFORE the VimEnter
 -- event, so the autocmd below is always registered in time. Registers a
 -- fire-once VimEnter autocmd that calls require("pi-editor").activate().
 -- The plugin stays DORMANT (a no-op) in every ordinary nvim session: activate()
 -- (implemented in a later task) returns early unless pi spawned this nvim with
--- PI_EDITOR_BRIDGE set (PRD §7.1). Requiring lazy = false (PRD §10.3) ensures
+-- PI_NVIM_BRIDGE set (PRD §7.1). Requiring lazy = false (PRD §10.3) ensures
 -- this file is sourced at startup rather than deferred by a plugin manager.
 local group = vim.api.nvim_create_augroup("pi-editor", { clear = true })
 vim.api.nvim_create_autocmd("VimEnter", {

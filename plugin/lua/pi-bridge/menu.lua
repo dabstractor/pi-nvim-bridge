@@ -87,7 +87,7 @@
 --    keeps the public surface minimal + signals "S34 owns this" clearly.
 --
 --  * READ completion FRESH at call time inside attach()/detach():
---    `require("pi-editor.completion")`. (Same codebase rule as S30's bridge-read-fresh —
+--    `require("pi-bridge.completion")`. (Same codebase rule as S30's bridge-read-fresh —
 --    the handshake resolves async + tests swap fakes after require + a /reload re-runs
 --    activate().) Do NOT cache completion at module load.
 --
@@ -107,7 +107,7 @@
 --    (S32), NO Tab-force (S33), NO window (S34), NO auto-close (S37). S36 is COMPLETE.
 --
 -- Node builtins analog: pure Lua + the COMPLETE in-tree completion seam
--- (`require("pi-editor.completion")`). No sockets of its own — the smoke's fake luv
+-- (`require("pi-bridge.completion")`). No sockets of its own — the smoke's fake luv
 -- server is the integration surface (via the bridge + completion). Singleton state
 -- (mirrors `bridge.lua`/`completion.lua`'s `state` shape, NOT `coords.lua`'s stateless
 -- shape — menu HAS state). One pi-prompt buffer per session (PRD §11); `reset()` clears
@@ -115,10 +115,10 @@
 
 local M = {}
 
--- [TEMP DEBUG] trace completion flow to /tmp/pi-editor-menu-debug.log (always-on; remove after diagnosing).
+-- [TEMP DEBUG] trace completion flow to /tmp/pi-bridge-menu-debug.log (always-on; remove after diagnosing).
 local function dbg(msg)
   pcall(function()
-    local f = io.open("/tmp/pi-editor-menu-debug.log", "a")
+    local f = io.open("/tmp/pi-bridge-menu-debug.log", "a")
     if f then f:write(tostring(msg) .. "\n"); f:close() end
   end)
 end
@@ -128,7 +128,7 @@ end
 --- S30's `on_results`). Opaque to S31 — S31 stores + forwards the array; S34 renders it,
 --- S32 applies it. Fields typed loosely (the exact shape is the extension's protocol; S31
 --- is shape-agnostic — same as S30's note).
----@class pi-editor.AutocompleteItem
+---@class pi-bridge.AutocompleteItem
 ---@field value string The text to insert on accept (the canonical value).
 ---@field label string Human-readable label shown in the menu.
 ---@field [string] any Extra fields the extension includes (e.g. description, kind, filterText).
@@ -137,17 +137,17 @@ end
 --- singleton). One pi-prompt buffer per session (PRD §11). Cleared by `reset()`. Mirrors
 --- `bridge.lua`/`completion.lua`'s `state` shape (menu HAS state). The floating WINDOW
 --- (`win`/`menu_buf` handles) are S34-owned fields (nil until open() runs render).
----@class pi-editor.MenuState
+---@class pi-bridge.MenuState
 ---@field attached        boolean                     Whether `completion.on_results` is wired to M.on_results.
 ---@field prev_on_results fun|nil                     The on_results saved at the FIRST attach (restored by detach).
 ---@field buf             integer|nil                 The pi-prompt buffer handle of the latest on_results (for get_buf/S32).
----@field items           pi-editor.AutocompleteItem[] The latest items array (1-indexed; {} when closed).
+---@field items           pi-bridge.AutocompleteItem[] The latest items array (1-indexed; {} when closed).
 ---@field prefix          string                      The latest prefix (for get_prefix/S32 applyCompletion).
 ---@field selected        integer                     1-indexed selected row; 1 after open(), 0 when closed/empty.
 ---@field open            boolean                     Whether the menu is showing (true after open() with items).
 ---@field win             integer|nil                 S34: the floating window handle (set by render; nil when closed).
 ---@field menu_buf        integer|nil                 S34: the scratch buffer handle (lazy create; reused across opens; nil'd by reset()).
----@type pi-editor.MenuState
+---@type pi-bridge.MenuState
 local state = {
   attached = false,
   prev_on_results = nil,
@@ -169,7 +169,7 @@ local state = {
 local DESC_GAP = 2
 local ns = nil
 do
-  local ok, id = pcall(vim.api.nvim_create_namespace, "pi-editor-menu")
+  local ok, id = pcall(vim.api.nvim_create_namespace, "pi-bridge-menu")
   if ok and type(id) == "number" then ns = id end -- nil on failure (apply_highlights degrades)
 end
 
@@ -183,7 +183,7 @@ end
 
 --- Max label + max description display widths + whether any item has a description.
 --- PURE (no nvim state). type-guards each item (never throws). Exposed as M._column_metrics.
----@param items pi-editor.AutocompleteItem[]
+---@param items pi-bridge.AutocompleteItem[]
 ---@return { max_label_w: integer, max_desc_w: integer, any_desc: boolean }
 local function column_metrics(items)
   local max_label_w, max_desc_w, any_desc = 0, 0, false
@@ -244,7 +244,7 @@ end
 -- Width = label-only (S34) OR label+gap+description (S35, when any item has a desc).
 -- CJK-aware via strdisplaywidth. Clamped to the available screen columns minus border
 -- horizontal overhead.
----@param items pi-editor.AutocompleteItem[] The items to size for.
+---@param items pi-bridge.AutocompleteItem[] The items to size for.
 ---@param ui_cols integer Full-screen columns (vim.o.columns).
 ---@param border_h_overhead integer Horizontal border overhead in cells (2 for a real border, 0 for "none").
 ---@return integer The content width, >= 1, clamped to fit the screen.
@@ -320,7 +320,7 @@ end
 -- S34: render(state) — create/show OR close the floating window.
 -- Called by S31's open(items) and close() (on the nvim main loop via on_results —
 -- api-safe). NEVER throws (pcall every nvim call; nvim_*_is_valid guards). Reads
--- config FRESH via require("pi-editor") (handshake async + tests mock after require).
+-- config FRESH via require("pi-bridge") (handshake async + tests mock after require).
 -- Lifecycle (blink-verified, research/notes.md §1): REUSE the scratch buffer across
 -- open/close (don't delete on close — only reset() nils state.menu_buf); CLOSE the
 -- window on hide + RECREATE on the next open reusing the buffer; REPOSITION IN PLACE
@@ -329,7 +329,7 @@ end
 
 --- Lazily create (or reuse) the scratch buffer for the popup content. Create ONCE,
 --- reuse across opens (blink pattern). Never throws (create-fail returns nil).
----@param state pi-editor.MenuState The menu state (reads/writes state.menu_buf).
+---@param state pi-bridge.MenuState The menu state (reads/writes state.menu_buf).
 ---@return integer|nil The scratch buffer handle, or nil on create-fail.
 local function ensure_menu_buf(state)
   if type(state.menu_buf) == "number" and vim.api.nvim_buf_is_valid(state.menu_buf) then
@@ -345,7 +345,7 @@ end
 --- description truncated to desc_w (right-padded), the whole line padded to a clean
 --- rectangle. When desc_w==0, produces S34-identical label-only padded lines.
 --- Never throws (type-guarded). CJK-aware via strdisplaywidth/strcharpart.
----@param state pi-editor.MenuState The menu state (reads state.items).
+---@param state pi-bridge.MenuState The menu state (reads state.items).
 ---@param label_w integer The label column width.
 ---@param desc_w integer The description column width (0 ⇒ label-only).
 ---@return string[] The padded two-column (or label-only) lines.
@@ -380,7 +380,7 @@ end
 --- (LAST-WINS within a namespace, neovim#8449 — research/notes.md §2):
 ---   (a) clear  (b) base Pmenu every row  (c) Comment on desc ranges  (d) PmenuSel selected LAST.
 --- `state.selected` is 1-BASED (S31); nvim rows are 0-BASED → passes `state.selected - 1`.
----@param state pi-editor.MenuState reads state.items + state.selected (1-based).
+---@param state pi-bridge.MenuState reads state.items + state.selected (1-based).
 ---@param buf integer the scratch buffer (state.menu_buf).
 ---@param label_w integer the label column width.
 ---@param desc_w integer the description column width (0 ⇒ no desc column).
@@ -415,7 +415,7 @@ end
 --- `state.open and #state.items > 0` (open({}) ⇒ state.open=false ⇒ close path).
 --- Never throws. Reads config FRESH. Reuses state.menu_buf; repositions state.win in
 --- place via nvim_win_set_config when valid, else nvim_open_win; closes on hide.
----@param state pi-editor.MenuState The menu state (the S31 singleton).
+---@param state pi-bridge.MenuState The menu state (the S31 singleton).
 local function render(state)
   if state == nil then return end
   -- HIDE path: state closed (close(), or open({}) which set state.open=false) ⇒ close window.
@@ -430,7 +430,7 @@ local function render(state)
   local buf = ensure_menu_buf(state)
   if buf == nil then return end                          -- never throws (create failed → degrade)
   -- READ config FRESH (setup() may never have run — self-sufficient).
-  local cfg = require("pi-editor")
+  local cfg = require("pi-bridge")
   local menu_cfg = ((cfg.config or cfg.defaults) or {}).menu or {}
   local max_height = (type(menu_cfg.max_height) == "number" and menu_cfg.max_height > 0)
                     and menu_cfg.max_height or 12
@@ -507,7 +507,7 @@ end
 --- the nvim main loop (api-safe — S30 fires it inline from its `vim.defer_fn` cb, whose
 --- bridge cb is itself `schedule_wrap`d). Never throws.
 ---@param buf    integer                      The pi-prompt buffer handle (from S30's on_results).
----@param items  pi-editor.AutocompleteItem[] The completion items (possibly empty — S30 normalized null→{}).
+---@param items  pi-bridge.AutocompleteItem[] The completion items (possibly empty — S30 normalized null→{}).
 ---@param prefix string                       The completion prefix (for get_prefix/S32).
 function M.on_results(buf, items, prefix)
   -- WIPE guard (the ONLY nvim-state read here — NOT a staleness re-derive): a buffer may
@@ -526,7 +526,7 @@ function M.on_results(buf, items, prefix)
   if #items == 0 then dbg("[menu.on_results] EMPTY → close"); M.close() else M.open(items) end
 end
 
---- Idempotently register `M.on_results` on `require("pi-editor.completion").on_results`
+--- Idempotently register `M.on_results` on `require("pi-bridge.completion").on_results`
 --- (last-wins overwrite — the cmp single-callback-seam pattern). Guarded by
 --- `state.attached` so a 2nd `attach()` (e.g. a /reload re-running `activate()`) is a
 --- no-op (does NOT re-save `prev_on_results`). Never throws; silent degrade if
@@ -534,7 +534,7 @@ end
 --- degrades silently when `pi.bridge` is nil (no fetch → no `on_results`).
 function M.attach()
   if state.attached then return end                                  -- idempotent (no stack on /reload)
-  local ok, comp = pcall(require, "pi-editor.completion")            -- READ FRESH (handshake async + test mocks)
+  local ok, comp = pcall(require, "pi-bridge.completion")            -- READ FRESH (handshake async + test mocks)
   if not ok or type(comp) ~= "table" then return end                 -- never throws (completion absent)
   state.prev_on_results = comp.on_results                            -- save prior (nil-safe; restored by detach)
   comp.on_results = M.on_results                                     -- last-wins overwrite
@@ -545,7 +545,7 @@ end
 --- `attached=false`. Never throws; no-op if never attached.
 function M.detach()
   if not state.attached then return end
-  local ok, comp = pcall(require, "pi-editor.completion")
+  local ok, comp = pcall(require, "pi-bridge.completion")
   if ok and type(comp) == "table" then comp.on_results = state.prev_on_results end -- restore prior (or nil)
   state.prev_on_results = nil
   state.attached = false
@@ -554,7 +554,7 @@ end
 --- Store items + set `selected=1` + `open=true`; call `render(state)`. The STATE half of
 --- S34's `M.open(items)` — S34 ADDS the floating window inside `render()`. Signature is
 --- items-only (matches the S34 contract; `buf`+`prefix` are stored by `on_results`).
----@param items pi-editor.AutocompleteItem[] The items to display (non-empty — on_results guards empty→close).
+---@param items pi-bridge.AutocompleteItem[] The items to display (non-empty — on_results guards empty→close).
 function M.open(items)
   items = (type(items) == "table") and items or {}  -- defensive (on_results guards; direct callers may not)
   state.items = items
@@ -609,14 +609,14 @@ end
 
 --- The selected item (`items[selected]`), or `nil`. For S32 accept to read WITHOUT
 --- coupling to the window (blink `list.accept` reads state, not the popup).
----@return pi-editor.AutocompleteItem|nil
+---@return pi-bridge.AutocompleteItem|nil
 function M.get_selected()
   return state.items[state.selected]                -- nil when closed (selected==0)
 end
 
 --- Shallow copy of items (the caller may not mutate `state.items`). The item tables
 --- themselves are shared (fine — S32 reads `item.value`, S34 reads `item.label`/`description`).
----@return pi-editor.AutocompleteItem[]
+---@return pi-bridge.AutocompleteItem[]
 function M.get_items()
   local copy = {}
   for i = 1, #state.items do copy[i] = state.items[i] end

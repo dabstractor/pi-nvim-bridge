@@ -4,12 +4,12 @@
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/ftplugin_spec.lua")'
 
-describe("pi-editor ftplugin/pi-prompt", function()
+describe("pi-bridge ftplugin/pi-prompt", function()
   -- before_each: start each test from a clean module + config state so the filetype set
   -- re-sources the ftplugin against the current resolved config (autosave_on_exit etc.).
   before_each(function()
-    package.loaded["pi-editor"] = nil
-    require("pi-editor")
+    package.loaded["pi-bridge"] = nil
+    require("pi-bridge")
   end)
 
   -- helper: make a fresh scratch buffer the current and set filetype=pi-prompt (sources ftplugin).
@@ -38,22 +38,22 @@ describe("pi-editor ftplugin/pi-prompt", function()
     assert.is_false(vim.wo[0].spell)
   end)
 
-  it("registers the 9 insert keymaps with 'pi-editor:' desc", function()
+  it("registers the 9 insert keymaps with 'pi-bridge:' desc", function()
     local b = fresh_prompt_buf()
     local kms = {}
     for _, m in ipairs(vim.api.nvim_buf_get_keymap(b, "i")) do kms[m.lhs] = m.desc end
     for _, k in ipairs({ "<Tab>", "<S-Tab>", "<C-N>", "<C-P>", "<C-E>", "<CR>", "<Down>", "<Up>", "<C-Y>" }) do
-      -- NOTE: use `sub` not `find("^pi-editor:")` — `-` is a Lua pattern metachar so the
-      -- anchored find silently fails. `sub(1,11) == "pi-editor: " is literal & robust.
+      -- NOTE: use `sub` not `find("^pi-bridge:")` — `-` is a Lua pattern metachar so the
+      -- anchored find silently fails. `sub(1,11) == "pi-bridge: " is literal & robust.
       assert.is_truthy(kms[k], "missing keymap " .. k)
-      assert.is_truthy(kms[k]:sub(1, 11) == "pi-editor: ", "bad desc for " .. k)
+      assert.is_truthy(kms[k]:sub(1, 11) == "pi-bridge: ", "bad desc for " .. k)
     end
   end)
 
   it("registers completion autocmds (InsertEnter/TextChangedI/CursorMovedI/InsertLeave/BufLeave)", function()
     local b = fresh_prompt_buf()
     local evs = {}
-    for _, a in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-editor" })) do evs[a.event] = true end
+    for _, a in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-bridge" })) do evs[a.event] = true end
     for _, ev in ipairs({ "InsertEnter", "TextChangedI", "CursorMovedI", "InsertLeave", "BufLeave" }) do
       assert.is_true(evs[ev], "missing autocmd " .. ev)
     end
@@ -62,17 +62,17 @@ describe("pi-editor ftplugin/pi-prompt", function()
   it("registers VimLeavePre/ExitPre autosave autocmds by default", function()
     local b = fresh_prompt_buf()
     local evs = {}
-    for _, a in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-editor" })) do evs[a.event] = true end
+    for _, a in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-bridge" })) do evs[a.event] = true end
     assert.is_true(evs["VimLeavePre"])
     assert.is_true(evs["ExitPre"])
   end)
 
   it("skips exit autocmds when autosave_on_exit=false", function()
-    package.loaded["pi-editor"] = nil
-    local pi = require("pi-editor"); pi.setup({ autosave_on_exit = false })
+    package.loaded["pi-bridge"] = nil
+    local pi = require("pi-bridge"); pi.setup({ autosave_on_exit = false })
     local b = fresh_prompt_buf()
     local evs = {}
-    for _, a in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-editor" })) do evs[a.event] = true end
+    for _, a in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-bridge" })) do evs[a.event] = true end
     assert.is_nil(evs["VimLeavePre"])
     assert.is_nil(evs["ExitPre"])
   end)
@@ -100,7 +100,7 @@ describe("pi-editor ftplugin/pi-prompt", function()
     assert.are_not_equals("pi-prompt", vim.bo[b2].filetype)
     local n = 0
     for _ in ipairs(vim.api.nvim_buf_get_keymap(b2, "i")) do n = n + 1 end
-    assert.are.equals(0, n)   -- sibling has no pi-editor keymaps
+    assert.are.equals(0, n)   -- sibling has no pi-bridge keymaps
     _ = b1
   end)
 
@@ -108,7 +108,7 @@ describe("pi-editor ftplugin/pi-prompt", function()
     local b = fresh_prompt_buf()
     local function cnt()
       local n = 0
-      for _ in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-editor" })) do n = n + 1 end
+      for _ in ipairs(vim.api.nvim_get_autocmds({ buffer = b, group = "pi-bridge" })) do n = n + 1 end
       return n
     end
     local before = cnt()
@@ -119,7 +119,7 @@ describe("pi-editor ftplugin/pi-prompt", function()
 
   it("preserves S20's VimEnter autocmd in the shared group", function()
     fresh_prompt_buf()
-    local ve = vim.api.nvim_get_autocmds({ event = "VimEnter", group = "pi-editor" })
+    local ve = vim.api.nvim_get_autocmds({ event = "VimEnter", group = "pi-bridge" })
     assert.is_true(#ve >= 1)
   end)
 end)

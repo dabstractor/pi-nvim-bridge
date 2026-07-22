@@ -13,8 +13,8 @@ local function check(cond, msg)
   if not cond then io.stderr:write("FAIL: " .. msg .. "\n"); fails = fails + 1 end
 end
 
-local ok, pi = pcall(require, "pi-editor")
-check(ok, "require('pi-editor') failed: " .. tostring(pi))
+local ok, pi = pcall(require, "pi-bridge")
+check(ok, "require('pi-bridge') failed: " .. tostring(pi))
 pi = ok and pi or {}
 
 check(type(pi.setup) == "function", "setup is not a function")
@@ -41,16 +41,16 @@ check(pi.defaults.debounce_ms == 20, "defaults.debounce_ms was MUTATED")
 check(pi.defaults.menu.max_height == 12, "defaults.menu.max_height was MUTATED")
 check(pi.bridge == nil, "bridge is not the nil placeholder")
 
--- S25 dormant-session guard: WITHOUT the PI_EDITOR_BRIDGE env var, activate() must leave
+-- S25 dormant-session guard: WITHOUT the PI_NVIM_BRIDGE env var, activate() must leave
 -- pi.bridge == nil (the handshake never runs in a non-pi session). Also confirms a
 -- broken/missing bridge module can NEVER set it (activate's handshake call is pcall'd).
 do
-  local saved = vim.env.PI_EDITOR_BRIDGE
-  vim.env.PI_EDITOR_BRIDGE = nil -- simulate an ordinary (non-pi) nvim session
+  local saved = vim.env.PI_NVIM_BRIDGE
+  vim.env.PI_NVIM_BRIDGE = nil -- simulate an ordinary (non-pi) nvim session
   local desc = pi.activate()    -- dormant -> returns nil, must NOT throw / NOT notify
-  check(desc == nil, "activate() must return nil without PI_EDITOR_BRIDGE")
+  check(desc == nil, "activate() must return nil without PI_NVIM_BRIDGE")
   check(pi.bridge == nil, "pi.bridge must stay nil in a dormant session")
-  vim.env.PI_EDITOR_BRIDGE = saved -- restore (other tests / downstream may rely on it)
+  vim.env.PI_NVIM_BRIDGE = saved -- restore (other tests / downstream may rely on it)
 end
 
 local cfg = pi.setup({ rpc_timeout_ms = 9000 })

@@ -1,4 +1,4 @@
-# Publish pi-editor-bridge to npm on tag push.
+# Publish pi-nvim-bridge to npm on tag push.
 #
 # Release model: the git tag IS the source of truth for the version.
 # You never edit package.json's "version" by hand — just:
@@ -11,7 +11,7 @@
 # notes is also created from the tag.
 #
 # Required secret: NPM_TOKEN — an npm access token with publish rights for
-# `pi-editor-bridge`. Create it at https://www.npmjs.com/settings/<you>/tokens
+# `pi-nvim-bridge`. Create it at https://www.npmjs.com/settings/<you>/tokens
 # (Automation or Granular, publish scope) and add it as a repo/secret named
 # NPM_TOKEN. Provenance (supply-chain attestation) also needs the workflow's
 # `id-token: write` permission, which is granted below.

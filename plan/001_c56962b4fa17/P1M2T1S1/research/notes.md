@@ -93,7 +93,7 @@ idempotency**. `session_start` fires repeatedly (reload/new/resume/fork — PRD
 a socket file. S5 therefore ships a **minimal, working `stopBridge()`**:
 - `server?.close()` (guarded), `rmSync(socketPath, { force:true })` (guarded),
   reset the three module vars (`server/socketPath/token`) to `undefined`.
-- **OMIT** the `delete process.env.PI_EDITOR_BRIDGE` line from PRD §6.4's
+- **OMIT** the `delete process.env.PI_NVIM_BRIDGE` line from PRD §6.4's
   stopBridge: S5 writes NO env var (that is S16), so there is nothing to clear.
   S16 will add the env WRITE to startBridge and the env DELETE to stopBridge.
 - This minimal stopBridge already satisfies the core of plan task
@@ -181,9 +181,9 @@ concurrency. (Same shared-state caveat as provider-capture.test.ts.)
 - **P1.M2.T3.S5 wiring gap:** startBridge is NOT wired into `session_start` in S5
   (see §2.3). Recommend S6 land both wirings (start in session_start, stop in
   session_shutdown) atomically, OR a dedicated integration step.
-- **P1.M3.T8.S16 (env advertisement):** will (a) add the `process.env.PI_EDITOR_BRIDGE`
+- **P1.M3.T8.S16 (env advertisement):** will (a) add the `process.env.PI_NVIM_BRIDGE`
   JSON write to startBridge (using `getSocketPath()/getToken()` + `ctx.cwd` +
-  `process.pid`), and (b) add `delete process.env.PI_EDITOR_BRIDGE` to stopBridge.
+  `process.pid`), and (b) add `delete process.env.PI_NVIM_BRIDGE` to stopBridge.
   S5's startBridge already reserves `ctx` for this.
 - **P1.M2.T4.S8 (onConnection):** will replace the no-op placeholder with the
   JSONL reader + RPC dispatcher (imports protocol.ts + getProvider).

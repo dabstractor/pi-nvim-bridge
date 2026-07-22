@@ -19,7 +19,7 @@
 `plan/001_c56962b4fa17/P1M2T3S5/research/notes.md` §6 (verbatim):
 
 > **P1.M2.T3.S6 (stopBridge):** REUSE the stopBridge S5 ships (do NOT recreate it). S6
-> adds: wire it into `session_shutdown`; (after S16) add `delete process.env.PI_EDITOR_BRIDGE`;
+> adds: wire it into `session_shutdown`; (after S16) add `delete process.env.PI_NVIM_BRIDGE`;
 > wire `startBridge(ctx)` into the `session_start` handler at the L101 TODO call site; and
 > add `server.on('error', ...)` so an async listen failure (EADDRINUSE) doesn't crash pi
 > (S5's tests use unique UUID paths so this isn't exercised in S5).
@@ -29,15 +29,15 @@ Corroborated in `extension/pi-editor-bridge.ts` JSDoc (written by S5):
 - `stopBridge()` STATUS line: *"ships the server/socket/state teardown half. This is also
   the core of sibling task **P1.M2.T3.S6** ... S6 should REUSE this function (verify it
   exists), wire it into `session_shutdown`, and (once S16 lands) add the
-  `delete process.env.PI_EDITOR_BRIDGE` line."*
+  `delete process.env.PI_NVIM_BRIDGE` line."*
 - `startBridge()` STATUS bullets: *"wiring startBridge into the session_start handler ..
   **P1.M2.T3.S6** (the L101 `// TODO(M2): startBridge(...)` call site). NOT wired in S5
   so the existing mode-guard.test.ts (S3) doesn't fire a real listen/chmod during a unit
   test."* and *"server.on('error', ...) handler .. **S6, when wiring**. An unhandled
   'error' event (e.g. EADDRINUSE) THROWS and would crash pi."*
 
-**Out of scope for S6** (explicitly): writing `process.env.PI_EDITOR_BRIDGE` is
-**P1.M3.T8.S16**; S6 must NOT add the `delete process.env.PI_EDITOR_BRIDGE` line either
+**Out of scope for S6** (explicitly): writing `process.env.PI_NVIM_BRIDGE` is
+**P1.M3.T8.S16**; S6 must NOT add the `delete process.env.PI_NVIM_BRIDGE` line either
 (nothing writes the var until S16, so deleting it in S6 would be a dead reference).
 `onConnection` / handshake / RPC handlers are S7/S8/S9/S11–S14.
 
@@ -80,7 +80,7 @@ So S6 touches **3 existing files** (`pi-editor-bridge.ts` + `mode-guard.test.ts`
 
 - **L202**: `server = __deps.createServer((sock) => onConnection(sock));`
 - **L203**: `server.listen(socketPath);` → **insert `server.on("error", …)` BETWEEN L202 and L203** (attach the listener BEFORE `listen()` so an early bind error is caught; though emit-after-listen is the realistic path, attaching pre-listen is the safe convention).
-- **L243**: `// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE` → **replace** with `startBridge(ctx);` (+ a trailing `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE`).
+- **L243**: `// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_NVIM_BRIDGE` → **replace** with `startBridge(ctx);` (+ a trailing `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE`).
 - **L246–247**: `pi.on("session_shutdown", (_event: SessionShutdownEvent) => { /* No-op placeholder. TODO(S6/S15): stopBridge() + clear env. */ });` → **replace body** with `stopBridge();` (keep the `_event` param; note env-clear is S16).
 
 ## 6. Why wiring is atomic (start + stop together) — scope justification
@@ -123,9 +123,9 @@ extension still LOADS and EXITS 0 with the new wiring in place.
   handler S6 adds is on the SERVER (listen/bind errors), NOT on individual sockets (S8
   adds per-socket `error`/`close` handling inside `onConnection`).
 - **P1.M3.T8.S16 (env advertisement):** extends `startBridge` to WRITE
-  `process.env.PI_EDITOR_BRIDGE` (using `getSocketPath()`/`getToken()`/`ctx.cwd`/`process.pid`)
-  and extends `stopBridge` with `delete process.env.PI_EDITOR_BRIDGE`. S6 leaves a
-  `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE` breadcrumb at the session_start
+  `process.env.PI_NVIM_BRIDGE` (using `getSocketPath()`/`getToken()`/`ctx.cwd`/`process.pid`)
+  and extends `stopBridge` with `delete process.env.PI_NVIM_BRIDGE`. S6 leaves a
+  `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE` breadcrumb at the session_start
   call site so S16 knows exactly where the write goes.
 - **P1.M3.T9.S17 (commandsChanged):** will broadcast on `session_start` when the server is
   already running — S6's wiring makes "server running during session_start" true for

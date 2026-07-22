@@ -5,7 +5,7 @@ description: |
         stale "the nvim plugin is forthcoming (Phase 2)" language — both P2 (plugin core)
         and P4 (blink.cmp + nvim-cmp sources + NVIM_APPNAME) are now COMPLETE — and to point
         at the now-existing companion docs.
-    (2) CREATE `plugin/README.md` — the end-user README for the `pi-editor.nvim` Neovim
+    (2) CREATE `plugin/README.md` — the end-user README for the `pi-bridge.nvim` Neovim
         plugin (does not exist yet). Mirrors the SHIPPED plugin behavior verbatim, is
         consistent with the S43 vimdoc (`plugin/doc/pi-editor.txt`) and the root README
         where they overlap, and documents the opt-in blink.cmp / nvim-cmp sources.
@@ -16,7 +16,7 @@ description: |
 
 **Feature Goal**: Both end-user READMEs in the `dabstractor/pi-nvim-bridge` repo accurately
 reflect the SHIPPED state of the two components (the `pi-editor-bridge` pi extension AND the
-`pi-editor.nvim` Neovim plugin, including its opt-in blink.cmp/nvim-cmp sources), with zero
+`pi-bridge.nvim` Neovim plugin, including its opt-in blink.cmp/nvim-cmp sources), with zero
 "forthcoming/Phase 2" staleness and full, copy-pasteable install + config + troubleshooting
 guidance. The root README remains the extension's `pi install` face; `plugin/README.md`
 becomes the plugin's face.
@@ -27,7 +27,7 @@ becomes the plugin's face.
    pointer to `plugin/README.md` + `plugin/doc/pi-editor.txt`; fix the troubleshooting line
    that says "Until Phase 2 ships, remember to `:w` before `:q`" (the plugin now autosaves);
    add `plugin/` to the repo-layout block. Preserve all still-accurate content (install,
-   `$EDITOR` config, the `PI_EDITOR_BRIDGE` env-var section, security, dev, NVIM_APPNAME).
+   `$EDITOR` config, the `PI_NVIM_BRIDGE` env-var section, security, dev, NVIM_APPNAME).
 2. `plugin/README.md` — NEW. The complete Neovim-plugin README.
 
 **Success Definition**: A user who knows nothing about this repo can, reading only these two
@@ -51,7 +51,7 @@ completion menu pi's TUI shows.
 `/model` → save+quit to submit.
 
 **Pain Points Addressed**: (1) "the README says the plugin is forthcoming but it's shipped";
-(2) no plugin README exists at all; (3) `echo $PI_EDITOR_BRIDGE` confusion (process-local);
+(2) no plugin README exists at all; (3) `echo $PI_NVIM_BRIDGE` confusion (process-local);
 (4) the lost-prompt-on-`:q` trap (autosave handles it — must be documented).
 
 ## Why
@@ -86,7 +86,7 @@ framing appropriate to a project landing page.
 - [ ] `plugin/README.md` states the **Neovim >= 0.11** requirement (not 0.10).
 - [ ] `plugin/README.md` documents the opt-in blink.cmp and nvim-cmp sources as SHIPPED, with
   the verbatim registration snippets.
-- [ ] Both READMEs explain `PI_EDITOR_BRIDGE` is process-local (`echo` shows nothing) and
+- [ ] Both READMEs explain `PI_NVIM_BRIDGE` is process-local (`echo` shows nothing) and
   warn never to paste the live `token`.
 - [ ] Both READMEs mention the autosave-on-quit behavior (the lost-prompt fix).
 - [ ] No edits outside `README.md` and `plugin/README.md`.
@@ -108,7 +108,7 @@ file-map below with line anchors) or by repo identity facts already verified (`g
     THE source of truth for the CONFIGURATION section (the 7 setup() defaults + the
     rpc_timeout_ms<=1500 WARN). `M.defaults` (lines 30-40): menu.max_height=12,
     menu.border="rounded", debounce_ms=20, rpc_timeout_ms=2000, autosave_on_exit=true,
-    engine="builtin" (+ optional env_var="PI_EDITOR_BRIDGE"). `M.setup()` deep-merges opts
+    engine="builtin" (+ optional env_var="PI_NVIM_BRIDGE"). `M.setup()` deep-merges opts
     over defaults into `M.config`. Also exports M.defaults / M.config / M.bridge /
     M.descriptor / M.activate() — the Lua-API surface.
   pattern: the exact default values + the WARN invariant the README must reproduce.
@@ -195,7 +195,7 @@ file-map below with line anchors) or by repo identity facts already verified (`g
   why: |
     Read in full before editing. Its accurate sections (Prerequisites, Installation,
     `Configuration ($EDITOR)`, optional NVIM_APPNAME optimization, "How it works",
-    `PI_EDITOR_BRIDGE` env var, Troubleshooting, Security, Development, repo layout, Links)
+    `PI_NVIM_BRIDGE` env var, Troubleshooting, Security, Development, repo layout, Links)
     are PRESERVED. Only the STALE plugin framing (see "Root README — STALENESS to fix") is
     rewritten.
 
@@ -261,7 +261,7 @@ pi-nvim-bridge/
 
 ```bash
 README.md            # UPDATE — de-stale the plugin framing; add plugin/ pointer + layout line.
-plugin/README.md     # NEW    — the pi-editor.nvim end-user README (full).
+plugin/README.md     # NEW    — the pi-bridge.nvim end-user README (full).
 ```
 
 ### Known Gotchas of our codebase & Library Quirks
@@ -282,9 +282,9 @@ CRITICAL (<CR> is NOT submit): in the external editor there is NO Enter-to-submi
   is open, ELSE inserts a NEWLINE. The autosave-on-VimLeavePre (autosave_on_exit=true) is
   what actually persists the prompt. Document both, prominently.
 
-CRITICAL (PI_EDITOR_BRIDGE is process-local): `echo $PI_EDITOR_BRIDGE` in a shell shows
+CRITICAL (PI_NVIM_BRIDGE is process-local): `echo $PI_NVIM_BRIDGE` in a shell shows
   NOTHING — the var is written to process.env INSIDE pi and only the child $EDITOR sees it.
-  This is the #1 install confusion. Tell users `:lua print(vim.env.PI_EDITOR_BRIDGE)` from
+  This is the #1 install confusion. Tell users `:lua print(vim.env.PI_NVIM_BRIDGE)` from
   inside the launched nvim, or `:checkhealth pi-editor`.
 
 CRITICAL (token is sensitive — PRD §12): NEVER document/paste the live token. Document the
@@ -328,7 +328,7 @@ No runtime data model — the deliverables are two Markdown files. The "structur
 
 **Root `README.md`** (UPDATE — keep its existing section order; only de-stale + cross-link):
 title pitch → What it does → Prerequisites → Installation → `Configuration ($EDITOR)` +
-optional NVIM_APPNAME → How it works → `PI_EDITOR_BRIDGE` env var → Troubleshooting →
+optional NVIM_APPNAME → How it works → `PI_NVIM_BRIDGE` env var → Troubleshooting →
 Security → Development → repo layout (ADD `plugin/`) → Links (point to plugin README + vimdoc).
 
 **`plugin/README.md`** (NEW — recommended section order, mirroring the vimdoc's 13 sections
@@ -344,7 +344,7 @@ as Markdown headings + landing-page framing):
 7. **Keymaps** (the 9 buffer-local keys + fall-through + `<CR>`=accept-or-newline).
 8. **Optional: blink.cmp source** (SHIPPED opt-in; verbatim registration snippet; additive
    caveat) + **nvim-cmp source** (likewise).
-9. **The `PI_EDITOR_BRIDGE` environment variable** (shape; process-local; inspect via
+9. **The `PI_NVIM_BRIDGE` environment variable** (shape; process-local; inspect via
    `:lua print(...)` / `:checkhealth`; token-safety).
 10. **Health & diagnostics** (`:checkhealth pi-editor`; `:messages`; `:help pi-editor`).
 11. **Troubleshooting / FAQ** (dormant-is-expected; completion-doesn't-appear; `@file` empty;
@@ -367,7 +367,7 @@ Task 1: READ the shipped source + the existing root README (no writes yet)
   - READ: README.md (the file Task 3 edits — identify the STALENESS below)
   - WHY: every README fact is determined by these. Doc-SYNC = mirror VERBATIM.
 
-Task 2: CREATE plugin/README.md — the pi-editor.nvim end-user README
+Task 2: CREATE plugin/README.md — the pi-bridge.nvim end-user README
   - FILE: plugin/README.md (NEW; the rtp-root README GitHub + plugin managers show).
   - SECTIONS: the 14 headings in "Data models and structure" above.
   - CONFIGURATION table — EXACT (mirror init.lua M.defaults :30-40):
@@ -381,7 +381,7 @@ Task 2: CREATE plugin/README.md — the pi-editor.nvim end-user README
                                               register (see §Optional). engine does NOT auto-switch
                                               the UI today (forward-contract); the builtin menu
                                               always runs unless you suppress it yourself.
-      env_var             "PI_EDITOR_BRIDGE"  Override the bridge-descriptor env var name.
+      env_var             "PI_NVIM_BRIDGE"  Override the bridge-descriptor env var name.
   - KEYMAPS table — EXACT (mirror ftplugin): 9 rows. <Tab> trigger/accept (pi-faithful Tab);
       <S-Tab>/<C-P>/<Up> prev; <C-N>/<Down> next; <C-E> dismiss; <C-Y> accept-if-menu-open else
       i_CTRL-Y; <CR> accept-if-menu-open ELSE NEWLINE (NO Enter-to-submit). Note fall-through.
@@ -397,8 +397,8 @@ Task 2: CREATE plugin/README.md — the pi-editor.nvim end-user README
       use blink as the sole UI, suppress the builtin menu yourself (forward-contract).
   - OPTIONAL nvim-cmp source — paste the VERBATIM snippet from cmp_source.lua header
       (require("cmp").register_source("pi", require("pi-editor.cmp_source").new())). Same caveat.
-  - ENV VAR: the PI_EDITOR_BRIDGE JSON shape; "echo shows nothing (process-local)";
-      `:lua print(vim.env.PI_EDITOR_BRIDGE)`; `:checkhealth pi-editor`; never paste the token.
+  - ENV VAR: the PI_NVIM_BRIDGE JSON shape; "echo shows nothing (process-local)";
+      `:lua print(vim.env.PI_NVIM_BRIDGE)`; `:checkhealth pi-editor`; never paste the token.
   - HEALTH: `:checkhealth pi-editor` (4 sections; dormant=INFO not error); `:messages` for the
       one-time "completion unavailable" notify; `:help pi-editor` (after `:helptags`).
   - TROUBLESHOOTING: dormant-is-expected; completion-doesn't-appear (4-step checklist);
@@ -424,22 +424,22 @@ Task 3: UPDATE README.md (repo root) — de-stale the plugin framing; cross-link
   - FILE: README.md (EDIT IN PLACE — surgical; PRESERVE all still-accurate content).
   - REPLACE the intro "companion plugin (forthcoming, see Phase 2)" framing with the shipped
       reality: the repo ships BOTH the pi extension (pi-editor-bridge) AND the Neovim plugin
-      (pi-editor.nvim, under plugin/). Keep the bridge as THIS README's focus (it is the
+      (pi-bridge.nvim, under plugin/). Keep the bridge as THIS README's focus (it is the
       `pi install` target); add a one-line pointer to plugin/README.md + plugin/doc/pi-editor.txt.
   - REPLACE the "What it does" note block ("the Neovim-side rendering plugin ships separately
       under Phase 2. Until it lands…") with: the companion plugin is COMPLETE (under plugin/);
       together they deliver pi-faithful completion in the external editor.
-  - REPLACE "Companion plugin: install pi-editor.nvim … See that plugin's README (Phase 2)."
+  - REPLACE "Companion plugin: install pi-bridge.nvim … See that plugin's README (Phase 2)."
       → point to plugin/README.md (now exists) with the lazy.nvim `lazy=false` note.
   - FIX the Troubleshooting line "Until Phase 2 ships, remember to `:w` before `:q`." → the
       plugin now AUTOSAVES on VimLeavePre (autosave_on_exit=true); remove the stale caveat
       (or rephrase to ":x/ZZ or rely on autosave").
-  - FIX the Links "Companion plugin: pi-editor.nvim (Phase 2, forthcoming)." → link to
+  - FIX the Links "Companion plugin: pi-bridge.nvim (Phase 2, forthcoming)." → link to
       plugin/README.md and `:help pi-editor` (plugin/doc/pi-editor.txt).
   - ADD `plugin/` to the repo-layout block (currently lists only package.json + extension/).
   - PRESERVE: Prerequisites, Installation (pi install git:github.com/dabstractor/pi-nvim-bridge),
       the multi-file-package warning, Configuration ($EDITOR) + optional NVIM_APPNAME
-      optimization (PI_EDITOR_NVIM_APPNAME), How it works, the PI_EDITOR_BRIDGE env-var
+      optimization (PI_EDITOR_NVIM_APPNAME), How it works, the PI_NVIM_BRIDGE env-var
       section (process-local + token-safety), Security, Development (typecheck + node:test via
       jiti), the LICENSE note.
   - DO NOT: restructure the whole README (surgical edits only); change the package name
@@ -464,7 +464,7 @@ require("pi-editor").setup({
   rpc_timeout_ms  = 2000, -- MUST exceed the bridge fd-abort (1500); warns at setup if <= 1500
   autosave_on_exit = true,
   engine          = "builtin", -- "builtin" (shipped) | "blink" | "cmp" (opt-in sources)
-  -- env_var = "PI_EDITOR_BRIDGE", -- override the bridge-descriptor env var
+  -- env_var = "PI_NVIM_BRIDGE", -- override the bridge-descriptor env var
 })
 ```
 
@@ -511,26 +511,26 @@ completion if the menu is open, otherwise inserts a newline.
 <!-- README.md (root) — the surgical de-stale edits (Task 3). Show the BEFORE→AFTER intent,
      not a full rewrite; the implementer applies targeted edits to the existing prose. -->
 
-INTRO (before): "A companion Neovim plugin — pi-editor.nvim (forthcoming, see Phase 2) …"
+INTRO (before): "A companion Neovim plugin — pi-bridge.nvim (forthcoming, see Phase 2) …"
 INTRO (after):  "This repo ships TWO components: the pi-editor-bridge EXTENSION (this README)
-                 and the pi-editor.nvim Neovim PLUGIN (see plugin/README.md)."
+                 and the pi-bridge.nvim Neovim PLUGIN (see plugin/README.md)."
 
 "WHAT IT DOES" NOTE (before): "… the Neovim-side rendering plugin ships separately under
     Phase 2. Until it lands, the bridge advertises correctly but there is nothing on the
     editor side to consume it."
-(after): "… the companion pi-editor.nvim plugin is COMPLETE (under plugin/). Together they
+(after): "… the companion pi-bridge.nvim plugin is COMPLETE (under plugin/). Together they
     deliver pi-faithful completion in the external editor."
 
-COMPANION PLUGIN LINE (before): "install pi-editor.nvim with your plugin manager … See that
+COMPANION PLUGIN LINE (before): "install pi-bridge.nvim with your plugin manager … See that
     plugin's README (Phase 2)."
-(after): "install pi-editor.nvim with your plugin manager (lazy.nvim, `lazy = false` so the
+(after): "install pi-bridge.nvim with your plugin manager (lazy.nvim, `lazy = false` so the
     VimEnter shim sources before activation). See plugin/README.md and `:help pi-editor`."
 
 TROUBLESHOOTING (before): "Until Phase 2 ships, remember to `:w` before `:q`."
 (after): "The plugin autosaves the buffer on VimLeavePre (autosave_on_exit=true). To be
     explicit, quit with `:x`/`ZZ`."
 
-LINKS (before): "Companion plugin: pi-editor.nvim (Phase 2, forthcoming)."
+LINKS (before): "Companion plugin: pi-bridge.nvim (Phase 2, forthcoming)."
 (after): "Companion plugin: plugin/README.md · :help pi-editor (plugin/doc/pi-editor.txt)."
 
 REPO LAYOUT: ADD a `plugin/` entry (lua/pi-editor/…, plugin/pi-editor.lua, ftplugin/,
@@ -599,7 +599,7 @@ grep -q 'plugin/' README.md && echo "ok: layout has plugin/" || echo "MISSING: p
 ```bash
 cd /home/dustin/projects/pi-nvim-bridge/plugin
 echo "--- config defaults present (mirror init.lua M.defaults) ---"
-for v in 'max_height' '"rounded"' 'debounce_ms' 'rpc_timeout_ms' 'autosave_on_exit' '"builtin"' 'PI_EDITOR_BRIDGE'; do
+for v in 'max_height' '"rounded"' 'debounce_ms' 'rpc_timeout_ms' 'autosave_on_exit' '"builtin"' 'PI_NVIM_BRIDGE'; do
   grep -qF "$v" README.md && echo "  ok: $v" || echo "  MISSING: $v"
 done
 echo "--- 9 keymaps present (mirror ftplugin) ---"
@@ -614,7 +614,7 @@ grep -q 'pi-editor.blink_source' README.md && echo "  ok: blink source module na
 grep -q 'pi-editor.cmp_source'   README.md && echo "  ok: cmp source module named"   || echo "  MISSING cmp_source"
 grep -qiE 'register_source|providers' README.md && echo "  ok: registration snippet present" || echo "  MISSING registration snippet"
 echo "--- env var + token-safety + autosave + dormant ---"
-for kw in 'PI_EDITOR_BRIDGE' 'process-local\|inside pi' 'token' 'autosave' 'dormant'; do
+for kw in 'PI_NVIM_BRIDGE' 'process-local\|inside pi' 'token' 'autosave' 'dormant'; do
   grep -qiE "$kw" README.md && echo "  ok: $kw" || echo "  MISSING: $kw"
 done
 echo "--- troubleshooting coverage ---"
@@ -668,7 +668,7 @@ timeout 60 nvim --headless --clean -u NORC +"luafile /tmp/s44_help.lua" +qa; ech
 - [ ] A new user can install both components + wire `$EDITOR=nvim` from the READMEs alone.
 - [ ] Quick start covers: `pi install`, lazy.nvim `lazy=false`, `Ctrl+G`, save+quit to submit.
 - [ ] The opt-in blink.cmp / nvim-cmp registration snippets are copy-pasteable and accurate.
-- [ ] `PI_EDITOR_BRIDGE` process-local confusion is addressed (echo shows nothing; `:lua print`).
+- [ ] `PI_NVIM_BRIDGE` process-local confusion is addressed (echo shows nothing; `:lua print`).
 - [ ] The lost-prompt trap is addressed (autosave_on_exit; `:x`/`ZZ`).
 - [ ] No false claims: nothing shipped is marked forthcoming; `:PiSubmit` is NOT documented as real.
 
@@ -695,7 +695,7 @@ timeout 60 nvim --headless --clean -u NORC +"luafile /tmp/s44_help.lua" +qa; ech
 - ❌ Don't document `:PiSubmit` as a real command — it is a PRD §15 FUTURE enhancement, NOT shipped. Document built-in commands / keymaps only.
 - ❌ Don't document `<CR>` as "submit the prompt" — there is NO Enter-to-submit in the external editor (pi re-reads the temp file only after the editor EXITS). `<CR>` accepts-if-menu-open else inserts a NEWLINE. The autosave-on-VimLeavePre is what persists the prompt.
 - ❌ Don't contradict the dormant-by-design model — "nothing happens in my normal nvim" is EXPECTED. Say it first + loudest in the FAQ; point to `:checkhealth pi-editor` (INFO "dormant").
-- ❌ Don't tell users to `echo $PI_EDITOR_BRIDGE` to verify install — it shows nothing (process-local). Tell them `:lua print(vim.env.PI_EDITOR_BRIDGE)` from inside the launched editor, or `:checkhealth pi-editor`.
+- ❌ Don't tell users to `echo $PI_NVIM_BRIDGE` to verify install — it shows nothing (process-local). Tell them `:lua print(vim.env.PI_NVIM_BRIDGE)` from inside the launched editor, or `:checkhealth pi-editor`.
 - ❌ Don't propagate the S43 vimdoc's "blink/cmp forthcoming" wording into the READMEs — the code ships them; doc-SYNC means the README reflects the code. (Editing the vimdoc to fix its drift is out of scope here — S43's file; record, don't repeat.)
 - ❌ Don't use `<owner>`/`<repo>` placeholders — the repo is `dabstractor/pi-nvim-bridge` (concrete). `pi install git:github.com/dabstractor/pi-nvim-bridge`.
 - ❌ Don't add a `LICENSE` file — package.json declares MIT but no LICENSE is committed; the existing README notes this is a separate human decision. Keep the note, don't add the file.

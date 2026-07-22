@@ -7,7 +7,7 @@
 `process.env.NVIM_APPNAME` to a configurable appname (default `"pi-editor"`)
 inside pi's process **before** pi spawns `$EDITOR`, so the pi-launched Neovim
 boots with a tiny dedicated config (`~/.config/pi-editor/`) that loads only
-`pi-editor.nvim` — dramatically faster editor startup than the user's full
+`pi-bridge.nvim` — dramatically faster editor startup than the user's full
 config. Off by default (zero behavior change); polite save/restore of any
 pre-existing user `NVIM_APPNAME`.
 
@@ -25,7 +25,7 @@ pre-existing user `NVIM_APPNAME`.
     `restoreNvimAppname()` (restore baseline) pair, and a
     `__resetNvimAppnameStateForTest()` seam.
   - Wire `applyNvimAppname()` into `startBridge` (AFTER the existing
-    `PI_EDITOR_BRIDGE` write) and `restoreNvimAppname()` into `stopBridge`
+    `PI_NVIM_BRIDGE` write) and `restoreNvimAppname()` into `stopBridge`
     (near the existing `delete process.env[BRIDGE_ENV]`).
   - Add [Mode A] JSDoc on the apply call explaining the
     process.env-inheritance discovery, the save/restore rationale, and
@@ -54,7 +54,7 @@ pre-existing user `NVIM_APPNAME`.
   `stopBridge` (NOT clobbered/deleted) — the key correctness property that
   distinguishes this from a naive `delete`.
 - `tsc --noEmit -p extension/tsconfig.json` exits 0; the `BridgeDescriptor`
-  written to `PI_EDITOR_BRIDGE` still has EXACTLY 7 keys (NVIM_APPNAME is a
+  written to `PI_NVIM_BRIDGE` still has EXACTLY 7 keys (NVIM_APPNAME is a
   separate `process.env` entry, NOT a new descriptor field).
 - No source file other than `extension/pi-editor-bridge.ts` is touched; no
   `tsconfig` edit (the `tests/**/*.ts` glob auto-includes the new test).
@@ -64,13 +64,13 @@ pre-existing user `NVIM_APPNAME`.
 - **PRD §10.4** explicitly lists this as the Phase-4 "minimal-config
   optimization": *"the bridge extension may additionally set
   `process.env.NVIM_APPNAME = "pi-editor"` (documented opt-in), and the user
-  maintains a tiny `~/.config/pi-editor/` that loads only `pi-editor.nvim`.
+  maintains a tiny `~/.config/pi-editor/` that loads only `pi-bridge.nvim`.
   This is an optional optimization, not required."* This task ships that line.
 - **Startup latency matters for the editor loop.** pi re-reads the temp file
   only after the editor exits (PRD §2.1), and a heavy daily-driver Neovim
   config (LSP servers, lazy-loaded plugins, plugin-manager boot) can add
   hundreds of milliseconds-to-seconds to every Ctrl+G launch. A minimal
-  `pi-editor` config that loads ONLY the dependency-free `pi-editor.nvim`
+  `pi-editor` config that loads ONLY the dependency-free `pi-bridge.nvim`
   (PRD §7.5 — "the primary UX … must work with a stock Neovim and no plugin
   manager") makes the external-editor round-trip feel instant.
 - **It must be opt-in.** Blindly setting `NVIM_APPNAME` globally would hijack
@@ -80,7 +80,7 @@ pre-existing user `NVIM_APPNAME`.
 - **It reuses the proven discovery.** pi spawns `$EDITOR` with
   `stdio:"inherit"` and NO `env:` override (interactive-mode.ts:3811-3816,
   established in S16) — the same `process.env`-inheritance seam that delivers
-  `PI_EDITOR_BRIDGE` to the child delivers `NVIM_APPNAME` too. Zero new IPC.
+  `PI_NVIM_BRIDGE` to the child delivers `NVIM_APPNAME` too. Zero new IPC.
 - **Closes P4.M12.T31** (the last "Researching" item in the plan). The two
   sibling sources (blink.cmp S45, nvim-cmp S46) are already Complete; this is
   the remaining optimization + its docs.
@@ -127,7 +127,7 @@ _Passes "No Prior Knowledge":_ the implementer needs only this PRP + the one
 source file (`extension/pi-editor-bridge.ts`) + the verified build/test
 commands. Every pattern (`__deps` seam, module-level state + test seams,
 `startBridge`/`stopBridge` symmetry, `process.env` manipulation, the S16
-`PI_EDITOR_BRIDGE` write site, the `node:test` + jiti test idiom) is reproduced
+`PI_NVIM_BRIDGE` write site, the `node:test` + jiti test idiom) is reproduced
 or cited with exact anchors. The one external fact (NVIM_APPNAME semantics) is
 summarized with a `:help` URL.
 
@@ -161,7 +161,7 @@ summarized with a `:help` URL.
   pattern: "module-level `let` state + getters/seams; export const constants
             UPPER_SNAKE; [Mode A] JSDoc inline with the code; idempotent
             startBridge (calls stopBridge first)."
-  gotcha: "NVIM_APPNAME is a SEPARATE process.env entry from PI_EDITOR_BRIDGE.
+  gotcha: "NVIM_APPNAME is a SEPARATE process.env entry from PI_NVIM_BRIDGE.
            Do NOT add it to the BridgeDescriptor (that object must stay 7 keys
            — bridge-env.test.ts TEST 1 pins Object.keys(desc).length===7)."
 
@@ -237,7 +237,7 @@ README.md                      # MODIFIED (one paragraph + example block)
 
 ```typescript
 // GOTCHA #1 — NVIM_APPNAME is NOT owned by pi; do SAVE/RESTORE, never plain delete.
-// PI_EDITOR_BRIDGE (S16) is a name pi invents, so `delete process.env[BRIDGE_ENV]`
+// PI_NVIM_BRIDGE (S16) is a name pi invents, so `delete process.env[BRIDGE_ENV]`
 // on stop is correct & harmless. NVIM_APPNAME is a STANDARD Neovim var the USER may
 // already export globally (e.g. NVIM_APPNAME=work). If stopBridge did
 // `delete process.env.NVIM_APPNAME`, it would PERMANENTLY CLOBBER the user's global
@@ -349,7 +349,7 @@ export function resolveNvimAppname(): string | undefined {
  * Apply the NVIM_APPNAME opt-in (if enabled) by capturing the current
  * NVIM_APPNAME baseline and overriding it with the resolved appname. NO-OP when
  * the opt-in is off (GOTCHA #2). Called at the END of startBridge, AFTER the
- * PI_EDITOR_BRIDGE descriptor write.
+ * PI_NVIM_BRIDGE descriptor write.
  */
 function applyNvimAppname(): void {
 	const appname = resolveNvimAppname();
@@ -410,7 +410,7 @@ Task 2: MODIFY extension/pi-editor-bridge.ts — add the resolver + apply/restor
           callers; exporting invites misuse).
   - DEPENDENCIES: Task 1 (constants).
 
-Task 3: MODIFY startBridge(ctx) — call applyNvimAppname() AFTER the PI_EDITOR_BRIDGE write
+Task 3: MODIFY startBridge(ctx) — call applyNvimAppname() AFTER the PI_NVIM_BRIDGE write
   - ADD, as the FINAL statement of startBridge (immediately AFTER the existing
           `process.env[BRIDGE_ENV] = JSON.stringify({…} satisfies BridgeDescriptor);`
           line), a [Mode A] JSDoc block + the call:
@@ -421,9 +421,9 @@ Task 3: MODIFY startBridge(ctx) — call applyNvimAppname() AFTER the PI_EDITOR_
          * ⇒ default "pi-editor"; any other non-empty string ⇒ that appname), override
          * process.env.NVIM_APPNAME so the pi-spawned $EDITOR (Neovim) boots with a tiny
          * dedicated config (~/.config/<appname>/) instead of the user's full ~/.config/nvim/.
-         * DISCOVERY: same process.env-inheritance seam as PI_EDITOR_BRIDGE above — pi
+         * DISCOVERY: same process.env-inheritance seam as PI_NVIM_BRIDGE above — pi
          * spawns the editor with stdio:"inherit" and no env override, so the child sees
-         * this value. SAVE/RESTORE: unlike PI_EDITOR_BRIDGE (which pi owns), NVIM_APPNAME
+         * this value. SAVE/RESTORE: unlike PI_NVIM_BRIDGE (which pi owns), NVIM_APPNAME
          * is a standard var the user may already export globally; we capture the baseline
          * here and restoreNvimAppname() (called from stopBridge) writes it back — we NEVER
          * clobber a pre-existing user value. OFF by default (resolveNvimAppname() returns
@@ -438,7 +438,7 @@ Task 3: MODIFY startBridge(ctx) — call applyNvimAppname() AFTER the PI_EDITOR_
           the TUI guard (GOTCHA #8).
   - DEPENDENCIES: Task 2.
   - PRESERVE: everything above (stopBridge() first-line teardown, token/socketPath gen,
-          createServer, server.on("error"), listen, chmod, the PI_EDITOR_BRIDGE write).
+          createServer, server.on("error"), listen, chmod, the PI_NVIM_BRIDGE write).
 
 Task 4: MODIFY stopBridge() — call restoreNvimAppname()
   - ADD, near the existing `delete process.env[BRIDGE_ENV];` line (either immediately
@@ -478,7 +478,7 @@ Task 5: CREATE extension/tests/nvim-appname.test.ts — ~7 tests (node:test + ji
        → process.env.NVIM_APPNAME === "pi-fast".
     4. opt-in OFF is a no-op: leave PI_EDITOR_NVIM_APPNAME unset; startBridge →
        process.env.NVIM_APPNAME === undefined (or whatever it was) AND the existing
-       bridge-env descriptor contract still holds (parse PI_EDITOR_BRIDGE, 7 keys,
+       bridge-env descriptor contract still holds (parse PI_NVIM_BRIDGE, 7 keys,
        serverVersion "0.1.0"). Proves no regression to S16.
     5. restore after stopBridge (no pre-existing baseline): PI_EDITOR_NVIM_APPNAME=1;
        startBridge → NVIM_APPNAME === "pi-editor"; stopBridge → NVIM_APPNAME ===
@@ -509,7 +509,7 @@ Task 6: MODIFY README.md — rewrite the "Optional startup optimization" paragra
           currently reads (approx): *"Optional startup optimization: for a faster
           editor launch you may keep a minimal Neovim config at
           `~/.config/pi-editor/` and set `NVIM_APPNAME=pi-editor` in pi's
-          environment so the editor instance loads only `pi-editor.nvim`. This is
+          environment so the editor instance loads only `pi-bridge.nvim`. This is
           optional, not required."*
   - REPLACE with a subsection that documents BOTH paths, lead with the bridge opt-in:
         - The bridge opt-in (recommended): set `PI_EDITOR_NVIM_APPNAME` (value
@@ -518,7 +518,7 @@ Task 6: MODIFY README.md — rewrite the "Optional startup optimization" paragra
           pi for the session and restores your prior value on exit (so your global
           NVIM_APPNAME, if any, is untouched).
         - The minimal config: create `~/.config/pi-editor/init.lua` that loads ONLY
-          `pi-editor.nvim` (stock Neovim, no plugin manager required — PRD §7.5).
+          `pi-bridge.nvim` (stock Neovim, no plugin manager required — PRD §7.5).
           nvim starts cleanly even before you create it (just with no user config).
         - The manual alternative: users who prefer not to use the extension opt-in
           can `export NVIM_APPNAME=pi-editor` in the shell that launches pi (the
@@ -535,7 +535,7 @@ Task 6: MODIFY README.md — rewrite the "Optional startup optimization" paragra
 
 ```typescript
 // === The save/restore state machine (GOTCHA #1/#3) ===
-// applyNvimAppname() — called at END of startBridge (after the PI_EDITOR_BRIDGE write):
+// applyNvimAppname() — called at END of startBridge (after the PI_NVIM_BRIDGE write):
 function applyNvimAppname(): void {
 	const appname = resolveNvimAppname();
 	if (appname === undefined) return; // opt-in OFF → NO-OP (GOTCHA #2)
@@ -562,7 +562,7 @@ function restoreNvimAppname(): void {
 export function startBridge(ctx: ExtensionContext): void {
 	stopBridge(); // ← its restoreNvimAppname() runs FIRST → baseline is clean
 	// …token, socketPath, createServer, server.on("error"), listen, chmod…
-	/** [Mode A] PI_EDITOR_BRIDGE advertisement (S16 — UNCHANGED) */
+	/** [Mode A] PI_NVIM_BRIDGE advertisement (S16 — UNCHANGED) */
 	process.env[BRIDGE_ENV] = JSON.stringify({ /* … 7 keys … */ } satisfies BridgeDescriptor);
 	/** [Mode A] Optional NVIM_APPNAME opt-in — see Task 3 JSDoc */
 	applyNvimAppname();
@@ -745,7 +745,7 @@ node -e '
 - [ ] Follows existing patterns: module-level `let` state + test seam (mirrors
       `fdAvailableCache`/`__setFdAvailableForTest`), `[Mode A]` JSDoc inline.
 - [ ] save/restore (NOT delete) for `NVIM_APPNAME`; plain delete only for the
-      pi-owned `PI_EDITOR_BRIDGE`.
+      pi-owned `PI_NVIM_BRIDGE`.
 
 ### Documentation & Deployment
 
@@ -763,7 +763,7 @@ node -e '
 
 - ❌ Don't `delete process.env.NVIM_APPNAME` on stop — that clobbers a pre-existing
   user value. SAVE the baseline at apply, RESTORE it at stop (GOTCHA #1). Only the
-  pi-owned `PI_EDITOR_BRIDGE` gets a plain delete.
+  pi-owned `PI_NVIM_BRIDGE` gets a plain delete.
 - ❌ Don't make the opt-in default-ON. It MUST be off when
   `PI_EDITOR_NVIM_APPNAME` is unset, or S16 + every startBridge/stopBridge caller
   regresses (GOTCHA #2). `resolveNvimAppname()` returns `undefined` for the unset

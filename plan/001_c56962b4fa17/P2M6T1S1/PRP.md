@@ -1,7 +1,7 @@
 ---
 name: "P2.M9.T23.S38 (PRP path P2M6T1S1) — VimLeavePre/ExitPre: autosave if modified, send bye, close connection (+ BufWriteCmd)"
 description: |
-  **IMPLEMENT the autosave-on-exit + bye-teardown BODY** for `pi-editor.nvim` (logical id
+  **IMPLEMENT the autosave-on-exit + bye-teardown BODY** for `pi-bridge.nvim` (logical id
   **S38** / P2.M9.T23.S38; PRP output dir `P2M6T1S1`). The (DONE, S22) ftplugin already WIRES
   `VimLeavePre`+`ExitPre` → `dispatch("pi-editor.bridge","on_exit",buf)` (gated on
   `config.autosave_on_exit ~= false`, default TRUE). S24's `plugin/lua/pi-editor/bridge.lua`

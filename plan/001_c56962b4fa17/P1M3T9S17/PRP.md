@@ -45,7 +45,7 @@ only method that had NO server-side implementation until now.
 
 ## User Persona
 
-**Target User**: The `pi-editor.nvim` Neovim plugin (P2.M5 / P3.M10) — the bridge's
+**Target User**: The `pi-bridge.nvim` Neovim plugin (P2.M5 / P3.M10) — the bridge's
 only client. (Indirectly: the human editing a pi prompt in their `$EDITOR`.)
 
 **Use Case**: while an external Neovim editor is open editing a pi prompt, the user
@@ -547,7 +547,7 @@ TSCONFIG:
 
 NO OTHER INTEGRATION POINTS:
   - DATABASE: none
-  - CONFIG: none (no new settings/env vars — PI_EDITOR_BRIDGE is S16's, untouched)
+  - CONFIG: none (no new settings/env vars — PI_NVIM_BRIDGE is S16's, untouched)
   - ROUTES: none
 ```
 

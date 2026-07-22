@@ -1,4 +1,4 @@
---- bridge.lua — the luv (`vim.uv`) Unix-domain-socket CLIENT for the pi-editor.nvim bridge.
+--- bridge.lua — the luv (`vim.uv`) Unix-domain-socket CLIENT for the pi-bridge.nvim bridge.
 --
 -- Owns exactly the TRANSPORT layer of parent task P2.M5.T15 ("Socket client & handshake"):
 -- create a pipe, connect to the socket path, wire `read_start` to the (DONE, S23)
@@ -49,12 +49,12 @@
 --    session = ONE bridge connection, PRD §11 "v1 supports completion in the buffer active
 --    at VimEnter"). `connect()` called twice RE-INITS (closes any prior connection first
 --    — idempotent). Do NOT make this instance-based (would fight the singleton model +
---    the `require("pi-editor").bridge` placeholder S25 sets after handshake).
+--    the `require("pi-bridge").bridge` placeholder S25 sets after handshake).
 --  * WIRE FORM = encode(obj).."\n" (GOTCHA 11): the exact mirror of the server's
 --    `extension/jsonl-reader.ts` `serializeJsonLine(v) = JSON.stringify(v)+'\n'` (the
 --    framing terminator the server's reader splits on). ALWAYS append `\n`.
 --  * on_exit IS A SAFE NO-OP (GOTCHA 12): S22's ftplugin ALREADY dispatches
---    `require("pi-editor.bridge").on_exit(buf)` on VimLeavePre/ExitPre. So `on_exit` WILL
+--    `require("pi-bridge.bridge").on_exit(buf)` on VimLeavePre/ExitPre. So `on_exit` WILL
 --    be called in every pi-prompt session even though `connect()` is not yet wired (S24
 --    ships before S25). It must no-op safely when never connected (just calls `M.close()`).
 --
@@ -75,7 +75,7 @@
 --  * SECURITY (PRD §12): the token is the auth boundary. NEVER put `desc.token` in any
 --    error string / notify / log. The server says the literal `"bad token"`; the client
 --    mirrors — error strings are generic codes (e.g. `"handshake rejected (-32600)"`).
---  * `require("pi-editor").bridge` placeholder: S24 left it `nil`; S25 sets it to THIS
+--  * `require("pi-bridge").bridge` placeholder: S24 left it `nil`; S25 sets it to THIS
 --    module table ONLY on a `result.ok == true` response (the gate downstream completion
 --    keys on). A malformed / error / timeout / close path leaves it `nil` (silent degrade).
 --
@@ -144,7 +144,7 @@
 -- Module-level singleton state (one connection) — see Design Decision §6 in notes.
 
 local uv = vim.uv
-local jreader = require("pi-editor.jsonlreader")
+local jreader = require("pi-bridge.jsonlreader")
 
 local M = {}
 
@@ -152,15 +152,15 @@ local M = {}
 --- and after `close()` (cleared so a stale luv callback cannot touch dead state).
 --- `closed` is the shadow flag that defends the luv double-close THROW (set FIRST in
 --- `close()`, before any pipe op).
----@class pi-editor.BridgeState
+---@class pi-bridge.BridgeState
 ---@field pipe      userdata?            The luv pipe handle (`uv.new_pipe(false)`); nil before connect / after close.
----@field rx        pi-editor.JsonlReader? The jsonlreader (S23) instance fed by `read_start`; nil before connect.
+---@field rx        pi-bridge.JsonlReader? The jsonlreader (S23) instance fed by `read_start`; nil before connect.
 ---@field on_ready  fun(err:string?)?    Connect-result callback (`err==nil` on success; bare errno string on fail).
 ---@field on_event  fun(msg:table)?      Per-decoded-JSON-RPC-message callback (synchronous from `read_start`).
 ---@field on_close  fun(reason:string?)? Connection-lost callback (`nil` = clean EOF; errno string = socket error).
 ---@field connected boolean              True ONLY between `on_ready(nil)` and the start of teardown.
 ---@field closed    boolean              Shadow flag: `true` once teardown has BEGUN (defends the double-close THROW).
----@type pi-editor.BridgeState
+---@type pi-bridge.BridgeState
 local state = {
   pipe = nil,
   rx = nil,
@@ -180,23 +180,23 @@ M.version = "0.1.0"
 --- stale value cannot leak across reconnects). Read by downstream: completion uses `.cwd`
 --- (S30+); `:checkhealth` reads all three (S42). Defensive: every field is type-checked
 --- on extraction (server is defensive too — `getCwd() ?? ""`).
----@class pi-editor.ServerInfo
+---@class pi-bridge.ServerInfo
 ---@field serverVersion string Bridge server version (default `""` if absent/malformed).
 ---@field cwd string Session cwd (falls back to `descriptor.cwd`).
 ---@field fdAvailable boolean True ONLY if `result.fdAvailable == true`.
----@type pi-editor.ServerInfo|nil
+---@type pi-bridge.ServerInfo|nil
 M.server_info = nil
 
 --- In-flight handshake race-guard. Set by `M.handshake()`; cleared (`pending=false`) by
 --- the FIRST resolver (response / timeout / close). Holds the caller callback + the luv
 --- timer so any resolver can finalize EXACTLY ONCE and stop the timer. Module-level
 --- (singleton — one handshake per session; GOTCHA 10). Cleared in `M.close()`.
----@class pi-editor.HandshakeState
----@field desc pi-editor.BridgeDescriptor The descriptor (has `.path` + `.token` + `.cwd`).
----@field on_result fun(err:string?, info:pi-editor.ServerInfo?) Caller callback (exactly once).
+---@class pi-bridge.HandshakeState
+---@field desc pi-bridge.BridgeDescriptor The descriptor (has `.path` + `.token` + `.cwd`).
+---@field on_result fun(err:string?, info:pi-bridge.ServerInfo?) Caller callback (exactly once).
 ---@field pending boolean `false` once ANY resolver has fired (the exactly-once guard).
 ---@field timer userdata? luv timer for the handshake timeout (`nil` if not armed).
----@type pi-editor.HandshakeState|nil
+---@type pi-bridge.HandshakeState|nil
 local handshake_state = nil
 
 --- Monotonic request-id counter. Incremented by `M.request()`; reset to 0 by `close()`
@@ -210,14 +210,14 @@ local next_id = 0
 --- by `close()`. This is the TWO-LAYER transport MAP: it holds EVERY concurrent
 --- outstanding request (e.g. getSuggestions racing applyCompletion); supersession is
 --- the CALLER's job (latest-id guard / `cancel(id)`) — see the [Mode A] header.
----@class pi-editor.PendingRequest
+---@class pi-bridge.PendingRequest
 ---@field method string The RPC method (for cancel routing / debugging; never sent on cancel wire).
 ---@field cb fun(err:string?, result:any?) The user callback, wrapped in `vim.schedule_wrap` at
 ---   store time so it is safe to invoke from BOTH the `read_start` cb and the luv timer cb
 ---   (libuv/fast context — `vim.api.*` would throw `E5560` there; mirrors vim/lsp/rpc.lua:324).
 ---@field timer userdata? luv one-shot timer for the per-request timeout (`nil` if disarmed).
 ---   MUST be `:close()`d (not just `:stop()`d) on resolve or it leaks across editor open/close cycles.
----@type table<string, pi-editor.PendingRequest>
+---@type table<string, pi-bridge.PendingRequest>
 local pending = {}
 
 --- Notification handlers keyed by method (string). Each value is the user handler wrapped
@@ -225,7 +225,7 @@ local pending = {}
 --- `read_start` callback; raw `vim.api.*` throws `E5560` there). Last-wins re-registration
 --- (a Lua table set); `on_notification(method, nil)` removes an entry. Cleared wholesale
 --- by `close()` (hygiene: a stale handler must not fire across reconnects — PRD §6.7). S27
---- is the MECHANISM; the cache-invalidation BEHAVIOR is S41 (`require("pi-editor").bridge.
+--- is the MECHANISM; the cache-invalidation BEHAVIOR is S41 (`require("pi-bridge").bridge.
 --- on_notification("commandsChanged", function(_params) ... end)`).
 ---@type table<string, function>
 local notification_handlers = {}
@@ -330,7 +330,7 @@ resolve_handshake = function(msg, err)
       fdAvailable   = (r.fdAvailable == true),
     }
     M.server_info = info
-    require("pi-editor").bridge = M -- publish (pure Lua table write; luv-safe; was nil)
+    require("pi-bridge").bridge = M -- publish (pure Lua table write; luv-safe; was nil)
     cb(nil, info)
   else -- (c) FAILURE — error object OR malformed result. Close + cb(emsg).
     local emsg = "handshake failed"
@@ -524,7 +524,7 @@ end
 ---   6. the luv timer fires after `config.rpc_timeout_ms` (default 2000) → resolve timeout.
 ---
 --- S40 INVARIANT (documented, not enforced here): `rpc_timeout_ms` (default 2000) MUST exceed
---- the server fd-abort `GET_SUGGESTIONS_TIMEOUT_MS` (1500, extension/pi-editor-bridge.ts:289)
+--- the server fd-abort `GET_SUGGESTIONS_TIMEOUT_MS` (1500, extension/pi-nvim-bridge.ts:289)
 --- so the server's OWN `fd` abort wins (timeouts cascade outward). If the client timeout were
 --- BELOW the server abort, the client would abandon @file searches first while the server's
 --- `fd` scan keeps running (orphaned work + a confusing "request timeout"). The optional
@@ -532,11 +532,11 @@ end
 ---
 --- The `hello` envelope (EXACT — sent inside `on_ready`):
 ---   `{jsonrpc="2.0", id="h1", method="hello", params={token=desc.token,
----   client="pi-editor.nvim", clientVersion=M.version}}` (LF-terminated by `M.send`).
+---   client="pi-bridge.nvim", clientVersion=M.version}}` (LF-terminated by `M.send`).
 ---
 --- Outcomes (all call `on_result` EXACTLY ONCE, guarded by `handshake_state.pending`):
 ---   * success (`result.ok==true`)  → `on_result(nil, {serverVersion,cwd,fdAvailable})`;
----                                    `require("pi-editor").bridge` is set to this module;
+---                                    `require("pi-bridge").bridge` is set to this module;
 ---                                    `M.server_info` holds the extracted triple.
 ---   * error (`error.code`, e.g. -32600) → transport closed; `pi.bridge` stays `nil`;
 ---                                    `on_result("handshake rejected (-32600)")`.
@@ -544,8 +544,8 @@ end
 ---   * silent close / connect failure / timeout → `on_result(<err>)`; `pi.bridge` stays `nil`.
 --- NEVER throws; NEVER includes `desc.token` in any error string (PRD §12).
 ---
----@param desc      pi-editor.BridgeDescriptor The descriptor (`.path`, `.token`, `.cwd`).
----@param on_result fun(err:string?, info:pi-editor.ServerInfo?) Resolved EXACTLY ONCE.
+---@param desc      pi-bridge.BridgeDescriptor The descriptor (`.path`, `.token`, `.cwd`).
+---@param on_result fun(err:string?, info:pi-bridge.ServerInfo?) Resolved EXACTLY ONCE.
 function M.handshake(desc, on_result)
   -- (1) validate UP FRONT — never touch luv on a bad descriptor (never-throws contract).
   -- If `on_result` itself is not a function we cannot invoke it, so just return (the
@@ -560,7 +560,7 @@ function M.handshake(desc, on_result)
   local ok, setup_err = pcall(function()
     M.close() -- idempotent; clears any prior handshake_state / server_info
     handshake_state = { desc = desc, on_result = on_result, pending = true, timer = nil }
-    local cfg = require("pi-editor")
+    local cfg = require("pi-bridge")
     local timeout_ms = ((cfg.config or cfg.defaults or {}).rpc_timeout_ms) or 2000
     local timer = uv.new_timer()
     handshake_state.timer = timer
@@ -578,7 +578,7 @@ function M.handshake(desc, on_result)
           jsonrpc = "2.0",
           id      = "h1",
           method  = "hello",
-          params  = { token = desc.token, client = "pi-editor.nvim", clientVersion = M.version },
+          params  = { token = desc.token, client = "pi-bridge.nvim", clientVersion = M.version },
         })
       end,
       dispatch,                                  -- on_event (the single dispatcher)
@@ -668,7 +668,7 @@ function M.request(method, params, on_result)
     next_id = next_id + 1
     id = tostring(next_id)                                      -- numeric string; NEVER "h1"
     pending[id] = { method = method, cb = vim.schedule_wrap(on_result), timer = nil }
-    local cfg = require("pi-editor")
+    local cfg = require("pi-bridge")
     local timeout_ms = ((cfg.config or cfg.defaults or {}).rpc_timeout_ms) or 2000
     local timer = uv.new_timer()
     pending[id].timer = timer
@@ -818,7 +818,7 @@ autosave_if_modified = function(buf)
 end
 
 --- VimLeavePre / ExitPre handler — fulfills the S22 ftplugin forward contract
---- (`require("pi-editor.bridge").on_exit(buf)`). Three idempotent steps, each pcall-guarded
+--- (`require("pi-bridge.bridge").on_exit(buf)`). Three idempotent steps, each pcall-guarded
 --- so exit is NEVER blocked or aborted (research §Q6.1; never vim.schedule — GOTCHA E):
 ---   (1) autosave buf to its file if modified (PRD §11 — prevents the lost-prompt bug;
 ---       independent of connection state, GOTCHA G).

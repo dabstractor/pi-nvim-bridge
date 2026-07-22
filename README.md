@@ -1,14 +1,17 @@
-# pi-editor-bridge
+# pi-nvim-bridge
 
 > Bridge pi's in-prompt completion into the Neovim instance pi launches as `$EDITOR`.
+>
+> The installable extension is named **`pi-nvim-bridge`** (what you see in
+> `pi list`); the companion Neovim plugin is **`pi-bridge.nvim`**.
 
 This repository ships **two components** that work together:
 
-- **`pi-editor-bridge`** *(this README's focus — a **pi extension**)* captures
+- **`pi-nvim-bridge`** *(this README's focus — a **pi extension**)* captures
   pi's live autocomplete engine and serves it over a local Unix socket to the
   external editor pi spawns.
-- **`pi-editor.nvim`** *(the companion **Neovim plugin**, under [`plugin/`](./plugin) —
-  see [`plugin/README.md`](./plugin/README.md) and `:help pi-editor`)* connects
+- **`pi-bridge.nvim`** *(the companion **Neovim plugin**, under [`plugin/`](./plugin) —
+  see [`plugin/README.md`](./plugin/README.md) and `:help pi-bridge`)* connects
   to that socket and renders pi's completion inside Neovim: `/commands`,
   `skill:` templates, argument completions, `@file` references, and filesystem
   paths.
@@ -28,7 +31,7 @@ The idea is simple: write your prompt in a real editor without giving up any of
 pi's autocomplete. You get a comfortable editing surface and the full set of
 completions pi already offers.
 
-> **Note:** the companion `pi-editor.nvim` plugin is **complete** (under
+> **Note:** the companion `pi-bridge.nvim` plugin is **complete** (under
 > [`plugin/`](./plugin)). The bridge and plugin work together to deliver
 > pi-faithful completion in the external editor.
 
@@ -39,7 +42,7 @@ completions pi already offers.
   [`plugin/README.md`](./plugin/README.md#requirements).
 - **`fd`** *(optional)* — enables fuzzy `@file` search. Without it `@file`
   silently returns nothing, but path completion (directory listing) still works.
-- The companion **`pi-editor.nvim`** plugin (see [`plugin/README.md`](./plugin/README.md)).
+- The companion **`pi-bridge.nvim`** plugin (see [`plugin/README.md`](./plugin/README.md)).
 
 ## Installation
 
@@ -56,20 +59,20 @@ pi install .
 Verify:
 
 ```bash
-pi list          # should show "pi-editor-bridge"
+pi list          # should show "pi-nvim-bridge"
 ```
 
 > ⚠️ **Multi-file package — no single-file drop-in.**
 > This extension is composed of four interdependent `.ts` files
-> (`pi-editor-bridge.ts`, `connection.ts`, `jsonl-reader.ts`, `protocol.ts`).
+> (`pi-nvim-bridge.ts`, `connection.ts`, `jsonl-reader.ts`, `protocol.ts`).
 > You **cannot** install it by copying one file into
 > `~/.pi/agent/extensions/`. The imported siblings would be unresolved.
 > Install it as a pi package via one of the commands above.
 
-**Companion plugin:** install `pi-editor.nvim` with your plugin manager
+**Companion plugin:** install `pi-bridge.nvim` with your plugin manager
 (e.g. lazy.nvim — note `lazy = false` so the VimEnter startup shim sources
 **before** activation). See [`plugin/README.md`](./plugin/README.md) and
-`:help pi-editor` (`plugin/doc/pi-editor.txt`).
+`:help pi-bridge` (`plugin/doc/pi-bridge.txt`).
 
 ## Configuration (`$EDITOR`)
 
@@ -88,40 +91,40 @@ export VISUAL=nvim
 ```
 
 Then in pi, press <kbd>Ctrl+G</kbd> (the `app.editor.external` keybinding) to
-open the external editor. The bridge advertises `PI_EDITOR_BRIDGE` to the Neovim
+open the external editor. The bridge advertises `PI_NVIM_BRIDGE` to the Neovim
 process pi spawns, which the companion plugin keys on.
 
 ### Optional startup optimization
 
 A heavy daily-driver Neovim config (LSP servers, lazy-loaded plugins, plugin-
 manager boot) can add hundreds of milliseconds-to-seconds to every `Ctrl+G`
-launch. You can keep a tiny dedicated config that loads **only** `pi-editor.nvim`
+launch. You can keep a tiny dedicated config that loads **only** `pi-bridge.nvim`
 so the external-editor round-trip feels instant. Two ways to opt in:
 
-**Recommended — the bridge opt-in (`PI_EDITOR_NVIM_APPNAME`):**
+**Recommended — the bridge opt-in (`PI_NVIM_APPNAME`):**
 
 ```bash
-export PI_EDITOR_NVIM_APPNAME=1
+export PI_NVIM_APPNAME=1
 ```
 
 The extension sets `NVIM_APPNAME` inside pi's process for the session (so the
-pi-spawned Neovim boots from `~/.config/pi-editor/` instead of
+pi-spawned Neovim boots from `~/.config/pi-bridge/` instead of
 `~/.config/nvim/`) and **restores your prior value on exit** — so a global
 `NVIM_APPNAME`, if you have one, is left untouched. Value table:
 
-| `PI_EDITOR_NVIM_APPNAME` | resulting `NVIM_APPNAME` |
+| `PI_NVIM_APPNAME` | resulting `NVIM_APPNAME` |
 | --- | --- |
 | _(unset)_ | _(feature off — nothing changes)_ |
-| `""`, `1`, `true`, `yes`, `on` (case-insensitive) | `pi-editor` (default) |
+| `""`, `1`, `true`, `yes`, `on` (case-insensitive) | `pi-bridge` (default) |
 | _any other non-empty string_ | that literal appname |
 
 **The minimal config** (any of the opt-in paths above) — create
-`~/.config/pi-editor/init.lua` that loads only `pi-editor.nvim` (stock Neovim,
+`~/.config/pi-bridge/init.lua` that loads only `pi-bridge.nvim` (stock Neovim,
 no plugin manager required):
 
 ```lua
--- ~/.config/pi-editor/init.lua
-require("pi-editor").setup({})
+-- ~/.config/pi-bridge/init.lua
+require("pi-bridge").setup({})
 ```
 
 Neovim starts cleanly even before you create this file (it just has no user
@@ -132,7 +135,7 @@ config), so the opt-in is safe to enable first and configure at your leisure.
 > surfaces a clear error in the launched editor.
 
 **Manual alternative:** users who prefer not to use the extension opt-in can
-`export NVIM_APPNAME=pi-editor` in the shell that launches pi — the child editor
+`export NVIM_APPNAME=pi-bridge` in the shell that launches pi — the child editor
 inherits it the same way (note: unlike the bridge opt-in, this does not restore
 a prior value because pi never owned the var).
 
@@ -144,21 +147,21 @@ a prior value because pi never owned the var).
    the TUI uses, not a snapshot.
 2. **Process-local discovery.** pi spawns `$EDITOR` inheriting `process.env`
    (no `env:` override, `stdio: "inherit"`). The bridge writes a JSON descriptor
-   to `process.env.PI_EDITOR_BRIDGE` *inside* pi, so the child Neovim sees it.
+   to `process.env.PI_NVIM_BRIDGE` *inside* pi, so the child Neovim sees it.
 3. **JSON-RPC over a Unix socket.** The bridge speaks newline-delimited JSON-RPC
    with these methods: `getSuggestions`, `applyCompletion`, and
    `shouldTriggerFileCompletion`, plus `hello` (token handshake), `ping`, `bye`,
    and `getCommands`. Completion acceptance calls back into pi's own
    `applyCompletion`, guaranteeing identical insertion semantics.
 
-## The `PI_EDITOR_BRIDGE` environment variable
+## The `PI_NVIM_BRIDGE` environment variable
 
 The descriptor is a single-line JSON object:
 
 ```jsonc
 {
   "transport": "unix",
-  "path": "/tmp/pi-editor-bridge-<pid>.sock",
+  "path": "/tmp/pi-nvim-bridge-<pid>.sock",
   "token": "<32-byte hex>",
   "pid": 12345,
   "cwd": "/your/project",
@@ -167,11 +170,11 @@ The descriptor is a single-line JSON object:
 }
 ```
 
-> **`echo $PI_EDITOR_BRIDGE` shows nothing in your shell — this is expected.**
+> **`echo $PI_NVIM_BRIDGE` shows nothing in your shell — this is expected.**
 > The variable is written to `process.env` *inside* the pi process and is only
 > visible to the child `$EDITOR` pi spawns. It is never exported to your shell.
 > This is the #1 source of confusion; it is not a bug. To inspect it from
-> inside the launched Neovim: `:lua print(vim.env.PI_EDITOR_BRIDGE)`.
+> inside the launched Neovim: `:lua print(vim.env.PI_NVIM_BRIDGE)`.
 
 ## Troubleshooting
 
@@ -180,10 +183,10 @@ The descriptor is a single-line JSON object:
   companion plugin **autosaves** the buffer on `VimLeavePre` when modified
   (`autosave_on_exit`, default `true`). To be explicit, quit with `:x`/`ZZ`.
 - **"Completion doesn't appear in Neovim."**
-  Confirm the extension loaded (`pi list` shows `pi-editor-bridge`), confirm
+  Confirm the extension loaded (`pi list` shows `pi-nvim-bridge`), confirm
   `EDITOR=nvim` (or `externalEditor` in settings), and confirm the companion
-  `pi-editor.nvim` plugin is installed and that it gated itself on the presence
-  of `PI_EDITOR_BRIDGE`.
+  `pi-bridge.nvim` plugin is installed and that it gated itself on the presence
+  of `PI_NVIM_BRIDGE`.
 - **"`@file` finds nothing."**
   Install [`fd`](https://github.com/sharkdp/fd). The bridge reports `fdAvailable`
   in `hello`; without `fd`, `@file` is empty but path completion (directory
@@ -207,7 +210,7 @@ The descriptor is a single-line JSON object:
   the editor. It is delivered via `process.env` (process-local, never on disk)
   and validated in the `hello` handshake.
 - The server **rejects any method before a valid `hello`**.
-- **Never log or echo the token.** Treat the `PI_EDITOR_BRIDGE` descriptor as
+- **Never log or echo the token.** Treat the `PI_NVIM_BRIDGE` descriptor as
   sensitive — don't paste it into bug reports or completion descriptions.
 
 ## Development
@@ -243,15 +246,15 @@ done
 pi-nvim-bridge/
 ├── package.json              # pi package manifest (pi.extensions → entry)
 ├── README.md                 # this file (the EXTENSION README)
-├── plugin/                   # the pi-editor.nvim Neovim plugin (P2 + P4 — complete)
+├── plugin/                   # the pi-bridge.nvim Neovim plugin (P2 + P4 — complete)
 │   ├── README.md             # the PLUGIN README (end-user landing page)
-│   ├── plugin/pi-editor.lua  # VimEnter auto-activation shim
-│   ├── lua/pi-editor/        # init/bridge/completion/menu/coords/health/blink_source/cmp_source/...
+│   ├── plugin/pi-bridge.lua  # VimEnter auto-activation shim
+│   ├── lua/pi-bridge/        # init/bridge/completion/menu/coords/health/blink_source/cmp_source/...
 │   ├── ftplugin/pi-prompt.lua# 9 buffer-local keymaps + ft opts + autocmds
-│   ├── doc/pi-editor.txt     # the vimdoc (`:help pi-editor`)
+│   ├── doc/pi-bridge.txt     # the vimdoc (`:help pi-bridge`)
 │   └── tests/                # plenary specs + plenary-free smokes
-└── extension/                # the pi-editor-bridge pi extension (P1 — complete)
-    ├── pi-editor-bridge.ts   # entry: default-export factory
+└── extension/                # the pi-nvim-bridge pi extension (P1 — complete)
+    ├── pi-nvim-bridge.ts   # entry: default-export factory
     ├── connection.ts         # JSON-RPC server + dispatch + registry
     ├── jsonl-reader.ts       # newline-delimited JSON framing
     ├── protocol.ts           # type-only: descriptor + RPC envelopes
@@ -268,7 +271,7 @@ pi-nvim-bridge/
 - pi docs: [packages.md](https://pi.dev/docs/packages) ·
   [extensions.md](https://pi.dev/docs/extensions)
 - Companion plugin: [plugin/README.md](./plugin/README.md) ·
-  `:help pi-editor` ([`plugin/doc/pi-editor.txt`](./plugin/doc/pi-editor.txt)).
+  `:help pi-bridge` ([`plugin/doc/pi-bridge.txt`](./plugin/doc/pi-bridge.txt)).
 
 ## Releasing
 
@@ -288,13 +291,13 @@ which:
 2. writes that version into `package.json` **inside the ephemeral runner
    checkout only** (`npm version … --no-git-tag-version`) — nothing is committed
    back to the repo,
-3. publishes `pi-editor-bridge` to npm with [provenance](https://docs.npmjs.com/generating-provenance-statements)
+3. publishes `pi-nvim-bridge` to npm with [provenance](https://docs.npmjs.com/generating-provenance-statements)
    attestation, and
 4. opens a GitHub Release with auto-generated notes (prereleases are auto-marked
    when the version contains a `-`, e.g. `v1.0.0-beta.1`).
 
 **One-time setup:** add an npm access token (Automation or Granular, with
-publish rights for `pi-editor-bridge`) as the repo secret `NPM_TOKEN`.
+publish rights for `pi-nvim-bridge`) as the repo secret `NPM_TOKEN`.
 Provenance also relies on the workflow's `id-token: write` permission, which is
 already declared in the workflow. If your token type can't do provenance, set
 `publishConfig.provenance` to `false` in `package.json` (and drop

@@ -27,7 +27,7 @@ import {
 import {
 	makeHelloHandler,
 	BRIDGE_VERSION,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 const TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -285,7 +285,7 @@ test("dispatch: bad-token hello → -32600 envelope + sock.end()", async () => {
 // === 3. REAL integration (ONE real Unix socket pair) ===========================
 
 test("REAL: hello success + bad-token→disconnect over a real Unix socket", async () => {
-	const sockpath = join(tmpdir(), `pi-editor-hello-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-hello-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnectionReal(c));
 	// Register a handler with a FIXED token + stubbed deps (no module state needed).
 	registerBridgeHandler(

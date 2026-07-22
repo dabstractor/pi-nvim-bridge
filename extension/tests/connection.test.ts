@@ -16,7 +16,7 @@ import {
 	BridgeRpcError,
 	__resetHandlersForTest,
 } from "../connection.ts";
-import { makeHelloHandler, BRIDGE_VERSION } from "../pi-editor-bridge.ts";
+import { makeHelloHandler, BRIDGE_VERSION } from "../pi-nvim-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 // A fake socket: EventEmitter (for .on/.emit/.listenerCount) + a write() that captures
@@ -254,7 +254,7 @@ test("REAL: end-to-end JSONL round-trip over a Unix socket (hello → method-not
 		"hello",
 		makeHelloHandler({ getToken: () => REAL_TOKEN, getCwd: () => "/tmp", getFdAvailable: () => true, version: BRIDGE_VERSION }),
 	);
-	const sockpath = join(tmpdir(), `pi-editor-conn-test-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-conn-test-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");

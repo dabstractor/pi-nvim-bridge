@@ -12,9 +12,9 @@
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/bridge_notify_spec.lua")'
 local uv = vim.uv
-local bridge = require("pi-editor.bridge")
-local jreader = require("pi-editor.jsonlreader")
-local pi = require("pi-editor")
+local bridge = require("pi-bridge.bridge")
+local jreader = require("pi-bridge.jsonlreader")
+local pi = require("pi-bridge")
 
 if pi.config == nil then pi.setup({}) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -150,7 +150,7 @@ local function with_handshaken_server(server_opts, spec)
   end)
 end
 
-describe("pi-editor.bridge on_notification", function()
+describe("pi-bridge.bridge on_notification", function()
   before_each(function() reset_module() end)
   after_each(function() reset_module() end)
 
@@ -394,8 +394,8 @@ describe("pi-editor.bridge on_notification", function()
   --      stays in completion_spec — this proves the wire-up over a real socket.)
   it("S41 wiring: the on_notification-registered handler closes a stale menu on commandsChanged",
     with_handshaken_server({ mode = "notify" }, function(path, _opts, stop)
-      local completion = require("pi-editor.completion")
-      local menu = require("pi-editor.menu")
+      local completion = require("pi-bridge.completion")
+      local menu = require("pi-bridge.menu")
       -- populate the menu via the REAL seam (so is_open()==true before the notification)
       local buf = vim.api.nvim_create_buf(true, false)
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "/mod" })
@@ -412,7 +412,7 @@ describe("pi-editor.bridge on_notification", function()
       assert.is_true(menu.is_open(), "pre: the menu must be open before the notification")
       -- register the S41 handler (exactly as init.lua M.activate() does)
       bridge.on_notification("commandsChanged", function(_params)
-        pcall(function() require("pi-editor.completion").on_commands_changed() end)
+        pcall(function() require("pi-bridge.completion").on_commands_changed() end)
       end)
       -- the server pushes the REAL commandsChanged notification (mode=notify → after hello)
       vim.wait(500, function() return not menu.is_open() end, 5)

@@ -229,7 +229,7 @@ The 1-based↔0-based indexing trap (`selected_idx - 1`) is GOTCHA #1.
 ```bash
 pi-nvim-bridge/                       # repo root (monorepo)
 ├── extension/                        # P1 pi-editor-bridge (TypeScript) — COMPLETE
-├── plugin/                           # P2 pi-editor.nvim (Lua) — S19 DONE; S34 IN-FLIGHT; this task S35
+├── plugin/                           # P2 pi-bridge.nvim (Lua) — S19 DONE; S34 IN-FLIGHT; this task S35
 │   ├── lua/pi-editor/
 │   │   ├── init.lua                  # S19: M.defaults/M.config/M.bridge/M.setup (CONTRACT)
 │   │   └── menu.lua                  # S34: lifecycle+geometry+selection + BASIC _render_lines + [S35] seams  <-- MODIFY

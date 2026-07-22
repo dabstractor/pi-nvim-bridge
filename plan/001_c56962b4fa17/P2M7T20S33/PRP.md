@@ -43,7 +43,7 @@ it. Or they type `./src/com` and press Tab to force pi's fuzzy `@file`/path comp
 `fd`-scored, gitignore-aware logic pi uses), because no menu auto-appeared at that position. Or
 the forced file search yields a single match and Tab inserts it outright (pi's auto-apply).
 
-**User Journey**: (1) pi opens nvim on the temp prompt file (env `PI_EDITOR_BRIDGE` set). (2) The
+**User Journey**: (1) pi opens nvim on the temp prompt file (env `PI_NVIM_BRIDGE` set). (2) The
 plugin activates + attaches the menu (S21/S31). (3) User types; per-keystroke `refresh` (S30)
 populates the menu. (4) User presses `<Tab>`: if the menu is showing → the selected item is
 accepted; if not → pi's file-completion force (or slash re-fetch) runs. (5) User saves + quits;

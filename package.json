@@ -1,5 +1,5 @@
 {
-  "name": "pi-editor-bridge",
+  "name": "pi-nvim-bridge",
   "version": "0.1.0",
   "description": "Bridge pi's autocomplete engine to an external $EDITOR (Neovim) over a local Unix socket.",
   "type": "module",
@@ -27,7 +27,7 @@
     "provenance": true
   },
   "pi": {
-    "extensions": ["./extension/pi-editor-bridge.ts"]
+    "extensions": ["./extension/pi-nvim-bridge.ts"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

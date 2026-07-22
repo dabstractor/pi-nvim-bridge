@@ -6,7 +6,7 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/notify_spec.lua")'
-local notify = require("pi-editor.notify")
+local notify = require("pi-bridge.notify")
 local WARN = vim.log.levels.WARN
 
 local calls, orig_notify
@@ -17,7 +17,7 @@ local function flush(target, timeout)
   vim.wait(timeout or 100, function() return #calls >= want end, 5)
 end
 
-describe("pi-editor.notify (S39)", function()
+describe("pi-bridge.notify (S39)", function()
   before_each(function()
     notify.reset()
     calls = {}
@@ -35,7 +35,7 @@ describe("pi-editor.notify (S39)", function()
     assert.are.equals(1, #calls)
     assert.are.equals("x", calls[1].msg)
     assert.are.equals(WARN, calls[1].level)
-    assert.are.equals("pi-editor", calls[1].opts.title)
+    assert.are.equals("pi-bridge", calls[1].opts.title)
   end)
 
   -- (b) dedup: a 2nd once() with the same category is a silent no-op

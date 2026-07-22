@@ -5,7 +5,7 @@ import type {
 	ExtensionContext,
 	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import bridgeFactory, { stopBridge } from "../pi-editor-bridge.ts";
+import bridgeFactory, { stopBridge } from "../pi-nvim-bridge.ts";
 
 // Type alias for the session_start handler signature (pi registers
 // ExtensionHandler<SessionStartEvent> = (event, ctx) => void | ...).

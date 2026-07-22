@@ -77,7 +77,7 @@ interactive TUI mode (where `openExternalEditor` can actually launch the user's
 **Pain Points Addressed**: Without the guard, the extension would (a) call a
 no-op `addAutocompleteProvider` in RPC mode (silently capturing nothing —
 `liveProvider` stays `undefined`), and (b) once M2 lands, bind a Unix socket and
-write `PI_EDITOR_BRIDGE` to `process.env` in modes that never launch an editor.
+write `PI_NVIM_BRIDGE` to `process.env` in modes that never launch an editor.
 The guard makes "TUI-only" an explicit, documented, tested invariant.
 
 ## Why
@@ -95,7 +95,7 @@ The guard makes "TUI-only" an explicit, documented, tested invariant.
   from the interactive-mode keybinding `app.editor.external`. The bridge's whole
   purpose (serve completions to that editor) is moot in non-TUI modes.
 - **Forward-looking chokepoint** (PRD §6.2 + §11 "No‑session / print mode"):
-  later tasks add `startBridge` (M2/S5), `process.env.PI_EDITOR_BRIDGE` (S16),
+  later tasks add `startBridge` (M2/S5), `process.env.PI_NVIM_BRIDGE` (S16),
   and `commandsChanged` (S17) to `session_start`. Placing the single guard at
   the top now means those tasks code BELOW it and inherit non-TUI protection for
   free — no per-task guards, no risk of one task forgetting the guard.
@@ -284,7 +284,7 @@ Task 1: MODIFY extension/pi-editor-bridge.ts  (the file S1+S2 produced)
               console.log(`pi-editor-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`);
               // TODO(S3): guard with `if (ctx.mode !== "tui") return;` before capturing.
               captureProvider(ctx);
-              // TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE
+              // TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_NVIM_BRIDGE
           });
   - INSERT, as the FIRST thing inside the handler body (before console.log):
       a Mode-A JSDoc block comment (see Implementation Patterns for exact text)
@@ -362,7 +362,7 @@ export default function (pi: ExtensionAPI): void {
 			`pi-editor-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`,
 		);
 		captureProvider(ctx);
-		// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE
+		// TODO(M2): startBridge(ctx, ctx.cwd);   TODO(S16): advertise via process.env.PI_NVIM_BRIDGE
 	});
 
 	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
@@ -456,7 +456,7 @@ NO external integration points for S3.
     session_start handler pi invokes on every session start/reload/new/resume/fork.
 INTERNAL consumers (later tasks, NOT this one — they code BELOW the guard):
   - M2/S5 startBridge(ctx, ctx.cwd)   — Unix socket server; protected by the guard.
-  - S16  process.env.PI_EDITOR_BRIDGE  — env advertisement; protected by the guard.
+  - S16  process.env.PI_NVIM_BRIDGE  — env advertisement; protected by the guard.
   - S17  commandsChanged notification  — S→C broadcast; protected by the guard.
 DOCUMENTATION coupling:
   - Updates S1/S2's Level-3 validation gate (startup log no longer appears in
@@ -592,7 +592,7 @@ rm -f ~/.pi/agent/extensions/pi-editor-bridge.ts   # clean up (don't leave insta
 
 - [ ] Mode-A JSDoc on the guard explains the "why" (RPC no-op + TUI-only editor).
 - [ ] File-level JSDoc STATUS block reflects S3 completion + the validation-behavior change.
-- [ ] No new env vars WRITTEN (the JSDoc continues to merely document the future `PI_EDITOR_BRIDGE`).
+- [ ] No new env vars WRITTEN (the JSDoc continues to merely document the future `PI_NVIM_BRIDGE`).
 
 ---
 

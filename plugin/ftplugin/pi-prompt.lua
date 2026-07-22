@@ -1,5 +1,5 @@
 --- pi-prompt buffer setup. Auto-sourced on |FileType| `pi-prompt` (set by
---- `require("pi-editor").activate()` — S21). Configures the pi temp-file buffer for
+--- `require("pi-bridge").activate()` — S21). Configures the pi temp-file buffer for
 --- prompt editing and wires the completion keymaps + the completion/autosave autocmds.
 ---
 --- Scope (what this ftplugin DOES): set the editing |options|, register the 6 insert-mode
@@ -7,7 +7,7 @@
 --- It runs once per buffer whose filetype becomes `pi-prompt`; it touches ONLY that buffer.
 ---
 --- Scope (what this ftplugin does NOT do): it does NOT implement completion (that is
---- `pi-editor.completion` / S30+) or autosave (that is the bridge's `on_exit` / S38). It
+--- `pi-bridge.completion` / S30+) or autosave (that is the bridge's `on_exit` / S38). It
 --- only WIRES them. The keymaps/autocmds below dispatch into those modules via a
 --- lazy-require helper; until those modules ship the dispatches are silent no-ops (autocmds)
 --- or fall through to the key's default behavior (keymaps). So this buffer behaves as a
@@ -15,7 +15,7 @@
 --- edit (the contract is just module + function names, established here).
 ---
 --- FORWARD CONTRACTS (established here; implemented by later tasks):
----   require("pi-editor.completion"):                    (S30+)
+---   require("pi-bridge.completion"):                    (S30+)
 ---     refresh(buf)              -- InsertEnter/TextChangedI/CursorMovedI; fire-and-forget.
 ---     on_tab(buf)   -> truthy    -- <Tab>: trigger / accept the menu (S33); truthy == handled.
 ---     on_enter(buf) -> truthy    -- <CR>/<C-Y>: accept if menu open else insert newline (S32).
@@ -25,7 +25,7 @@
 ---                                auto-close AUTOCMDS).
 ---     on_insert_leave(buf)       -- InsertLeave autocmd → hide + cancel pending refresh (S37).
 ---     on_buf_leave(buf)          -- BufLeave autocmd → same teardown on buffer switch (S37).
----   require("pi-editor.bridge"):                       (connection: S24; on_exit body: S38)
+---   require("pi-bridge.bridge"):                       (connection: S24; on_exit body: S38)
 ---     on_exit(buf)              -- VimLeavePre/ExitPre: autosave-if-modified + send bye + close.
 --- A keymap dispatch returns `true` ONLY if the module exists AND its function returned
 --- truthy; otherwise the keymap falls through to its default (see |feedkeys()| below).
@@ -43,9 +43,9 @@
 --- `completion.on_enter` / S32). Documented for implementers & users.
 --
 -- Read resolved config safely (config may be nil if the user never called setup() — the
--- shim's pcall(require,"pi-editor") guard plus activate()'s self-setup cover the real path,
+-- shim's pcall(require,"pi-bridge") guard plus activate()'s self-setup cover the real path,
 -- but this ftplugin can also be sourced directly by tests / a manual `:set ft=pi-prompt`).
-local pi_ok, pi = pcall(require, "pi-editor")
+local pi_ok, pi = pcall(require, "pi-bridge")
 local config = (pi_ok and pi and (pi.config or pi.defaults)) or {}
 
 local buf = vim.api.nvim_get_current_buf()   -- the matched pi-prompt buffer (ftplugin runs current==matched; :help filetype-plugins)
@@ -65,7 +65,7 @@ vim.wo[win].spell = false                                                   -- w
 -- This plugin renders its OWN floating menu from pi's live provider. If the user
 -- also drives blink.cmp and/or nvim-cmp, those engines would pop their OWN menu in
 -- this buffer (double UI, conflicting <Tab>/<CR>). Disable them HERE — buffer-local
--- + best-effort — so only pi-editor's menu shows, WITHOUT touching the user's global
+-- + best-effort — so only pi-bridge's menu shows, WITHOUT touching the user's global
 -- config. Resolved FRESH (pcall) so a missing/odd engine config degrades silently.
 --   * blink.cmp: its `enabled()` explicitly honors `vim.b.completion == false`
 --     (blink.cmp/lua/blink/cmp/config/init.lua) → setting it disables blink HERE.
@@ -73,8 +73,8 @@ vim.wo[win].spell = false                                                   -- w
 -- Note: the shipped opt-in blink/cmp *adapter sources* (engine="blink"/"cmp") are a
 -- DIFFERENT, user-chosen path; this block only suppresses the user's EXISTING engine
 -- so the builtin menu is the sole UI. Users who prefer their engine can set
--- `vim.g.pi_editor_suppress_engines = false` to opt out.
-if vim.g.pi_editor_suppress_engines ~= false then
+-- `vim.g.pi_bridge_suppress_engines = false` to opt out.
+if vim.g.pi_bridge_suppress_engines ~= false then
   vim.b[buf].completion = false -- blink.cmp honors this (forces disabled in this buffer)
   pcall(function()
     local ok, cmp = pcall(require, "cmp")
@@ -91,7 +91,7 @@ end
 --- Returns `true` ONLY if the module exists AND its function returned truthy ("handled").
 --- Any failure (module missing, field not a function, function threw) returns `false`
 --- silently — so keymaps/autocmds installed today stay safe until the target ships.
----@param modname string  Module to require (e.g. "pi-editor.completion").
+---@param modname string  Module to require (e.g. "pi-bridge.completion").
 ---@param fnname  string  Function field to call (e.g. "on_tab").
 ---@param b       integer Buffer handle passed as the sole argument.
 ---@return boolean handled true iff the module+function ran and returned truthy.
@@ -115,47 +115,47 @@ end
 
 --- Register a buffer-local keymap that dispatches to a forward-contract function; if the
 --- dispatch is not handled (module absent or signalled fall-through), fall through to the
---- key's default via |feedkey| (GOTCHA D). `desc` is prefixed `"pi-editor:"` for discovery.
+--- key's default via |feedkey| (GOTCHA D). `desc` is prefixed `"pi-bridge:"` for discovery.
 ---@param mode    string  Mapping mode (e.g. "i").
 ---@param lhs     string  Left-hand side key (e.g. "<Tab>").
----@param modname string  Forward-contract module (e.g. "pi-editor.completion").
+---@param modname string  Forward-contract module (e.g. "pi-bridge.completion").
 ---@param fnname  string  Forward-contract function (e.g. "on_tab").
 local function map_dispatch(mode, lhs, modname, fnname)
   vim.keymap.set(mode, lhs, function()
     if not dispatch(modname, fnname, buf) then feedkey(lhs) end
-  end, { buffer = buf, desc = "pi-editor: " .. fnname })
+  end, { buffer = buf, desc = "pi-bridge: " .. fnname })
 end
 
 -- ── Keymaps (insert-mode, buffer-local; PRD §7.6) ──────────────────────────────
 -- Each maps to a forward-contract completion function and falls through to its default
 -- when that function is absent / signals fall-through. Until completion.lua (S30+) ships,
 -- all six behave as their normal insert-mode defaults (Tab indents, CR inserts a newline).
-map_dispatch("i", "<Tab>",   "pi-editor.completion", "on_tab")     -- trigger / accept the menu (S33)
-map_dispatch("i", "<S-Tab>", "pi-editor.completion", "on_prev")    -- previous completion item (S36)
-map_dispatch("i", "<C-N>",   "pi-editor.completion", "on_next")    -- next completion item (S36)
-map_dispatch("i", "<C-P>",   "pi-editor.completion", "on_prev")    -- previous completion item (S36)
-map_dispatch("i", "<C-E>",   "pi-editor.completion", "on_dismiss") -- dismiss the completion menu (S36)
-map_dispatch("i", "<CR>",    "pi-editor.completion", "on_enter")   -- accept-or-newline (S32); no Enter-to-submit (PRD §7.4)
+map_dispatch("i", "<Tab>",   "pi-bridge.completion", "on_tab")     -- trigger / accept the menu (S33)
+map_dispatch("i", "<S-Tab>", "pi-bridge.completion", "on_prev")    -- previous completion item (S36)
+map_dispatch("i", "<C-N>",   "pi-bridge.completion", "on_next")    -- next completion item (S36)
+map_dispatch("i", "<C-P>",   "pi-bridge.completion", "on_prev")    -- previous completion item (S36)
+map_dispatch("i", "<C-E>",   "pi-bridge.completion", "on_dismiss") -- dismiss the completion menu (S36)
+map_dispatch("i", "<CR>",    "pi-bridge.completion", "on_enter")   -- accept-or-newline (S32); no Enter-to-submit (PRD §7.4)
 -- S36: the PRD §7.5 full key set — arrows navigate; <C-Y> accepts (reuses on_enter).
-map_dispatch("i", "<Down>",  "pi-editor.completion", "on_next")    -- next completion item (S36; mirrors <C-N>)
-map_dispatch("i", "<Up>",    "pi-editor.completion", "on_prev")    -- previous completion item (S36; mirrors <C-P>)
-map_dispatch("i", "<C-Y>",   "pi-editor.completion", "on_enter")   -- accept (S36; reuses on_enter's accept-or-fall-through)
+map_dispatch("i", "<Down>",  "pi-bridge.completion", "on_next")    -- next completion item (S36; mirrors <C-N>)
+map_dispatch("i", "<Up>",    "pi-bridge.completion", "on_prev")    -- previous completion item (S36; mirrors <C-P>)
+map_dispatch("i", "<C-Y>",   "pi-bridge.completion", "on_enter")   -- accept (S36; reuses on_enter's accept-or-fall-through)
 
--- ── Autocmds (buffer-local, shared "pi-editor" group; GOTCHA C: clear=false) ────
--- The "pi-editor" augroup is SHARED with S20's VimEnter autocmd. Creating it here with
--- `clear=true` would WIPE that autocmd (and sibling buffers' pi-editor autocmds). We use
+-- ── Autocmds (buffer-local, shared "pi-bridge" group; GOTCHA C: clear=false) ────
+-- The "pi-bridge" augroup is SHARED with S20's VimEnter autocmd. Creating it here with
+-- `clear=true` would WIPE that autocmd (and sibling buffers' pi-bridge autocmds). We use
 -- `clear=false`. Per-buffer idempotency (so a re-source via `:doautocmd FileType` does not
 -- stack duplicates) is via a BUFFER-SCOPED `nvim_clear_autocmds` — it leaves siblings intact.
-local group = vim.api.nvim_create_augroup("pi-editor", { clear = false })
-vim.api.nvim_clear_autocmds({ buffer = buf, group = "pi-editor" })   -- idempotent on re-source
+local group = vim.api.nvim_create_augroup("pi-bridge", { clear = false })
+vim.api.nvim_clear_autocmds({ buffer = buf, group = "pi-bridge" })   -- idempotent on re-source
 
 -- Completion refresh triggers — fire-and-forget (no default to preserve, so no fall-through).
 for _, ev in ipairs({ "InsertEnter", "TextChangedI", "CursorMovedI" }) do
   vim.api.nvim_create_autocmd(ev, {
     group = group,
     buffer = buf,
-    desc = "pi-editor: completion refresh (" .. ev .. ")",
-    callback = function() dispatch("pi-editor.completion", "refresh", buf) end,
+    desc = "pi-bridge: completion refresh (" .. ev .. ")",
+    callback = function() dispatch("pi-bridge.completion", "refresh", buf) end,
   })
 end
 
@@ -165,15 +165,15 @@ end
 -- (research §1). The "CursorMoved out of prefix" trigger is owned pi-faithfully by the EXISTING
 -- CursorMovedI→refresh→re-fetch→empty→close path above (S30, COMPLETE; no local prefix detector — §3).
 -- Fire-and-forget (autocmd; dispatch's bool return is ignored here — used only for the no-op-safe-
--- absent-module guarantee). Buffer-local + the SHARED "pi-editor" group + clear=false (idempotent via
+-- absent-module guarantee). Buffer-local + the SHARED "pi-bridge" group + clear=false (idempotent via
 -- the nvim_clear_autocmds line above).
 for _, ev in ipairs({ "InsertLeave", "BufLeave" }) do
   local fn = (ev == "InsertLeave") and "on_insert_leave" or "on_buf_leave"
   vim.api.nvim_create_autocmd(ev, {
     group = group,
     buffer = buf,
-    desc = "pi-editor: auto-close completion menu on " .. ev,
-    callback = function() dispatch("pi-editor.completion", fn, buf) end,
+    desc = "pi-bridge: auto-close completion menu on " .. ev,
+    callback = function() dispatch("pi-bridge.completion", fn, buf) end,
   })
 end
 
@@ -184,8 +184,8 @@ if config.autosave_on_exit ~= false then
     vim.api.nvim_create_autocmd(ev, {
       group = group,
       buffer = buf,
-      desc = "pi-editor: autosave + bridge teardown on " .. ev,
-      callback = function() dispatch("pi-editor.bridge", "on_exit", buf) end,
+      desc = "pi-bridge: autosave + bridge teardown on " .. ev,
+      callback = function() dispatch("pi-bridge.bridge", "on_exit", buf) end,
     })
   end
 end

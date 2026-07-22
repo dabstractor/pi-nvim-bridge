@@ -74,7 +74,7 @@ modified; the safety net still covers any impossible-in-practice throw from them
 
 ## User Persona
 
-**Target User**: The `pi-editor.nvim` Neovim plugin (P2.M5 / P2.M7) — the bridge's only
+**Target User**: The `pi-bridge.nvim` Neovim plugin (P2.M5 / P2.M7) — the bridge's only
 client. (Indirectly: the human editing a pi prompt in their `$EDITOR`, plus a future
 `:checkhealth pi-editor` user reading diagnostics.)
 
@@ -85,7 +85,7 @@ the Neovim client must receive a **well-formed JSON-RPC error response** (not a 
 not a crash, not a malformed envelope) so it can degrade silently to a normal buffer (PRD §11)
 and so `:checkhealth pi-editor` (P3.M10.T27.S42) can surface a clean, debuggable message.
 
-**User Journey**: user opens Neovim as `$EDITOR` → plugin activates on `PI_EDITOR_BRIDGE` →
+**User Journey**: user opens Neovim as `$EDITOR` → plugin activates on `PI_NVIM_BRIDGE` →
 `hello` (token) → `getSuggestions` while provider still warming up → server returns
 `-32603 "completion provider unavailable: …"` → plugin logs once + degrades silently → user
 keeps typing in a normal buffer. No crash, no hang, no leaked secret.

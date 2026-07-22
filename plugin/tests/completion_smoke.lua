@@ -11,7 +11,7 @@
 --
 -- NO plenary. Reuses the coords_smoke.lua `check`/`fails`/`cquit`/`SMOKE_PASS` footer.
 
--- Add the plugin root to runtimepath so `require("pi-editor.*")` resolves (the
+-- Add the plugin root to runtimepath so `require("pi-bridge.*")` resolves (the
 -- coords_smoke.lua bootstrap pattern). Works whether run from plugin/ or repo root.
 local me = debug.getinfo(1, "S").source:sub(2)
 me = vim.fn.fnamemodify(me, ":p")
@@ -19,11 +19,11 @@ local plugin_root = vim.fn.fnamemodify(me, ":h:h") -- .../plugin (the runtimepat
 vim.opt.runtimepath:append(plugin_root)
 
 local uv = vim.uv
-local jreader = require("pi-editor.jsonlreader")
-local bridge = require("pi-editor.bridge")
-local pi = require("pi-editor")
-local completion = require("pi-editor.completion")
-local coords = require("pi-editor.coords")
+local jreader = require("pi-bridge.jsonlreader")
+local bridge = require("pi-bridge.bridge")
+local pi = require("pi-bridge")
+local completion = require("pi-bridge.completion")
+local coords = require("pi-bridge.coords")
 
 if pi.config == nil then pi.setup({ debounce_ms = 5 }) end -- self-sufficient (GOTCHA D)
 
@@ -177,7 +177,7 @@ if pi.bridge == bridge then
   -- drive commandsChanged (call on_commands_changed directly), assert the cache cleared
   -- + a fresh getSuggestions re-fired + the menu reopened with the NEW items.
   if pi.config then pi.config.debounce_ms = 5 end -- shrink so vim.wait drives it quickly
-  local menu = require("pi-editor.menu")
+  local menu = require("pi-bridge.menu")
   local sbuf = vim.api.nvim_create_buf(true, false)
   vim.api.nvim_buf_set_lines(sbuf, 0, -1, false, { "/mod" })
   local swin = vim.api.nvim_open_win(sbuf, true, {

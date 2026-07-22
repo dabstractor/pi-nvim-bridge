@@ -1,7 +1,7 @@
 # PRP — P2.M1.T1.S2: `plugin/pi-editor.lua` VimEnter auto-activation shim
 
 > **Plan mapping:** task `P2.M4.T11.S20` ("plugin/pi-editor.lua VimEnter
-> auto-activation shim"). It is the **second** task of P2 (`pi-editor.nvim`
+> auto-activation shim"). It is the **second** task of P2 (`pi-bridge.nvim`
 > Plugin Core) and the **second** of milestone P2.M4.T11. It **depends on** the
 > parallel task **S19** (`init.lua` with `setup()`/`config`/`defaults`/`bridge`)
 > whose PRP is treated as a hard contract, and it **forwards** the
@@ -20,7 +20,7 @@ callback calls `require("pi-editor").activate()`. Sourcing the file must be
 cheap (register one autocmd — no work, no env-var reads, no `activate()` call at
 source time). The plugin stays **dormant** (a runtime no-op) in ordinary nvim
 sessions — that dormancy is delivered by `activate()` itself (task S21), which
-returns early when `PI_EDITOR_BRIDGE` is unset.
+returns early when `PI_NVIM_BRIDGE` is unset.
 
 **Deliverable** (3 files — all NEW; S19 creates the `plugin/` tree + `lua/pi-editor/init.lua` + `tests/{smoke,minimal_init,init_spec}.lua`):
 - `plugin/plugin/pi-editor.lua` — the shim: a `pi-editor` augroup + one
@@ -54,7 +54,7 @@ returns early when `PI_EDITOR_BRIDGE` is unset.
   `plugin/*.lua` file that Neovim sources at startup and that wires `VimEnter`
   → `activate()`. Without it there is no entry point for the whole plugin.
 - **Works with ANY plugin manager (or none).** Because activation is gated on the
-  `PI_EDITOR_BRIDGE` env var (set only when pi spawns `$EDITOR`), the shim must
+  `PI_NVIM_BRIDGE` env var (set only when pi spawns `$EDITOR`), the shim must
   run on **every** nvim startup — so it cannot be deferred behind a lazy event.
   A `plugin/*.lua` file sourced at startup (with `lazy=false`, PRD §10.3) is the
   only construct guaranteed to run *before* `VimEnter` regardless of whether the
@@ -65,7 +65,7 @@ returns early when `PI_EDITOR_BRIDGE` is unset.
   independently testable (via a mocked `activate`), and faithful to the PRD's
   per-step decomposition.
 - **Integrates with the parallel extension work.** The bridge extension writes
-  `process.env.PI_EDITOR_BRIDGE` (P1.M3.T8.S16, hard contract) before spawning
+  `process.env.PI_NVIM_BRIDGE` (P1.M3.T8.S16, hard contract) before spawning
   `$EDITOR`; the Neovim child **inherits** that env var (Node `spawn` default).
   This shim ensures `activate()` runs on `VimEnter` — exactly when that env var
   is guaranteed present — so the chain `extension → env var → VimEnter shim →
@@ -80,7 +80,7 @@ targets `activate()`, implemented in S21). The user-visible *contract* is:
   at startup.
 - On every `VimEnter`, `require("pi-editor").activate()` is called **once**.
 - In ordinary nvim sessions (S21 complete), `activate()` returns immediately
-  (dormant) because `PI_EDITOR_BRIDGE` is unset — so the plugin is invisible.
+  (dormant) because `PI_NVIM_BRIDGE` is unset — so the plugin is invisible.
 
 Technical requirements:
 - File at **`plugin/plugin/pi-editor.lua`** (the repo's plugin root is the
@@ -251,7 +251,7 @@ plugin/                             # <-- Neovim plugin root (the runtimepath en
 > the runtimepath entry — S19 GOTCHA #1). Within that plugin root, Neovim's
 > convention is a **`plugin/`** folder for auto-sourced startup files. PRD §7.2
 > and §9.2 list `plugin/pi-editor.lua` relative to the plugin root
-> (`pi-editor.nvim/`), which maps to `plugin/plugin/pi-editor.lua` in this repo.
+> (`pi-bridge.nvim/`), which maps to `plugin/plugin/pi-editor.lua` in this repo.
 > This is the path S19's PRP explicitly reserves ("Later tasks add
 > `plugin/plugin/pi-editor.lua` (S20)").
 
@@ -307,7 +307,7 @@ plugin/                             # <-- Neovim plugin root (the runtimepath en
 -- the plenary shim_spec (exit 0).
 
 -- GOTCHA #9 — scope guard. This task is ONLY the shim + its tests. Do NOT:
---   read PI_EDITOR_BRIDGE or any env var (that is the S21 gate / activate() body),
+--   read PI_NVIM_BRIDGE or any env var (that is the S21 gate / activate() body),
 --   implement activate() (S21),
 --   add pcall/notify/"silent degradation" (S39),
 --   create ftplugin/pi-prompt.lua (S22) or bridge.lua (S24),
@@ -331,7 +331,7 @@ Task 1: CREATE plugin/plugin/pi-editor.lua   (THE deliverable)
       (a) auto-sourced at startup (:help load-plugins) BEFORE VimEnter;
       (b) registers a fire-once VimEnter autocmd -> require("pi-editor").activate();
       (c) DORMANT in ordinary nvim: activate() (S21) returns early unless
-          PI_EDITOR_BRIDGE is set (PRD §7.1);
+          PI_NVIM_BRIDGE is set (PRD §7.1);
       (d) requires lazy=false (PRD §10.3) so this file is sourced at startup,
           not deferred by a plugin manager.
   - NAMING: augroup "pi-editor"; the file's own name pi-editor.lua.
@@ -389,7 +389,7 @@ Task 3: CREATE plugin/tests/shim_spec.lua   (plenary/busted Level-2 gate)
 
 ```lua
 -- === plugin/plugin/pi-editor.lua — THE deliverable (verbatim-OK reference) ===
---- pi-editor.nvim — VimEnter auto-activation shim.
+--- pi-bridge.nvim — VimEnter auto-activation shim.
 --
 -- This file is auto-sourced by Neovim at startup (:help load-plugins, startup
 -- step 12), which runs strictly BEFORE the |VimEnter| event (step 19). It
@@ -397,7 +397,7 @@ Task 3: CREATE plugin/tests/shim_spec.lua   (plenary/busted Level-2 gate)
 -- |VimEnter| to |require("pi-editor").activate()|.
 --
 -- Dormant by design. In every ordinary nvim session `activate()` (implemented by
--- a later task, PRD §7.1) returns immediately because the `PI_EDITOR_BRIDGE` env
+-- a later task, PRD §7.1) returns immediately because the `PI_NVIM_BRIDGE` env
 -- var is unset — pi only sets it when it spawns `$EDITOR`. So this shim is an
 -- invisible no-op outside of a pi-spawned edit.
 --
@@ -543,7 +543,7 @@ end)
 RUNTIMEPATH (Neovim):
   - the plugin/ subdirectory is the runtimepath entry (NOT the repo root) — GOTCHA #7.
     Users add it via lazy.nvim/packer/vim.pack, or symlink plugin/ as
-    ~/.local/share/.../pi-editor.nvim. With lazy.nvim: lazy=false (PRD §10.3).
+    ~/.local/share/.../pi-bridge.nvim. With lazy.nvim: lazy=false (PRD §10.3).
 
 STARTUP (what this task adds to the startup flow):
   - step 3 (--cmd / lazy.nvim rtp setup): plugin/ is on runtimepath.
@@ -557,7 +557,7 @@ MODULE SURFACE (this task CONSUMES, does not define):
     added by S21. nil until S21; tests inject a mock. (GOTCHA #6.)
 
 FORWARD CONTRACTS (do NOT implement here — just don't break them):
-  - S21 implements M.activate() (reads PI_EDITOR_BRIDGE, dormant vs activate).
+  - S21 implements M.activate() (reads PI_NVIM_BRIDGE, dormant vs activate).
     Keep the callback EXACTLY `require("pi-editor").activate()` (no args) so S21's
     signature `function M.activate()` matches.
   - S39 (silent degradation) may later wrap the callback in pcall/notify. Do NOT
@@ -715,7 +715,7 @@ echo "exit=$?   # expect: n=1  (once=true: 2nd fire did NOT call the replacement
 
 ## Anti-Patterns to Avoid
 
-- ❌ Don't read `PI_EDITOR_BRIDGE` (or any env var) in the shim — that is the S21
+- ❌ Don't read `PI_NVIM_BRIDGE` (or any env var) in the shim — that is the S21
   `activate()` gate body. The shim is pure wiring.
 - ❌ Don't add a `pcall`/`notify`/"silent degradation" wrapper around the callback
   — that is task S39. Keep the callback a direct `require("pi-editor").activate()`.

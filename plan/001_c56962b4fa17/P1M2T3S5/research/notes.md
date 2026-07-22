@@ -73,7 +73,7 @@ pi --no-extensions -e ./extension/pi-editor-bridge.ts --print "ok"    # → exit
 2. **Ship a minimal working `stopBridge()` in S5** — `startBridge` calls it first for
    idempotency (reload/new/resume/fork re-entry), so it's a hard dependency. This
    completes the *core* of sibling task **S6**; S6 REUSES it (adds session_shutdown
-   wiring + the env-clear once S16 lands). **OMIT** `delete process.env.PI_EDITOR_BRIDGE`
+   wiring + the env-clear once S16 lands). **OMIT** `delete process.env.PI_NVIM_BRIDGE`
    in S5 (S5 writes no env var).
 3. **Do NOT wire** startBridge into `session_start` in S5 — the existing
    `mode-guard.test.ts` (S3) invokes that handler directly in tui mode; wiring now would
@@ -89,7 +89,7 @@ pi --no-extensions -e ./extension/pi-editor-bridge.ts --print "ok"    # → exit
 ## 6. Cross-task interface notes (for sibling PRPs)
 
 - **P1.M2.T3.S6 (stopBridge):** REUSE the stopBridge S5 ships (do NOT recreate it). S6
-  adds: wire it into `session_shutdown`; (after S16) add `delete process.env.PI_EDITOR_BRIDGE`;
+  adds: wire it into `session_shutdown`; (after S16) add `delete process.env.PI_NVIM_BRIDGE`;
   wire `startBridge(ctx)` into the `session_start` handler at the L101 TODO call site; and
   add `server.on('error', ...)` so an async listen failure (EADDRINUSE) doesn't crash pi
   (S5's tests use unique UUID paths so this isn't exercised in S5).
@@ -98,5 +98,5 @@ pi --no-extensions -e ./extension/pi-editor-bridge.ts --print "ok"    # → exit
 - **P1.M2.T5.S9 (handshake):** validate `hello` token against `getToken()`.
 - **P1.M3.T8.S16 (env advertisement):** extend `startBridge` to write the
   `BridgeDescriptor` (read `getSocketPath()`/`getToken()`/`ctx.cwd`/`process.pid` +
-  resolve `fd` for `fdAvailable`) to `process.env.PI_EDITOR_BRIDGE`; extend `stopBridge`
-  with `delete process.env.PI_EDITOR_BRIDGE`.
+  resolve `fd` for `fdAvailable`) to `process.env.PI_NVIM_BRIDGE`; extend `stopBridge`
+  with `delete process.env.PI_NVIM_BRIDGE`.

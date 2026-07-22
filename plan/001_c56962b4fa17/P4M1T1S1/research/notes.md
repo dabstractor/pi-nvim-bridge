@@ -2,7 +2,7 @@
 
 All findings below were **verified against the locally cloned blink.cmp** at
 `/home/dustin/.local/share/nvim/lazy/blink.cmp` (HEAD `78336bc8…`, the v0.12.x line)
-and against the **shipped pi-editor.nvim** modules in `plugin/lua/pi-editor/`.
+and against the **shipped pi-bridge.nvim** modules in `plugin/lua/pi-editor/`.
 
 ---
 

@@ -11,7 +11,7 @@
 --     opts = {
 --       sources = {
 --         default = { "pi" },
---         providers = { pi = { name = "pi", module = "pi-editor.blink_source" } },
+--         providers = { pi = { name = "pi", module = "pi-bridge.blink_source" } },
 --       },
 --     },
 --   }
@@ -63,7 +63,7 @@
 --    EXACTLY that). NO `-1` (PRD §7.4's `bytecol - 1` is superseded by coords.lua's
 --    exact-UTF-16 design — see coords.lua header).
 --
---  * GOTCHA: read the bridge + coords FRESH at call time (`require("pi-editor").bridge`
+--  * GOTCHA: read the bridge + coords FRESH at call time (`require("pi-bridge").bridge`
 --    INSIDE the fn, NOT a module-load local). The handshake resolves ASYNC after
 --    VimEnter; tests swap fakes in AFTER require; /reload re-runs activate. Caching
 --    breaks all three. (Same rule as completion.lua do_refresh.)
@@ -95,8 +95,8 @@
 --    `config.engine` only to degrade (no behavioral change in S45).
 --
 -- Node builtins analog: pure Lua + the COMPLETE in-tree bridge
--- (`require("pi-editor").bridge`) + coords (`require("pi-editor.coords")`) + config
--- (`require("pi-editor")`). No sockets of its own — the smoke's fake luv server is the
+-- (`require("pi-bridge").bridge`) + coords (`require("pi-bridge.coords")`) + config
+-- (`require("pi-bridge")`). No sockets of its own — the smoke's fake luv server is the
 -- integration surface. Singleton state (mirrors completion.lua's `state` shape, NOT
 -- coords.lua's stateless shape — the source HAS supersession state).
 
@@ -110,7 +110,7 @@ local M = {}
 --- `inflight_id` is the bridge.request id of the in-flight getSuggestions (for bridge.cancel).
 --- Mirrors completion.lua's `state.gen` / `state.inflight_id` pair (named distinctly so a
 --- reader does not confuse them).
----@class pi-editor.BlinkSourceState
+---@class pi-bridge.BlinkSourceState
 ---@field current_id  any       the latest ctx.id seen in get_completions (supersession guard)
 ---@field inflight_id string?   the bridge.request id of the in-flight getSuggestions (for bridge.cancel)
 local state = { current_id = nil, inflight_id = nil }
@@ -138,8 +138,8 @@ local guess_kind -- (pi_item) → vim.lsp.protocol.CompletionItemKind (cosmetic 
 -- ===========================================================================
 
 --- Construct a blink.cmp source object. `opts` is the blink provider config table
---- (e.g. `{ name = "pi", module = "pi-editor.blink_source" }`); accepted + ignored — the
---- source reads pi's config LIVE at call time (`require("pi-editor").config`). Returns a
+--- (e.g. `{ name = "pi", module = "pi-bridge.blink_source" }`); accepted + ignored — the
+--- source reads pi's config LIVE at call time (`require("pi-bridge").config`). Returns a
 --- fresh table whose metatable is `M` (the codecompanion pattern). The object is
 --- stateless; supersession state is module-level (one pi-prompt buffer per session).
 ---@param opts table? The blink provider config (ignored — pi config is read live).
@@ -183,7 +183,7 @@ end
 ---   * value ends with `/` → Folder (19) — a directory.
 ---   * else → Text (1) — defensive default.
 --- Never throws (type-guard `pi_item`).
----@param pi_item pi-editor.AutocompleteItem The pi item.
+---@param pi_item pi-bridge.AutocompleteItem The pi item.
 ---@return integer kind A `vim.lsp.protocol.CompletionItemKind` value.
 guess_kind = function(pi_item)
   local ItemKind = vim.lsp.protocol.CompletionItemKind
@@ -206,7 +206,7 @@ end
 ---                   range is a valid lsp.Range (0-based line + 0-based UTF-16 character)
 ---                   covering pi's `prefix` at the cursor.
 ---   * `data`      — the round-trip snapshot: `{ pi, prefix, lines, cursorLine, cursorCol }`
----                   (see pi-editor.BlinkItemData). Forwarded VERBATIM to applyCompletion.
+---                   (see pi-bridge.BlinkItemData). Forwarded VERBATIM to applyCompletion.
 ---
 --- The range is derived via coords: `line = pi_coords.cursorLine` (0-based);
 --- `end_char = pi_coords.cursorCol` (already UTF-16); `start_char = end_char - utf16_len
@@ -216,12 +216,12 @@ end
 --- NEVER throws (type-guards `pi_item`/`pi_coords`; `or ""` line guard). `pi_item` is
 --- forwarded VERBATIM (the bridge server forwards it verbatim to pi; pi keys on the whole
 --- table — completion.lua accept does the same).
----@param pi_item  pi-editor.AutocompleteItem The pi item (forwarded VERBATIM in data.pi).
----@param pi_coords pi-editor.PiCoords          The pi coords {lines, cursorLine, cursorCol} (from nvim_to_pi_coords).
+---@param pi_item  pi-bridge.AutocompleteItem The pi item (forwarded VERBATIM in data.pi).
+---@param pi_coords pi-bridge.PiCoords          The pi coords {lines, cursorLine, cursorCol} (from nvim_to_pi_coords).
 ---@param prefix    string                      The getSuggestions result.prefix (applyCompletion's prefix).
 ---@return table item A blink lsp.CompletionItem.
 map_item = function(pi_item, pi_coords, prefix)
-  local coords = require("pi-editor.coords")
+  local coords = require("pi-bridge.coords")
   local line = pi_coords.cursorLine or 0
   local end_char = pi_coords.cursorCol or 0
   -- start_char = end_char - utf16_len(prefix). Compute utf16_len(prefix) from the cursor
@@ -281,7 +281,7 @@ function M:get_completions(ctx, callback)
   -- DEFENSIVE: a nil ctx is a caller bug (blink always passes one) — degrade to callback().
   if type(ctx) ~= "table" then return callback() end
   -- READ BRIDGE FRESH (handshake resolves async + test mocks swap in after require).
-  local bridge = require("pi-editor").bridge
+  local bridge = require("pi-bridge").bridge
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
@@ -295,7 +295,7 @@ function M:get_completions(ctx, callback)
   local cur   = vim.api.nvim_win_get_cursor(0)       -- {row 1-based, col 0-based byte}
   -- CONVERT nvim→pi (S29 — THE centralized seam). `pi.lines` is the SAME reference as
   -- `lines`, so the result drops straight into the RPC params.
-  local pi_coords = require("pi-editor.coords").nvim_to_pi_coords(lines, cur[1], cur[2])
+  local pi_coords = require("pi-bridge.coords").nvim_to_pi_coords(lines, cur[1], cur[2])
   -- SUPERSEDE layer 1 (cancel prev in-flight — optimization; frees the round-trip).
   if state.inflight_id and type(bridge.cancel) == "function" then
     pcall(bridge.cancel, state.inflight_id)
@@ -359,7 +359,7 @@ function M:execute(ctx, item, callback, default_implementation) -- luacheck: ign
   local d = item and item.data
   if type(d) ~= "table" or type(d.pi) ~= "table" then return callback() end
   -- READ BRIDGE FRESH (handshake resolves async + test mocks swap in after require).
-  local bridge = require("pi-editor").bridge
+  local bridge = require("pi-bridge").bridge
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
@@ -377,14 +377,14 @@ function M:execute(ctx, item, callback, default_implementation) -- luacheck: ign
   pcall(bridge.request, "applyCompletion", params, function(err, result)
     -- async, schedule_wrap'd by bridge → nvim main loop (api-safe; NO extra vim.schedule).
     if err or type(result) ~= "table" then return end -- degrade: buffer left as blink's textEdit
-    local nv = require("pi-editor.coords").pi_to_nvim_coords(result.lines, result.cursorLine, result.cursorCol)
+    local nv = require("pi-bridge.coords").pi_to_nvim_coords(result.lines, result.cursorLine, result.cursorCol)
     -- WHOLE buffer replace (nvim_buf_set_lines does NOT fire TextChangedI → no refresh loop;
     -- completion.lua §5 Q2). pcall so a wiped buf / odd state never throws.
     pcall(vim.api.nvim_buf_set_lines, bufnr, 0, -1, false, nv.lines)
     pcall(vim.api.nvim_win_set_cursor, 0, { nv.row, nv.col }) -- 0-based byte col, NO -1
     -- close a stale builtin menu if open (defensive; never throws). Avoids a lingering
     -- builtin popup when the user accepted via blink.
-    pcall(function() require("pi-editor.menu").close() end)
+    pcall(function() require("pi-bridge.menu").close() end)
   end)
   callback()                                        -- IMMEDIATE: never hang blink (RPC is fire-and-forget)
 end

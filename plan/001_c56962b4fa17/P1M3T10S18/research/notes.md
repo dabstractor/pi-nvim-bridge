@@ -141,7 +141,7 @@ Fields for pi-editor-bridge:
   - `ls extension/pi-editor-bridge.ts` ⇒ exists (manifest entry resolves).
   - `pi -e .` (try-without-install; packages.md §"Install and Manage") ⇒ pi starts,
     loads the extension with NO load error. Strongest non-interactive proxy for
-    "pi accepts the package." (Functional confirmation that PI_EDITOR_BRIDGE gets
+    "pi accepts the package." (Functional confirmation that PI_NVIM_BRIDGE gets
     set requires an interactive session + launching $EDITOR — document as manual.)
 
 ## §7. Scope guard (what S18 does NOT do)
@@ -159,12 +159,12 @@ Fields for pi-editor-bridge:
 ## §8. README content (PRD §10, §11, §12)
 
 Sections: title + tagline; what it does (brief architecture — capture live provider,
-serve over Unix socket, advertise via PI_EDITOR_BRIDGE); prerequisites (pi w/
-extension support, Neovim 0.10+, companion pi-editor.nvim plugin forthcoming);
+serve over Unix socket, advertise via PI_NVIM_BRIDGE); prerequisites (pi w/
+extension support, Neovim 0.10+, companion pi-bridge.nvim plugin forthcoming);
 installation (`pi install git:github.com/dabstractor/pi-nvim-bridge` or `pi install .`,
 note multi-file ⇒ package install ONLY, no single-file drop-in); $EDITOR wiring
 (export EDITOR=nvim / VISUAL / settings.json externalEditor; optional NVIM_APPNAME);
-the PI_EDITOR_BRIDGE env var (process-local, NOT in shell — why `echo $PI_EDITOR_BRIDGE`
+the PI_NVIM_BRIDGE env var (process-local, NOT in shell — why `echo $PI_NVIM_BRIDGE`
 shows nothing); troubleshooting (PRD §11: forgotten-save↦autosave, stale socket,
 fd not installed↦fdAvailable, reload behavior, post-bridge wrapper limitation);
 security (PRD §12: 0600 socket, 32-byte token via process.env, never log token);

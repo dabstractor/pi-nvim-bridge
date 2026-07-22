@@ -6,10 +6,10 @@ Mode: **doc-SYNC (Mode B)** — code is the source of truth; READMEs must mirror
 ## Deliverables (exactly two files)
 
 1. **UPDATE `README.md`** (repo root) — the EXTENSION README. Currently accurate on the
-   bridge but **STALE on the plugin**: it repeatedly calls the companion `pi-editor.nvim`
+   bridge but **STALE on the plugin**: it repeatedly calls the companion `pi-bridge.nvim`
    "forthcoming (Phase 2)". P2 (plugin core) and P4 (blink/cmp sources) are both COMPLETE.
 2. **CREATE `plugin/README.md`** — does NOT exist yet (VERIFIED: `ls plugin/README.md` →
-   no such file). The Neovim-side end-user README for `pi-editor.nvim`.
+   no such file). The Neovim-side end-user README for `pi-bridge.nvim`.
 
 ## Identity / version facts (verified)
 - `git remote`: `git@github.com:dabstractor/pi-nvim-bridge.git` → **owner = `dabstractor`**.
@@ -42,7 +42,7 @@ Mode: **doc-SYNC (Mode B)** — code is the source of truth; READMEs must mirror
 - `plugin/lua/pi-editor/init.lua` — `M.defaults` (lines 30-40): the 7 config fields.
   Exact: `menu.max_height=12`, `menu.border="rounded"`, `debounce_ms=20`,
   `rpc_timeout_ms=2000`, `autosave_on_exit=true`, `engine="builtin"` (+ optional
-  `env_var="PI_EDITOR_BRIDGE"`). `M.setup()` merges over defaults, stores `M.config`,
+  `env_var="PI_NVIM_BRIDGE"`). `M.setup()` merges over defaults, stores `M.config`,
   emits a WARN if `rpc_timeout_ms <= 1500`.
 - `plugin/lua/pi-editor/health.lua` — `M.min_nvim = "0.11"` (NOT 0.10); 4 `check()`
   sections; fd tries both `fd` and `fdfind` (Debian).
@@ -83,23 +83,23 @@ require("cmp").register_source("pi", require("pi-editor.cmp_source").new())
 ```
 **Trigger characters**: both sources expose `{"/", "@"}` (from the source headers).
 
-## The `PI_EDITOR_BRIDGE` env var (process-local — the #1 install confusion)
+## The `PI_NVIM_BRIDGE` env var (process-local — the #1 install confusion)
 - Descriptor JSON shape: `{transport:"unix", path, token, pid, cwd, fdAvailable, serverVersion}`.
-- `echo $PI_EDITOR_BRIDGE` in a shell shows NOTHING (written to `process.env` INSIDE pi;
+- `echo $PI_NVIM_BRIDGE` in a shell shows NOTHING (written to `process.env` INSIDE pi;
   only the child `$EDITOR` sees it). Inspect from inside launched nvim:
-  `:lua print(vim.env.PI_EDITOR_BRIDGE)`. Or `:checkhealth pi-editor`.
+  `:lua print(vim.env.PI_NVIM_BRIDGE)`. Or `:checkhealth pi-editor`.
 - NEVER paste the live `token` (PRD §12). Document the SHAPE, not live values.
 
 ## Root README.md — STALENESS to fix (grep the file for these)
-- Line ~2 (intro): "A companion Neovim plugin — `pi-editor.nvim` (forthcoming, see Phase 2)"
-- "What it does" note block: "the Neovim-side rendering plugin (`pi-editor.nvim`) ships
+- Line ~2 (intro): "A companion Neovim plugin — `pi-bridge.nvim` (forthcoming, see Phase 2)"
+- "What it does" note block: "the Neovim-side rendering plugin (`pi-bridge.nvim`) ships
   separately under Phase 2. Until it lands, the bridge advertises correctly but there is
   nothing on the editor side to consume it."
-- "Companion plugin: install `pi-editor.nvim` with your plugin manager … See that plugin's
+- "Companion plugin: install `pi-bridge.nvim` with your plugin manager … See that plugin's
   README (Phase 2)."
 - Troubleshooting: "Until Phase 2 ships, remember to `:w` before `:q`." (the plugin now
   AUTOSAVES on VimLeavePre — `autosave_on_exit=true`)
-- Links section: "Companion plugin: **`pi-editor.nvim`** (Phase 2, forthcoming)."
+- Links section: "Companion plugin: **`pi-bridge.nvim`** (Phase 2, forthcoming)."
 - Repo-layout block lists only `extension/` — should add `plugin/`.
 
 ## Conventions / constraints (from AGENTS.md + validate.sh + S43 sibling PRP)

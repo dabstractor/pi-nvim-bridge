@@ -7,7 +7,7 @@
  *
  *  LAYER 1 — UNIT (connection.ts directly): the registry lifecycle, the broadcast
  *    handshake filter, and `closeAllConnections` teardown.
- *  LAYER 2 — WIRING (pi-editor-bridge.ts via the factory + __deps spy): `session_start`
+ *  LAYER 2 — WIRING (pi-nvim-bridge.ts via the factory + __deps spy): `session_start`
  *    emits `__deps.broadcastNotification("commandsChanged")` AFTER startBridge in tui
  *    mode (and NOT in non-tui); `stopBridge()` clears the registry.
  *  LAYER 3 — REAL (one real Unix-socket pair): a handshaken client receives the
@@ -50,7 +50,7 @@ import bridgeFactory, {
 	__setFdAvailableForTest,
 	makeHelloHandler,
 	BRIDGE_VERSION,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 // A fake socket: EventEmitter (for .on/.emit/.listenerCount) + a write() that captures
@@ -362,7 +362,7 @@ test("REAL: a handshaken client receives the commandsChanged broadcast over a Un
 			version: BRIDGE_VERSION,
 		}),
 	);
-	const sockpath = join(tmpdir(), `pi-editor-s17-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-s17-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");
@@ -415,7 +415,7 @@ test("REAL: closeAllConnections() (via stopBridge) closes a live client", async 
 			version: BRIDGE_VERSION,
 		}),
 	);
-	const sockpath = join(tmpdir(), `pi-editor-s17-close-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-s17-close-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");

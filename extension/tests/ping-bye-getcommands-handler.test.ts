@@ -63,7 +63,7 @@ import {
 	makeGetCommandsHandler,
 	makeHelloHandler,
 	BRIDGE_VERSION,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
 const TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -673,7 +673,7 @@ test("REAL: hello → ping → getCommands → bye(client observes close) over a
 	]);
 	registerBridgeHandler("getCommands", makeGetCommandsHandler({ getProvider: () => stub }));
 
-	const sockpath = join(tmpdir(), `pi-editor-pbgc-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-pbgc-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");

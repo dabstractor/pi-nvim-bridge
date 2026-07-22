@@ -71,7 +71,7 @@ suites stay green** (S2–S12); `connection.ts` and `protocol.ts` are UNCHANGED.
 
 ## User Persona
 
-**Target User**: The `pi-editor.nvim` Neovim plugin (P2.M5 / P2.M7) — the
+**Target User**: The `pi-bridge.nvim` Neovim plugin (P2.M5 / P2.M7) — the
 bridge's only client. (Indirectly: the human editing a pi prompt in their
 `$EDITOR`.)
 
@@ -568,7 +568,7 @@ export function makeShouldTriggerFileCompletionHandler(deps: {
 			makeShouldTriggerFileCompletionHandler({ getProvider }),
 		);
 		// TODO(S14): ping/bye/getCommands.
-		// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE (env write is S16's job).
+		// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE (env write is S16's job).
 
 // === Task 2: should-trigger-file-completion-handler.test.ts — key stub shapes ===
 

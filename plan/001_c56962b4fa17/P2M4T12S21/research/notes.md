@@ -1,7 +1,7 @@
 # S21 — VimEnter activation gate: research & LIVE verification notes
 
 > Subtask **P2.M4.T12.S21** — implement `M.activate()` in
-> `plugin/lua/pi-editor/init.lua`: read `PI_EDITOR_BRIDGE`, validate, activate or
+> `plugin/lua/pi-editor/init.lua`: read `PI_NVIM_BRIDGE`, validate, activate or
 > stay dormant. Target runtime **Neovim 0.12.4** (verified), plenary.nvim present.
 >
 > **Method**: all logic, the smoke-test invocation form, the plenary invocation
@@ -13,7 +13,7 @@
 ## 1. The contract (from tasks.json `context_scope`)
 
 `M.activate()` in `init.lua` must:
-- (a) read `vim.env.PI_EDITOR_BRIDGE`
+- (a) read `vim.env.PI_NVIM_BRIDGE`
 - (b) nil → **return (dormant)**
 - (c) `pcall(vim.json.decode, raw)` — fail → **return silently** (single notify is S39)
 - (d) `desc.transport ~= "unix"` → **return**
@@ -47,7 +47,7 @@ M.descriptor = nil
 
 function M.activate()
   if M.config == nil then M.setup({}) end                       -- self-init if user skipped setup()
-  local env_name = M.config.env_var or "PI_EDITOR_BRIDGE"
+  local env_name = M.config.env_var or "PI_NVIM_BRIDGE"
   local raw = vim.env[env_name]
   if raw == nil then return nil end                             -- (b) no env var -> dormant
   local ok, desc = pcall(vim.json.decode, raw)                  -- (c) THROWS -> pcall
@@ -65,7 +65,7 @@ The `type(desc) ~= "table"` guard is THE load-bearing non-obvious line — see �
 ## 3. LIVE verification — the activate() logic (6 cases)
 
 Scratch runner `/tmp/s21_flow.lua` drove a stand-in module mirroring the above
-through every branch (env var set via `vim.env.PI_EDITOR_BRIDGE`):
+through every branch (env var set via `vim.env.PI_NVIM_BRIDGE`):
 
 | Case | env var value | expected | result |
 |---|---|---|---|

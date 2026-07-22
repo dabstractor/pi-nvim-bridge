@@ -1,4 +1,4 @@
-# Research Notes — P1.M3.T8.S16 (Write BridgeDescriptor JSON to process.env.PI_EDITOR_BRIDGE)
+# Research Notes — P1.M3.T8.S16 (Write BridgeDescriptor JSON to process.env.PI_NVIM_BRIDGE)
 
 > A precursor research pass landed under a mislabeled folder
 > (`plan/001_c56962b4fa17/P1M3T1S1/research/notes.md`) — that file describes THIS
@@ -12,11 +12,11 @@
    The descriptor (PRD §4) is the discovery mechanism that makes the whole design work.
 2. INPUT: module-level `socketPath`, `token`, and `ctx.cwd` from the session_start handler.
 3. LOGIC: in `startBridge()` (or right after), write
-   `process.env.PI_EDITOR_BRIDGE = JSON.stringify({ transport:"unix", path:socketPath,
+   `process.env.PI_NVIM_BRIDGE = JSON.stringify({ transport:"unix", path:socketPath,
    token, pid:process.pid, cwd, fdAvailable:true, serverVersion:"0.1.0" })`.
    In `stopBridge()`, delete the env var.
-4. OUTPUT: `process.env.PI_EDITOR_BRIDGE` holds a valid JSON string the Neovim child
-   reads via `vim.env.PI_EDITOR_BRIDGE`.
+4. OUTPUT: `process.env.PI_NVIM_BRIDGE` holds a valid JSON string the Neovim child
+   reads via `vim.env.PI_NVIM_BRIDGE`.
 5. MOCKING: verify the env var is set after `startBridge` and deleted after `stopBridge`.
 6. DOCS: [Mode A] JSDoc explaining the process.env inheritance discovery + criticality.
 
@@ -33,14 +33,14 @@ notes assumed. All of these already exist and S16 REUSES them:
   `resolveFdAvailable()`).
 - `BRIDGE_VERSION = "0.1.0"` (exported constant).
 - `startBridge(ctx)` — generates token, binds socket, `server.on("error", …)`,
-  `listen`, chmod 0o600. Ends with `// NOTE: NO process.env.PI_EDITOR_BRIDGE write
+  `listen`, chmod 0o600. Ends with `// NOTE: NO process.env.PI_NVIM_BRIDGE write
   here — that is P1.M3.T8.S16.` and `void ctx;` (ctx NOT yet dereferenced).
 - `stopBridge()` — `server?.close()`, `rmSync(socketPath,{force:true})`, resets state.
-  Ends with `// NOTE: delete process.env.PI_EDITOR_BRIDGE is intentionally OMITTED … S16`.
+  Ends with `// NOTE: delete process.env.PI_NVIM_BRIDGE is intentionally OMITTED … S16`.
 - default-export factory: `session_start` (TUI guard → log → captureProvider →
   startBridge → `cwd = ctx.cwd;` → register handlers, with
-  `// TODO(S16): advertise via process.env.PI_EDITOR_BRIDGE`) + `session_shutdown`
-  (stopBridge, with `// NOTE: clearing process.env.PI_EDITOR_BRIDGE belongs to S16`).
+  `// TODO(S16): advertise via process.env.PI_NVIM_BRIDGE`) + `session_shutdown`
+  (stopBridge, with `// NOTE: clearing process.env.PI_NVIM_BRIDGE belongs to S16`).
 
 `extension/protocol.ts` (S4) defines the authoritative wire type `BridgeDescriptor`
 (§B). `extension/tests/protocol.test.ts` PINS the exact literal the descriptor must
@@ -89,7 +89,7 @@ the `hello` (S9) and `ping` (S14) handlers' results.
 
 **Decision: use `fdAvailable: getFdAvailable()`.** Rationale:
 - **Consistency.** The Neovim client receives `fdAvailable` from THREE places: the
-  `PI_EDITOR_BRIDGE` descriptor (this task), the `hello` result, and the `ping`
+  `PI_NVIM_BRIDGE` descriptor (this task), the `hello` result, and the `ping`
   result. All three MUST agree. `hello`/`ping` already use `getFdAvailable()`; if
   S16 hardcoded `true` while the descriptor's machine has no `fd`, the descriptor
   would lie and `hello` would contradict it → confusing diagnostics
@@ -136,7 +136,7 @@ alternative — move `cwd = ctx.cwd;` BEFORE `startBridge(ctx)` and use `getCwd(
 safe since `cwd` is only read by RPC handlers that fire long after session_start, but
 is a larger diff; the straightforward `ctx.cwd`-direct approach is preferred.)
 
-**`BRIDGE_ENV` constant:** declare `export const BRIDGE_ENV = "PI_EDITOR_BRIDGE";`
+**`BRIDGE_ENV` constant:** declare `export const BRIDGE_ENV = "PI_NVIM_BRIDGE";`
 module-level near the `server`/`socketPath`/`token` state. Export so the test
 references the NAME (not a hardcoded string) and a future rename is one-line.
 
@@ -172,11 +172,11 @@ Confirmed in `architecture/system_context.md` §1 (citing
 - pi spawns the external editor with `{ stdio:"inherit", shell:
   process.platform==="win32" }` and **NO `env:` option**.
 - Node `spawn` defaults to inheriting the parent's `process.env` when `env` is omitted.
-- Therefore anything the extension writes to `process.env.PI_EDITOR_BRIDGE` BEFORE the
+- Therefore anything the extension writes to `process.env.PI_NVIM_BRIDGE` BEFORE the
   editor launch (i.e. on `session_start`, which fires before any Ctrl+G) IS visible to
-  the Neovim child as `vim.env.PI_EDITOR_BRIDGE`.
+  the Neovim child as `vim.env.PI_NVIM_BRIDGE`.
 - PRD §4 step 2 + §7.1: Neovim's `VimEnter` gate does
-  `vim.json.decode(vim.env.PI_EDITOR_BRIDGE)`; absent/unparseable → plugin stays
+  `vim.json.decode(vim.env.PI_NVIM_BRIDGE)`; absent/unparseable → plugin stays
   dormant (why the plugin is safe to ship in a normal config). Present → activate.
 - **This is THE discovery that makes the whole two-component design work** (PRD §2.1).
   The descriptor carries the socket path + token the client needs to connect; without
@@ -216,8 +216,8 @@ Mirror S5's two-pronged style (mocked exact-shape + real/wiring) and S6's
    S5's fakeServer shape: `listen(arg)` records + returns self, `close()` no-op,
    `on()` no-op); `__setFdAvailableForTest(true)` for a known value;
    `fakeCtx = { cwd: "/test/proj" } as ExtensionContext`. After startBridge:
-   - `process.env.PI_EDITOR_BRIDGE` is a `string`, NOT `undefined`.
-   - `JSON.parse(process.env.PI_EDITOR_BRIDGE)` → object with
+   - `process.env.PI_NVIM_BRIDGE` is a `string`, NOT `undefined`.
+   - `JSON.parse(process.env.PI_NVIM_BRIDGE)` → object with
      `transport==="unix"`, `path===getSocketPath()`, `token===getToken()`,
      `pid===process.pid`, `cwd==="/test/proj"`, `fdAvailable===true`,
      `serverVersion==="0.1.0"` (NOTE: `serverVersion`, NOT `version`).
@@ -225,7 +225,7 @@ Mirror S5's two-pronged style (mocked exact-shape + real/wiring) and S6's
    - exactly 7 keys (transport/path/token/pid/cwd/fdAvailable/serverVersion) — proves
      no stray `version` key leaked in.
 2. **stopBridge deletes** — after test 1's startBridge, call stopBridge →
-   `process.env.PI_EDITOR_BRIDGE === undefined`. Also: stopBridge when env was never
+   `process.env.PI_NVIM_BRIDGE === undefined`. Also: stopBridge when env was never
    set is a safe no-op (delete on absent key).
 3. **idempotent re-write** — startBridge twice; after the 2nd, the parsed
    descriptor's `path`/`token` equal the 2nd `getSocketPath()`/`getToken()` (NOT the
@@ -253,7 +253,7 @@ this, test 1's value could leak into test 2's "deleted" assertion.
   CONSUMES it via `satisfies`.
 - Does NOT touch tsconfig (`tests/**/*.ts` auto-includes the new test).
 - Does NOT touch jsonl-reader.ts, connection.ts, protocol.ts, or any handler.
-- Does NOT write to any OTHER env var. Only `PI_EDITOR_BRIDGE`.
+- Does NOT write to any OTHER env var. Only `PI_NVIM_BRIDGE`.
 - Does NOT log the token/descriptor (PRD §12 — the token is the auth boundary).
 
 ---

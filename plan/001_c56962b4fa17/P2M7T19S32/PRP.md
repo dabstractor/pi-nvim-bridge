@@ -6,7 +6,7 @@ description: |
 
 ## Goal
 
-**Feature Goal**: Ship the **accept** half of pi-editor.nvim completion — `completion.accept(item)`
+**Feature Goal**: Ship the **accept** half of pi-bridge.nvim completion — `completion.accept(item)`
 (the PRD §7.4 5-step applyCompletion flow) + `completion.on_enter(buf)` (the `<CR>`
 accept-or-newline keymap handler). When the user presses `<CR>` with the completion menu open,
 the selected item is sent to pi's `applyCompletion` over the bridge; pi returns the definitive

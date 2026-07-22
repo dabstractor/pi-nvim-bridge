@@ -17,7 +17,7 @@
 --
 -- NO plenary. Reuses the menu_smoke.lua fake-server bootstrap + check/footer pattern.
 
--- Add the plugin root to runtimepath so `require("pi-editor.*")` resolves (the
+-- Add the plugin root to runtimepath so `require("pi-bridge.*")` resolves (the
 -- coords_smoke.lua bootstrap pattern). Works whether run from plugin/ or repo root.
 local me = debug.getinfo(1, "S").source:sub(2)
 me = vim.fn.fnamemodify(me, ":p")
@@ -25,11 +25,11 @@ local plugin_root = vim.fn.fnamemodify(me, ":h:h") -- .../plugin (the runtimepat
 vim.opt.runtimepath:append(plugin_root)
 
 local uv = vim.uv
-local jreader = require("pi-editor.jsonlreader")
-local bridge = require("pi-editor.bridge")
-local pi = require("pi-editor")
-local completion = require("pi-editor.completion")
-local menu = require("pi-editor.menu")
+local jreader = require("pi-bridge.jsonlreader")
+local bridge = require("pi-bridge.bridge")
+local pi = require("pi-bridge")
+local completion = require("pi-bridge.completion")
+local menu = require("pi-bridge.menu")
 
 if pi.config == nil then pi.setup({ debounce_ms = 5 }) end -- self-sufficient (GOTCHA D)
 
@@ -100,7 +100,7 @@ check(hello_replied, "server must have seen + replied to the hello handshake")
 -- ── the 0-based row carrying PmenuSel, or nil (headless-safe — NOT screenattr) ──
 local function sel_row()
   if not menu._state.menu_buf then return nil end
-  local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+  local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
   for r = 0, 9 do
     for _, mk in ipairs(vim.api.nvim_buf_get_extmarks(menu._state.menu_buf, ns, { r, 0 }, { r, -1 }, { details = true })) do
       if mk[4] and mk[4].hl_group == "PmenuSel" then return r end

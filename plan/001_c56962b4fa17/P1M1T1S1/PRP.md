@@ -21,7 +21,7 @@ observing the startup log fire.
 
 **Deliverable**: One file — `extension/pi-editor-bridge.ts` (~30–45 lines) —
 containing:
-1. A Mode-A JSDoc header documenting purpose, the `PI_EDITOR_BRIDGE` env var,
+1. A Mode-A JSDoc header documenting purpose, the `PI_NVIM_BRIDGE` env var,
    and the Unix-socket / JSONL transport.
 2. `import type { ExtensionAPI, ExtensionContext, SessionStartEvent, SessionShutdownEvent } from "@earendil-works/pi-coding-agent";`
 3. `export default function (pi: ExtensionAPI): void { ... }` that calls
@@ -83,7 +83,7 @@ scope here.
 - [ ] `pi.on("session_start", …)` registered; its handler logs a startup
       message at least once per session start.
 - [ ] `pi.on("session_shutdown", …)` registered as a no-op placeholder.
-- [ ] JSDoc header present (purpose + `PI_EDITOR_BRIDGE` env var + Unix
+- [ ] JSDoc header present (purpose + `PI_NVIM_BRIDGE` env var + Unix
       socket/JSONL transport).
 - [ ] Loads via `pi --no-extensions -e ./extension/pi-editor-bridge.ts --print "ok"`
       with zero load errors; startup log appears; exit 0.
@@ -213,7 +213,7 @@ type aliases already defined by the pi package and registers callbacks.
 
 ```yaml
 Task 1: CREATE extension/pi-editor-bridge.ts
-  - IMPLEMENT: Mode-A JSDoc header (purpose / PI_EDITOR_BRIDGE env var / Unix socket + JSONL transport / current skeleton state)
+  - IMPLEMENT: Mode-A JSDoc header (purpose / PI_NVIM_BRIDGE env var / Unix socket + JSONL transport / current skeleton state)
   - IMPLEMENT: single `import type { ExtensionAPI, ExtensionContext, SessionStartEvent, SessionShutdownEvent } from "@earendil-works/pi-coding-agent";`
   - IMPLEMENT: `export default function (pi: ExtensionAPI): void { ... }`
   - IMPLEMENT: `pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => { console.log("pi-editor-bridge: session_start reason=" + event.reason); });`
@@ -245,7 +245,7 @@ Task 3: VALIDATE — run the two validation commands below; fix until both green
  * session lifetime.
  *
  * Transport:  Unix domain socket, strict JSONL framing (LF-delimited records).
- * Env var:    process.env.PI_EDITOR_BRIDGE  (JSON BridgeDescriptor: { transport,
+ * Env var:    process.env.PI_NVIM_BRIDGE  (JSON BridgeDescriptor: { transport,
  *             path, token, pid, cwd, ... }) — written in a later task (S16).
  *
  * STATUS (P1.M1.T1.S1): lifecycle scaffolding only.
@@ -310,7 +310,7 @@ NO integration points for S1.
     the default export with the ExtensionAPI object. That invocation happens
     automatically on `pi` startup / `pi -e ./path.ts`.
 FUTURE (NOT this task):
-  - process.env.PI_EDITOR_BRIDGE advertisement → S16
+  - process.env.PI_NVIM_BRIDGE advertisement → S16
   - ctx.ui.addAutocompleteProvider pass-through factory → S2
   - ctx.mode === "tui" guard → S3
   - node:net server + node:crypto token → M2 (S5/S6)
@@ -399,7 +399,7 @@ grep -nE "^import [^{]" extension/pi-editor-bridge.ts \
 - [ ] `pi.on("session_start", …)` registered with explicitly-typed
       `(event: SessionStartEvent, ctx: ExtensionContext)` params; logs at startup.
 - [ ] `pi.on("session_shutdown", …)` registered as a documented no-op.
-- [ ] JSDoc header documents purpose, `PI_EDITOR_BRIDGE` env var, and Unix-socket + JSONL transport.
+- [ ] JSDoc header documents purpose, `PI_NVIM_BRIDGE` env var, and Unix-socket + JSONL transport.
 - [ ] No provider capture / TUI guard / socket / env writes / commandsChanged code present
       (those belong to S2/S3/M2/S16/S17).
 
@@ -416,7 +416,7 @@ grep -nE "^import [^{]" extension/pi-editor-bridge.ts \
 - [ ] JSDoc header is self-documenting (purpose / env var / transport / current S1 status).
 - [ ] TODO comments in handler bodies reference the downstream tasks (S2, S6, S15, S16) so
       future implementers know exactly where to add logic.
-- [ ] No new env vars are WRITTEN by this task (the JSDoc merely documents the future `PI_EDITOR_BRIDGE`).
+- [ ] No new env vars are WRITTEN by this task (the JSDoc merely documents the future `PI_NVIM_BRIDGE`).
 
 ---
 

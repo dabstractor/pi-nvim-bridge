@@ -19,7 +19,7 @@ me = vim.fn.fnamemodify(me, ":p")
 local plugin_root = vim.fn.fnamemodify(me, ":h:h") -- .../plugin (the runtimepath entry)
 vim.opt.runtimepath:append(plugin_root)
 
-local coords = require("pi-editor.coords")
+local coords = require("pi-bridge.coords")
 
 local fails = 0
 local function check(cond, msg)

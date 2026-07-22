@@ -31,7 +31,7 @@ description: |
   wire `startBridge` into the `session_start` handler (deferred to S6 — wiring now
   would fire a REAL `net.createServer`+`listen`+`chmod` inside the existing
   `mode-guard.test.ts`, leaking a socket; S6 lands both wirings atomically), does
-  **NOT** write `process.env.PI_EDITOR_BRIDGE` (that is **P1.M3.T8.S16** — S5
+  **NOT** write `process.env.PI_NVIM_BRIDGE` (that is **P1.M3.T8.S16** — S5
   builds the server+token but advertises nothing), does **NOT** dereference
   `ctx.cwd` (reserved for the S16 `BridgeDescriptor`; S5 derives the socket path
   from `os.tmpdir()` per the item contract), does **NOT** touch `protocol.ts`, and
@@ -93,7 +93,7 @@ runtime backbone those tasks hang off.
 **Use Case**: When S8 implements `onConnection`, it replaces the placeholder
 inside the server already created by `startBridge`, reached via `getServer()`.
 When S9 validates the `hello` token, it compares against `getToken()`. When S16
-serializes the `BridgeDescriptor` to `process.env.PI_EDITOR_BRIDGE`, it reads
+serializes the `BridgeDescriptor` to `process.env.PI_NVIM_BRIDGE`, it reads
 `getSocketPath()` + `getToken()` + `ctx.cwd` + `process.pid`. None of that exists
 until `startBridge` is real and observable.
 
@@ -164,7 +164,7 @@ in tests.
       dereferenced in S5 (reserved for S16; signaled in code with `void ctx;`).
 - [ ] The default-export factory is UNCHANGED — the `// TODO(M2): startBridge(...)`
       comment at the current line 101 is byte-for-byte intact (wiring = S6).
-- [ ] NO `process.env.PI_EDITOR_BRIDGE` write anywhere (that is S16).
+- [ ] NO `process.env.PI_NVIM_BRIDGE` write anywhere (that is S16).
 - [ ] NO import of `protocol.ts` (the `onConnection` placeholder doesn't need it yet).
 - [ ] `tsc --noEmit -p extension/tsconfig.json` → exit 0, no output.
 - [ ] `extension/tests/bridge-lifecycle.test.ts` → 4 tests pass (`fail 0`).
@@ -344,7 +344,7 @@ extension/
 //   WOULD crash pi. S5's JSDoc flags this for S6: wire `server.on('error', ...)` when wiring.
 //   Do NOT add the handler in S5 (out of scope; no test exercises it).
 
-// GOTCHA: S5 writes NO process.env.PI_EDITOR_BRIDGE. The §6.4 reference startBridge skeleton
+// GOTCHA: S5 writes NO process.env.PI_NVIM_BRIDGE. The §6.4 reference startBridge skeleton
 //   includes `process.env[BRIDGE_ENV] = JSON.stringify(...)` and the matching stopBridge
 //   `delete process.env[BRIDGE_ENV]`. S5 OMITS BOTH (env advertisement is P1.M3.T8.S16). S5's
 //   startBridge builds server+token+path; S16 extends startBridge to also write the descriptor
@@ -565,7 +565,7 @@ function onConnection(_sock: Socket): void {
  * STATUS (P1.M2.T3.S5): ships the server/socket/state teardown half. This is also the
  * core of sibling task **P1.M2.T3.S6** ("close server, unlink socket, clear state,
  * idempotent") — S6 should REUSE this function (verify it exists), wire it into
- * `session_shutdown`, and (once S16 lands) add the `delete process.env.PI_EDITOR_BRIDGE`
+ * `session_shutdown`, and (once S16 lands) add the `delete process.env.PI_NVIM_BRIDGE`
  * line. S5 does NOT delete the env var because S5 writes NONE (env advertisement is S16).
  * S5 calls stopBridge() as the first line of startBridge() for idempotent re-entry.
  */
@@ -585,7 +585,7 @@ export function stopBridge(): void {
 	server = undefined;
 	socketPath = undefined;
 	token = undefined;
-	// NOTE: `delete process.env.PI_EDITOR_BRIDGE` is intentionally OMITTED here — S5 writes
+	// NOTE: `delete process.env.PI_NVIM_BRIDGE` is intentionally OMITTED here — S5 writes
 	// no env var. S16 adds the WRITE to startBridge and the matching DELETE here.
 }
 
@@ -596,7 +596,7 @@ export function stopBridge(): void {
  * PRD §6.2) never leak a server or orphan a socket file.
  *
  * STATUS (P1.M2.T3.S5): server-start runtime. OUT OF SCOPE here (landed by later tasks):
- *  - process.env.PI_EDITOR_BRIDGE advertisement ........ P1.M3.T8.S16 (will call
+ *  - process.env.PI_NVIM_BRIDGE advertisement ........ P1.M3.T8.S16 (will call
  *    getSocketPath()/getToken()/ctx.cwd/process.pid here to build the BridgeDescriptor).
  *  - wiring startBridge into the session_start handler .. P1.M2.T3.S6 (the L101
  *    `// TODO(M2): startBridge(...)` call site). NOT wired in S5 so the existing
@@ -628,7 +628,7 @@ export function startBridge(ctx: ExtensionContext): void {
 			/* best-effort; do not crash */
 		}
 	}
-	// NOTE: NO process.env.PI_EDITOR_BRIDGE write here — that is P1.M3.T8.S16.
+	// NOTE: NO process.env.PI_NVIM_BRIDGE write here — that is P1.M3.T8.S16.
 }
 ```
 
@@ -785,7 +785,7 @@ NO external integration points for S5 (server is invoked only by tests; nothing 
 INTERNAL seams (the exports later tasks consume — NOT wired in S5):
   - getServer()      → S8 attaches the onConnection reader/dispatcher to the live server.
   - getToken()       → S9 hello handshake compares the client token against this.
-  - getSocketPath()  → S16 BridgeDescriptor.path (JSON.stringify to process.env.PI_EDITOR_BRIDGE).
+  - getSocketPath()  → S16 BridgeDescriptor.path (JSON.stringify to process.env.PI_NVIM_BRIDGE).
   - startBridge(ctx) → S6 wires it into the session_start handler (the L101 TODO call site).
   - stopBridge()     → S6 wires it into session_shutdown; S16 adds the env-clear line.
   - __deps           → S5 tests only (production is byte-identical to direct builtin calls).
@@ -814,9 +814,9 @@ grep -nP '^    ' extension/pi-editor-bridge.ts extension/tests/bridge-lifecycle.
   && echo "WARN: space-indent lines found" || echo "indent OK (tabs)"
 
 # Confirm NO process.env write was added in S5 (env advertisement is S16):
-grep -nE 'process\.env\.(PI_EDITOR_BRIDGE|BRIDGE_ENV)' extension/pi-editor-bridge.ts \
+grep -nE 'process\.env\.(PI_NVIM_BRIDGE|BRIDGE_ENV)' extension/pi-editor-bridge.ts \
   && echo "FAIL: S5 wrote/quoted the env var (out of scope — S16)" \
-  || echo "PASS: no PI_EDITOR_BRIDGE env write in S5"
+  || echo "PASS: no PI_NVIM_BRIDGE env write in S5"
 
 # Confirm the default-export factory is UNCHANGED (the L101 TODO call site intact):
 grep -n 'TODO(M2): startBridge' extension/pi-editor-bridge.ts \
@@ -960,7 +960,7 @@ node --import /home/dustin/.local/lib/node_modules/@earendil-works/pi-coding-age
       (libuv creates the file synchronously inside listen()).
 - ❌ Don't make `startBridge` async — keep it sync void so the idempotent call site and the
       S6 wiring stay simple; await `'listening'` in tests only.
-- ❌ Don't write `process.env.PI_EDITOR_BRIDGE` in S5 (env advertisement is S16). Build the
+- ❌ Don't write `process.env.PI_NVIM_BRIDGE` in S5 (env advertisement is S16). Build the
       server+token+path; S16 extends startBridge to also advertise.
 - ❌ Don't wire `startBridge` into the `session_start` handler in S5 (S6's job — wiring now
       would fire a real listen/chmod inside `mode-guard.test.ts`).

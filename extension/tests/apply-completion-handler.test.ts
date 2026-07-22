@@ -51,7 +51,7 @@ import {
 	makeApplyCompletionHandler,
 	makeHelloHandler,
 	BRIDGE_VERSION,
-} from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
 import type { ApplyCompletionResult } from "../protocol.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "../jsonl-reader.ts";
 
@@ -492,7 +492,7 @@ test("REAL: hello → applyCompletion(\"/m\" + item model) ⇒ {lines:[\"/model 
 		makeApplyCompletionHandler({ getProvider: () => stub }),
 	);
 
-	const sockpath = join(tmpdir(), `pi-editor-ac-${randomUUID()}.sock`);
+	const sockpath = join(tmpdir(), `pi-bridge-ac-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));
 	server.listen(sockpath);
 	await once(server, "listening");

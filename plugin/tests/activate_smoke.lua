@@ -13,22 +13,22 @@ local function check(cond, msg)
   if not cond then io.stderr:write("FAIL: " .. msg .. "\n"); fails = fails + 1 end
 end
 
-local ok, pi = pcall(require, "pi-editor")
-check(ok, "require('pi-editor') failed: " .. tostring(pi))
+local ok, pi = pcall(require, "pi-bridge")
+check(ok, "require('pi-bridge') failed: " .. tostring(pi))
 pi = ok and pi or {}
 
 check(type(pi.activate) == "function", "activate is not a function")
 check(pi.descriptor == nil, "descriptor should be nil before activate")
 
 -- Dormant: no env var.
-vim.env.PI_EDITOR_BRIDGE = nil
+vim.env.PI_NVIM_BRIDGE = nil
 vim.bo[0].filetype = ""
 check(pi.activate() == nil, "no env var -> activate should return nil")
 check(pi.descriptor == nil, "no env var -> descriptor should stay nil")
 check(vim.bo[0].filetype == "", "no env var -> filetype should be untouched")
 
 -- Activate: valid Unix descriptor.
-vim.env.PI_EDITOR_BRIDGE =
+vim.env.PI_NVIM_BRIDGE =
   '{"transport":"unix","path":"/tmp/x.sock","token":"t","pid":2,"cwd":"/p","fdAvailable":false,"serverVersion":"0.1.0"}'
 local d = pi.activate()
 check(d ~= nil, "valid descriptor -> activate should return non-nil")

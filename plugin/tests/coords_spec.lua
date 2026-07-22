@@ -10,9 +10,9 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/coords_spec.lua")'
-local coords = require("pi-editor.coords")
+local coords = require("pi-bridge.coords")
 
-describe("pi-editor.coords", function()
+describe("pi-bridge.coords", function()
   -- surface: both exports are functions
   it("exposes byte_to_utf16 and utf16_to_byte as functions", function()
     assert.are.equals("function", type(coords.byte_to_utf16))
@@ -160,7 +160,7 @@ end)
 -- LIVE‑VERIFIED on nvim 0.12.4 (research/notes.md §4). Pure functions over
 -- explicit (lines, …) args — NO buffer/setup/teardown.
 -- ─────────────────────────────────────────────────────────────────────────────
-describe("pi-editor.coords nvim_to_pi_coords / pi_to_nvim_coords", function()
+describe("pi-bridge.coords nvim_to_pi_coords / pi_to_nvim_coords", function()
   -- surface: both exports are functions
   it("exposes nvim_to_pi_coords and pi_to_nvim_coords as functions", function()
     assert.are.equals("function", type(coords.nvim_to_pi_coords))

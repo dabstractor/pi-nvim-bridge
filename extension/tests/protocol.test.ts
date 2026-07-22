@@ -76,7 +76,7 @@ test("wire type shapes compile and round-trip key literals", () => {
 	// --- §B descriptor ---
 	const desc: BridgeDescriptor = {
 		transport: "unix",
-		path: "/tmp/pi-editor-bridge-x.sock",
+		path: "/tmp/pi-nvim-bridge-x.sock",
 		token: "deadbeef",
 		pid: 4242,
 		cwd: "/home/u/proj",
@@ -88,7 +88,7 @@ test("wire type shapes compile and round-trip key literals", () => {
 	// --- §C per-method params/results ---
 	const hello: HelloParams = {
 		token: "deadbeef",
-		client: "pi-editor.nvim",
+		client: "pi-bridge.nvim",
 		clientVersion: "0.1.0",
 	};
 	const helloRes: HelloResult = {

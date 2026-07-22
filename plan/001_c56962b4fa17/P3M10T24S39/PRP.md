@@ -43,7 +43,7 @@ session, hides any stale completion menu, and leaves the buffer as a normal edit
    with the bad-socket → single-notify case.
 
 **Success Definition**:
-- A pi-launched Neovim whose `PI_EDITOR_BRIDGE` points at a **non-existent / refused** socket
+- A pi-launched Neovim whose `PI_NVIM_BRIDGE` points at a **non-existent / refused** socket
   emits exactly **one** WARN notify (first failure only) and the buffer remains a normal,
   editable pi-prompt (filetype set, keymaps active, completion silently inert).
 - A pi-launched Neovim whose bridge **rejects the token** (`-32600`) / **times out** /
@@ -135,7 +135,7 @@ repeated toasts, no errors, no hung UI.
       disconnect handler **once**, closes the menu, resets completion, and emits **one** notify.
 - [ ] Across connect-fail + handshake-fail + process-death in one session, **at most one**
       notify reaches the user (dedup by category `"bridge"`).
-- [ ] No notify fires when `PI_EDITOR_BRIDGE` is unset (ordinary nvim session — dormant).
+- [ ] No notify fires when `PI_NVIM_BRIDGE` is unset (ordinary nvim session — dormant).
 - [ ] No path throws, blocks startup, or spams (repeated keystrokes after disconnect do not
       re-notify).
 - [ ] New `notify_spec.lua` + `bridge_disconnect_spec.lua` pass; `activate_spec.lua` extended
@@ -198,7 +198,7 @@ the precise test runners are all specified below with line citations.
   pattern: after with_handshaken_server, register on_disconnect, then `server_conn:close()` (server half-close → client read_cb sees EOF) and assert the handler fired once + is_connected()==false.
   gotcha: do NOT name a spec-local table `pending` (shadows plenary.busted's skip function — the file warns about this).
 - file: plugin/tests/activate_spec.lua
-  why: the gate-test pattern (`vim.env.PI_EDITOR_BRIDGE = …; pi.activate()`). S39 extends it with a bad-socket case → assert notify.did_notify("bridge") and pi.bridge == nil.
+  why: the gate-test pattern (`vim.env.PI_NVIM_BRIDGE = …; pi.activate()`). S39 extends it with a bad-socket case → assert notify.did_notify("bridge") and pi.bridge == nil.
   pattern: `package.loaded["pi-editor"] = nil` per test for a fresh module; reset notify via `require("pi-editor.notify").reset()` in before_each.
 
 # Neovim runtime facts (verified)
@@ -259,7 +259,7 @@ plugin/tests/activate_spec.lua               # EXTEND — add the bad-socket →
 -- pi.bridge==nil OR is_connected()==false → they never reach notify.)
 
 -- GOTCHA C (dormant is NORMAL, not a failure): in every ordinary (non-pi) nvim session
--- PI_EDITOR_BRIDGE is unset → activate() returns nil BEFORE touching the bridge → NO notify.
+-- PI_NVIM_BRIDGE is unset → activate() returns nil BEFORE touching the bridge → NO notify.
 -- Do NOT notify on "no env var" / "malformed descriptor" / "wrong transport" — those are the
 -- documented dormant paths (activate() treats them as "not a pi session"). Notify fires ONLY
 -- when we genuinely TRIED to connect and failed (inside the handshake cb err path) or lost a
@@ -560,7 +560,7 @@ Task 6: EXTEND plugin/tests/activate_spec.lua — the handshake-failure notify
   - ADD a before_each reset: `require("pi-editor.notify").reset()` (and clear pi.bridge).
   - ADD CASES:
       a) "bad socket path → activate() fires one notify, pi.bridge stays nil" — set
-         PI_EDITOR_BRIDGE to a descriptor whose path is "/tmp/pi-editor-NOPE-<rand>.sock"
+         PI_NVIM_BRIDGE to a descriptor whose path is "/tmp/pi-editor-NOPE-<rand>.sock"
          (non-existent); call pi.activate(); vim.wait(300, function() return
          require("pi-editor.notify").did_notify("bridge") end); assert did_notify("bridge");
          assert.is_nil(pi.bridge). (The handshake connect fails ENOENT → handshake cb → notify.)
@@ -721,13 +721,13 @@ echo "exit=$?"   # expect 0 (confirms the server still rejects a bad token + hal
 ```bash
 # Manual end-to-end (optional, human-driven): with the bridge extension installed + nvim as
 # $EDITOR, in a real pi session:
-#   (1) connect-fail:   set PI_EDITOR_BRIDGE to a bogus socket via a throwaway extension (or
+#   (1) connect-fail:   set PI_NVIM_BRIDGE to a bogus socket via a throwaway extension (or
 #                       kill the bridge before Ctrl+G) → open the editor → expect ONE warn toast,
 #                       buffer editable, no spam on typing.
 #   (2) process death:  open the editor (handshake succeeds), then `kill -9` the pi process →
 #                       expect ONE warn toast ("bridge connection lost"), menu (if open) hidden,
 #                       buffer still editable, quitting still submits the typed text (S38 autosave).
-#   (3) dormant:        launch plain `nvim` (no PI_EDITOR_BRIDGE) → expect NO toast ever.
+#   (3) dormant:        launch plain `nvim` (no PI_NVIM_BRIDGE) → expect NO toast ever.
 # (Not fully automatable from this PRP — needs a live pi TUI. The Level 2 specs cover the logic.)
 ```
 

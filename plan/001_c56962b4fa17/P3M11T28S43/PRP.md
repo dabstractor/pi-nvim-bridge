@@ -24,7 +24,7 @@ description: |
           autosave_on_exit     = true        (write the pi temp file on VimLeavePre if modified)
           engine               = "builtin"   ("builtin"|"blink"|"cmp" — builtin is the SHIPPED menu;
                                              blink/cmp are the P4 FORTHCOMING sources — document honestly)
-          env_var              = "PI_EDITOR_BRIDGE" (override the bridge-descriptor env var name)
+          env_var              = "PI_NVIM_BRIDGE" (override the bridge-descriptor env var name)
         The exported `M.defaults` table is read by `:checkhealth pi-editor` + tests, so the vimdoc
         MUST mirror it (a doc/code drift is a bug).
 
@@ -52,14 +52,14 @@ description: |
           :helptags <plugin>/doc     — generates the tag index (or let the plugin manager do it)
           :checkhealth pi-editor     — the S42 health report (4 sections: version/env/socket/fd)
           :messages                  — read the one-time "completion unavailable" notify (S39)
-          :lua print(vim.env.PI_EDITOR_BRIDGE) — inspect the process-local descriptor from inside
+          :lua print(vim.env.PI_NVIM_BRIDGE) — inspect the process-local descriptor from inside
                                                  the pi-launched nvim
         (`:PiSubmit` is a PRD §15 FUTURE enhancement, NOT shipped — do NOT document it as a
         real command; it may be mentioned as planned in the FAQ.)
 
     (4) **TROUBLESHOOTING** — the four real failure modes (mirror the shipped `health.lua` §
         advice + the repo `README.md` Troubleshooting, both VERIFIED): (a) "nothing happens in
-        nvim" = DORMANT by design (no `PI_EDITOR_BRIDGE` — expected outside a pi session);
+        nvim" = DORMANT by design (no `PI_NVIM_BRIDGE` — expected outside a pi session);
         (b) "completion doesn't appear" = extension not loaded / EDITOR not nvim / handshake
         failed (read `:messages`); (c) "`@file` finds nothing" = install `fd` (optional; path
         completion still works); (d) "I typed then `:q` and lost my prompt" = autosave
@@ -70,7 +70,7 @@ description: |
 
   **ADDITIONAL MUST-HAVE SECTIONS (the help file's completeness bar):** an INTRODUCTION (the
   two-component design: pi-editor-bridge extension + this nvim plugin; the dormant-by-design
-  activation gate on `PI_EDITOR_BRIDGE`), REQUIREMENTS (nvim >= 0.11 — NOT 0.10 — coords.lua
+  activation gate on `PI_NVIM_BRIDGE`), REQUIREMENTS (nvim >= 0.11 — NOT 0.10 — coords.lua
   GOTCHA 9; the bridge extension; optional `fd`), QUICKSTART (lazy.nvim `lazy=false` so the
   VimEnter shim sources before VimEnter; `require("pi-editor").setup({})`; the three EDITOR
   wirings: `$EDITOR`/`$VISUAL`/settings.json `externalEditor`), COMPLETION BEHAVIOR (pi-
@@ -80,8 +80,8 @@ description: |
   `applyCompletion` so insertion is identical), FILETYPE `pi-prompt` (the ftplugin sets
   `formatoptions-=t`, `textwidth=0`, `wrap`, `spell=false`), AUTOCMDS (the buffer-local
   `pi-editor` augroup: refresh on InsertEnter/TextChangedI/CursorMovedI; auto-close on
-  InsertLeave/BufLeave; autosave+teardown on VimLeavePre/ExitPre), ENVIRONMENT (`PI_EDITOR_BRIDGE`
-  JSON descriptor shape + why `echo $PI_EDITOR_BRIDGE` shows nothing; optional `NVIM_APPNAME`
+  InsertLeave/BufLeave; autosave+teardown on VimLeavePre/ExitPre), ENVIRONMENT (`PI_NVIM_BRIDGE`
+  JSON descriptor shape + why `echo $PI_NVIM_BRIDGE` shows nothing; optional `NVIM_APPNAME`
   minimal-config optimization — P4, document as optional), and a LUAL API section for source
   authors / integrators (`require("pi-editor")`: `setup/config/defaults/bridge/descriptor`;
   `require("pi-editor.bridge")`: `version/is_connected/server_info/request/cancel/
@@ -119,7 +119,7 @@ description: |
 
 **Feature Goal**: Ship a complete, accurate, `:helptags`-clean Neovim vimdoc
 (`plugin/doc/pi-editor.txt`) so a user who has never seen this plugin can, from inside
-Neovim alone, learn what `pi-editor.nvim` does, how to install/configure it, which keys do
+Neovim alone, learn what `pi-bridge.nvim` does, how to install/configure it, which keys do
 what, how completion behaves (pi-faithful), and how to troubleshoot — with every documented
 option/key/autocmd matching the shipped code exactly (doc-SYNC, Mode B). PRD §13 Phase 3 step
 15 ("Docs (`doc/pi-editor.txt`, README)") names this vimdoc; this task delivers the vimdoc half.
@@ -141,7 +141,7 @@ option/key/autocmd matching the shipped code exactly (doc-SYNC, Mode B). PRD §1
   (`:help pi-editor-config`, `pi-editor-keymaps`, `pi-editor-troubleshooting`, …).
 - The CONFIGURATION section's defaults table is byte-faithful to `init.lua:30-40`
   (`menu.max_height=12`, `menu.border="rounded"`, `debounce_ms=20`, `rpc_timeout_ms=2000`,
-  `autosave_on_exit=true`, `engine="builtin"`, `env_var="PI_EDITOR_BRIDGE"`).
+  `autosave_on_exit=true`, `engine="builtin"`, `env_var="PI_NVIM_BRIDGE"`).
 - The KEYMAPS section lists all 9 buffer-local insert-mode keys with the EXACT behavior
   (incl. `<CR>` = accept-or-newline, NOT submit; `<C-Y>` = accept-or-i_CTRL_Y; the
   fall-through-to-default semantics).
@@ -155,12 +155,12 @@ option/key/autocmd matching the shipped code exactly (doc-SYNC, Mode B). PRD §1
 
 ## User Persona
 
-**Target User**: a pi user who just installed `pi-editor.nvim` (or is evaluating it) and wants
+**Target User**: a pi user who just installed `pi-bridge.nvim` (or is evaluating it) and wants
 to understand it FROM WITHIN NEOVIM — without leaving the editor to read a README or the PRD.
 A secondary audience is a **plugin integrator / source author** wiring the optional blink/cmp
 sources or scripting against the bridge, who needs the Lua API reference.
 
-**Use Case**: "I installed pi-editor.nvim with lazy.nvim; how do I configure the menu border,
+**Use Case**: "I installed pi-bridge.nvim with lazy.nvim; how do I configure the menu border,
 what does `<Tab>` do, why is nothing happening in my normal nvim, and how do I turn on `@file`
 completion?" They run `:help pi-editor` and get a single, navigable, accurate answer.
 
@@ -193,7 +193,7 @@ right-aligned CONTENTS table):
 
 1. **INTRODUCTION** (`pi-editor-intro`) — what the plugin is; the two-component design
    (`pi-editor-bridge` extension on the pi side + this nvim plugin); the dormant-by-design
-   gate on `PI_EDITOR_BRIDGE`.
+   gate on `PI_NVIM_BRIDGE`.
 2. **REQUIREMENTS** (`pi-editor-requirements`) — Neovim **>= 0.11** (coords.lua GOTCHA 9 —
    the 3-arg `vim.str_utfindex` UTF-16 overload); the `pi-editor-bridge` pi extension
    (installed + `pi list` shows it); optional `fd` for `@file` fuzzy search.
@@ -204,7 +204,7 @@ right-aligned CONTENTS table):
 4. **CONFIGURATION** (`pi-editor-config`) — `setup(opts)` + the full defaults table + per-field
    prose (see Description for the exact values).
 5. **COMMANDS** (`pi-editor-commands`) — the built-in commands (`:help`, `:helptags`,
-   `:checkhealth pi-editor`, `:messages`, `:lua print(vim.env.PI_EDITOR_BRIDGE)`). State
+   `:checkhealth pi-editor`, `:messages`, `:lua print(vim.env.PI_NVIM_BRIDGE)`). State
    clearly: the plugin defines NO `:UserCommand`s.
 6. **KEYMAPS** (`pi-editor-keymaps`) — all 9 buffer-local insert-mode keys + behavior +
    fall-through semantics (see Description).
@@ -217,10 +217,10 @@ right-aligned CONTENTS table):
    insertion). Note the debounce model (0 ms slash/typing; `debounce_ms` for @/# context).
 9. **FILETYPE** (`pi-editor-filetype`) — `pi-prompt`: set by `activate()`; the ftplugin sets
    `formatoptions-=t`, `textwidth=0`, `wrap`, `spell=false`.
-10. **ENVIRONMENT** (`pi-editor-env`) — the `PI_EDITOR_BRIDGE` JSON descriptor (transport/path/
-    token/pid/cwd/fdAvailable/serverVersion); WHY `echo $PI_EDITOR_BRIDGE` shows nothing
+10. **ENVIRONMENT** (`pi-editor-env`) — the `PI_NVIM_BRIDGE` JSON descriptor (transport/path/
+    token/pid/cwd/fdAvailable/serverVersion); WHY `echo $PI_NVIM_BRIDGE` shows nothing
     (process-local, only the child `$EDITOR` sees it); inspect via
-    `:lua print(vim.env.PI_EDITOR_BRIDGE)`; optional `NVIM_APPNAME` minimal-config optimization
+    `:lua print(vim.env.PI_NVIM_BRIDGE)`; optional `NVIM_APPNAME` minimal-config optimization
     (P4, optional, document as such).
 11. **LUA API** (`pi-editor-api`) — for integrators: `require("pi-editor")` fields
     (`setup/config/defaults/bridge/descriptor`); `require("pi-editor.bridge")` fields
@@ -293,7 +293,7 @@ copy-ready vimdoc skeleton (Implementation Patterns). No guessing required.
   why: |
     THE source of truth for the CONFIGURATION section. `M.defaults` (:30-40) is the exact defaults
     table (menu.max_height=12, menu.border="rounded", debounce_ms=20, rpc_timeout_ms=2000,
-    autosave_on_exit=true, engine="builtin", env_var="PI_EDITOR_BRIDGE"). The `pi-editor.Config`
+    autosave_on_exit=true, engine="builtin", env_var="PI_NVIM_BRIDGE"). The `pi-editor.Config`
     class (:16-25) + `pi-editor.MenuConfig` (:12-14) give the field TYPES + prose for each option.
     `M.setup(opts)` (:46) is the documented entry (`setup({ ... })`); `M.config` (:42, nil until
     setup), `M.defaults` (:31), `M.bridge` (:48, nil until handshake), `M.descriptor` (:108, nil if
@@ -371,7 +371,7 @@ copy-ready vimdoc skeleton (Implementation Patterns). No guessing required.
 # Reference — the repo README (markdown, end-user-facing; the vimdoc should be CONSISTENT with it
 # where they overlap, but the README is S44's to fix — do NOT edit it in this task)
 - file: README.md
-  why: The markdown analog. Its "Configuration (`$EDITOR`)", "PI_EDITOR_BRIDGE env var",
+  why: The markdown analog. Its "Configuration (`$EDITOR`)", "PI_NVIM_BRIDGE env var",
         "Troubleshooting", and "Security" sections are the prose the vimdoc should MIRROR (not copy
         verbatim — adapt to vimdoc + stay consistent). NOTE: the README currently says the nvim plugin
         is "forthcoming (Phase 2)" — that is STALE (P2 is Complete) — but fixing the README is S44's
@@ -434,7 +434,7 @@ plugin/doc/tags            # NEW (generated) — the :helptags index of *tag* de
 
 " CRITICAL (doc-SYNC accuracy, Mode B): the code is COMPLETE (P1+P2). The doc must MATCH it. The 7
 " config defaults are EXACT (init.lua:30-40): menu.max_height=12, menu.border="rounded", debounce_ms=20,
-" rpc_timeout_ms=2000, autosave_on_exit=true, engine="builtin", env_var="PI_EDITOR_BRIDGE". The 9 keys
+" rpc_timeout_ms=2000, autosave_on_exit=true, engine="builtin", env_var="PI_NVIM_BRIDGE". The 9 keys
 " are EXACT (ftplugin). Do NOT invent options/keys; do NOT mark core features "forthcoming".
 
 " GOTCHA (0.11 floor, NOT 0.10): REQUIREMENTS must say Neovim >= 0.11. coords.lua GOTCHA 9 — the exact-
@@ -455,12 +455,12 @@ plugin/doc/tags            # NEW (generated) — the :helptags index of *tag* de
 " else falls through to `:help i_CTRL-Y`. Document both branches.
 
 " GOTCHA (dormant is EXPECTED): the plugin is dormant in every ordinary nvim session (no
-" PI_EDITOR_BRIDGE). "I installed it and nothing happens in nvim" is the EXPECTED normal-config state.
+" PI_NVIM_BRIDGE). "I installed it and nothing happens in nvim" is the EXPECTED normal-config state.
 " The FAQ must say this first + loudest, and point to `:checkhealth pi-editor` (info "dormant").
 
-" GOTCHA (PI_EDITOR_BRIDGE is process-local): `echo $PI_EDITOR_BRIDGE` in a shell shows NOTHING — the
+" GOTCHA (PI_NVIM_BRIDGE is process-local): `echo $PI_NVIM_BRIDGE` in a shell shows NOTHING — the
 " var is written to process.env INSIDE pi and only the child $EDITOR sees it. This is the #1 install
-" confusion. Document `:lua print(vim.env.PI_EDITOR_BRIDGE)` as the way to inspect it.
+" confusion. Document `:lua print(vim.env.PI_NVIM_BRIDGE)` as the way to inspect it.
 
 " GOTCHA (the token is sensitive): PRD §12 — NEVER echo/paste the `token` field. The ENVIRONMENT section
 " documents the descriptor SHAPE but must warn not to paste the live descriptor (esp. the token) into
@@ -505,7 +505,7 @@ There is no runtime data model — the deliverable is a plain-text vimdoc. The "
 *pi-editor-autocmds*     (AUTOCMDS — the buffer-local pi-editor augroup)
 *pi-editor-completion*   (COMPLETION — pi-faithful behavior)
 *pi-editor-filetype*     (FILETYPE pi-prompt)
-*pi-editor-env*          (ENVIRONMENT — PI_EDITOR_BRIDGE + NVIM_APPNAME)
+*pi-editor-env*          (ENVIRONMENT — PI_NVIM_BRIDGE + NVIM_APPNAME)
 *pi-editor-api*          (LUA API — require("pi-editor")/.bridge/.coords fields)
 *pi-editor-bridge*       (the bridge module fields; may fold INTO api)
 *pi-editor-coords*       (the coords module fields; may fold INTO api)
@@ -526,7 +526,7 @@ Task 1: CREATE plugin/doc/pi-editor.txt — the vimdoc help file
   - LINE 1: `*pi-editor.txt*<TAB>For Nvim 0.11+.<TAB>Last change: 2025 Jul 20` (the file tag —
             :helptags keys on it; the `<TAB>` alignment matches help-writing).
   - STRUCTURE (copy-ready skeleton in "Implementation Patterns" below):
-      Title block (pi-editor.nvim — one-line pitch) + the *pi-editor* top tag.
+      Title block (pi-bridge.nvim — one-line pitch) + the *pi-editor* top tag.
       CONTENTS table (13 right-aligned |tag| links).
       For each of the 13 sections: a `=`-underlined header carrying its *tag*, then prose + tables
       + `>`/`<` code blocks.
@@ -538,15 +538,15 @@ Task 1: CREATE plugin/doc/pi-editor.txt — the vimdoc help file
       rpc_timeout_ms      2000           RPC staleness window; MUST exceed the bridge fd-abort 1500 (WARN if <=).
       autosave_on_exit    true           Write the pi temp file on VimLeavePre if modified (prevents lost prompt).
       engine              "builtin"      builtin = the shipped menu; blink/cmp = FORTHCOMING (P4).
-      env_var             "PI_EDITOR_BRIDGE" Override the bridge-descriptor env var name.
+      env_var             "PI_NVIM_BRIDGE" Override the bridge-descriptor env var name.
   - KEYMAPS table (EXACT — mirror ftplugin): 9 rows (Tab/S-Tab/C-N/Down/C-P/Up/C-Y/C-E/CR) with the
       behavior + the fall-through note (each falls through to its default when not handled).
   - REQUIREMENTS: Nvim >= 0.11 (coords.lua UTF-16 overload); pi-editor-bridge extension (pi list);
       optional fd (Debian: fdfind) for @file fuzzy.
   - COMPLETION prose: pi-faithful (slash/skill/template/extension-commands; arg completion; @file via fd;
       paths ./ ~ /abs; Tab force-file; accept = pi's applyCompletion). Note the debounce model.
-  - ENVIRONMENT: the PI_EDITOR_BRIDGE JSON shape (transport/path/token/pid/cwd/fdAvailable/serverVersion)
-      + "echo shows nothing (process-local)" + `:lua print(vim.env.PI_EDITOR_BRIDGE)` + token-safety
+  - ENVIRONMENT: the PI_NVIM_BRIDGE JSON shape (transport/path/token/pid/cwd/fdAvailable/serverVersion)
+      + "echo shows nothing (process-local)" + `:lua print(vim.env.PI_NVIM_BRIDGE)` + token-safety
       warning + optional NVIM_APPNAME optimization (P4, optional).
   - LUA API: require("pi-editor") fields (setup/config/defaults/bridge/descriptor/activate) +
       require("pi-editor.bridge") fields (version/is_connected/server_info/request/cancel/
@@ -587,7 +587,7 @@ Task 3: (DECISION) commit plugin/doc/tags
 
 *pi-editor.txt*	For Nvim 0.11+.	Last change: 2025 Jul 20
 
-          NVIM PORT — pi-editor.nvim
+          NVIM PORT — pi-bridge.nvim
           Bring pi's in-prompt completion into the Neovim instance pi launches as $EDITOR.
 
           This help file documents the SHIPPED plugin. The companion pi extension
@@ -618,7 +618,7 @@ CONTENTS                                        *pi-editor* *pi-editor-contents*
 ==============================================================================
 1. Introduction                                  *pi-editor-intro*
 
-`pi-editor.nvim` renders pi's in-prompt completion inside the Neovim instance pi
+`pi-bridge.nvim` renders pi's in-prompt completion inside the Neovim instance pi
 launches as `$EDITOR` — slash commands (`/model`, `/compact`, `/skill:…`), prompt
 templates, extension commands, command-argument completion, `@file` mentions, and
 filesystem paths — through a dependency-free floating menu.
@@ -629,13 +629,13 @@ It is one half of a two-component design:
     `AutocompleteProvider` and serves it over a local Unix socket. See
     https://pi.dev/docs/extensions .
 
-  • `pi-editor.nvim` (THIS plugin) — a Neovim (Lua) plugin that activates ONLY
+  • `pi-bridge.nvim` (THIS plugin) — a Neovim (Lua) plugin that activates ONLY
     inside a pi-launched editor session, connects to the bridge, and renders
     completion through Neovim's own UI.
 
 DORMANT BY DESIGN ~
 This plugin is INERT in every ordinary Neovim session. It activates only when pi
-spawned the editor with the `PI_EDITOR_BRIDGE` environment variable set (see
+spawned the editor with the `PI_NVIM_BRIDGE` environment variable set (see
 |pi-editor-env|). If nothing happens when you open nvim normally, that is
 expected — see |pi-editor-troubleshooting|.
 
@@ -651,7 +651,7 @@ to pi's TUI.
     `coords.lua` needs the 3-arg `vim.str_utfindex` overload added in 0.11.
     `:checkhealth pi-editor` enforces this; see |pi-editor-checkhealth|.)
   • The `pi-editor-bridge` pi extension installed and enabled (`pi list` shows
-    `pi-editor-bridge`). It writes `PI_EDITOR_BRIDGE` when pi starts an editor.
+    `pi-editor-bridge`). It writes `PI_NVIM_BRIDGE` when pi starts an editor.
   • `fd` (OPTIONAL) — enables pi's fuzzy `@file` search. Without it `@file`
     silently returns nothing, but path completion (directory listing) still
     works. Debian/Ubuntu ship it as `fdfind` (`apt-get install fd-find`).
@@ -666,7 +666,7 @@ Install the bridge extension (pi side): >
 Install this plugin (lazy.nvim) — NOTE `lazy = false` so the startup shim sources
 BEFORE the VimEnter event that triggers activation: >
     {
-      "<owner>/pi-editor.nvim",
+      "<owner>/pi-bridge.nvim",
       lazy = false,
       config = function() require("pi-editor").setup({}) end,
     }
@@ -691,7 +691,7 @@ defaults (so you only set what you want to change): >
       rpc_timeout_ms   = 2000, -- MUST exceed the bridge fd-abort (1500)
       autosave_on_exit = true,
       engine   = "builtin",    -- "builtin" (shipped) | "blink" | "cmp" (forthcoming)
-      env_var  = "PI_EDITOR_BRIDGE",
+      env_var  = "PI_NVIM_BRIDGE",
     })
 <
 DEFAULTS (mirror `lua/pi-editor/init.lua` `M.defaults`) ~
@@ -710,7 +710,7 @@ DEFAULTS (mirror `lua/pi-editor/init.lua` `M.defaults`) ~
     engine               "builtin"  Which completion UI to drive. "builtin" = the
                                   dependency-free floating menu (shipped). "blink" /
                                   "cmp" are FORTHCOMING (Phase 4) — do not set yet.
-    env_var              "PI_EDITOR_BRIDGE"  Override the bridge-descriptor env var name.
+    env_var              "PI_NVIM_BRIDGE"  Override the bridge-descriptor env var name.
 
 ==============================================================================
 5. Commands                                      *pi-editor-commands*
@@ -722,7 +722,7 @@ commands: >
     :helptags <rtp>/doc             (Re)generate the help tag index.
     :checkhealth pi-editor          Diagnostics: version / env / socket / fd (|pi-editor-checkhealth|).
     :messages                       Read the one-time "completion unavailable" notify.
-    :lua print(vim.env.PI_EDITOR_BRIDGE)  Inspect the process-local bridge descriptor.
+    :lua print(vim.env.PI_NVIM_BRIDGE)  Inspect the process-local bridge descriptor.
 
 <
 
@@ -815,7 +815,7 @@ That sets: >
 The bridge extension writes a single-line JSON descriptor to the process
 environment INSIDE pi: >
 
-    PI_EDITOR_BRIDGE = {
+    PI_NVIM_BRIDGE = {
       "transport": "unix",
       "path": "/tmp/pi-editor-bridge-<uuid>.sock",
       "token": "<32-byte hex>",
@@ -828,11 +828,11 @@ environment INSIDE pi: >
 < The child `$EDITOR` pi spawns INHERITS this var; THIS PLUGIN keys activation
 on it (|pi-editor-intro| dormant-by-design).
 
-NOTE: `echo $PI_EDITOR_BRIDGE` in your shell shows NOTHING — the variable is
+NOTE: `echo $PI_NVIM_BRIDGE` in your shell shows NOTHING — the variable is
 written to `process.env` INSIDE pi and is only visible to the child editor. This
 is the #1 install confusion; it is not a bug. Inspect it from inside the
 launched Neovim: >
-    :lua print(vim.env.PI_EDITOR_BRIDGE)
+    :lua print(vim.env.PI_NVIM_BRIDGE)
 
 < SECURITY: the `token` is the real auth boundary (|pi-editor-...|). NEVER paste
 the live descriptor — especially `token` — into a bug report.
@@ -840,7 +840,7 @@ the live descriptor — especially `token` — into a bug report.
 OPTIONAL — minimal-config startup optimization ~
 For faster editor launch you may keep a tiny Neovim config at
 `~/.config/pi-editor/` and have the bridge set `NVIM_APPNAME=pi-editor` so the
-editor instance loads ONLY `pi-editor.nvim`. This is OPTIONAL (Phase 4); the
+editor instance loads ONLY `pi-bridge.nvim`. This is OPTIONAL (Phase 4); the
 plugin works with your full config.
 
 ==============================================================================
@@ -857,7 +857,7 @@ forthcoming) and user code can issue RPCs.
     .bridge         The bridge module table; nil until the hello handshake succeeds
                     (stays nil in dormant sessions + on handshake failure → completion
                     auto-bails → degrade to a plain buffer).
-    .descriptor     The parsed PI_EDITOR_BRIDGE descriptor; nil if dormant.
+    .descriptor     The parsed PI_NVIM_BRIDGE descriptor; nil if dormant.
     .activate()     The VimEnter entry point (called automatically by the startup shim;
                     you do not normally call it).
 
@@ -888,7 +888,7 @@ Run >
 < for a never-throwing diagnostic with four sections: the plugin version + a
 Neovim >= 0.11 gate; the bridge ENVIRONMENT (dormant vs active); the bridge
 CONNECTION (`is_connected()` + the handshake result + the socket file); and the
-external `fd` tool (optional — WARN, not error). A missing `PI_EDITOR_BRIDGE` is
+external `fd` tool (optional — WARN, not error). A missing `PI_NVIM_BRIDGE` is
 reported as INFO "dormant" (the expected normal-session state), not an error.
 
 ==============================================================================
@@ -1058,7 +1058,7 @@ rm -f /tmp/help_resolve.lua
 cd plugin
 # The CONFIGURATION defaults + the 9 KEYMAPS must match the shipped code (grep the help file).
 echo "--- config defaults present ---"
-for v in "max_height" '"rounded"' "debounce_ms" "rpc_timeout_ms" "autosave_on_exit" '"builtin"' "PI_EDITOR_BRIDGE"; do
+for v in "max_height" '"rounded"' "debounce_ms" "rpc_timeout_ms" "autosave_on_exit" '"builtin"' "PI_NVIM_BRIDGE"; do
   grep -q "$v" doc/pi-editor.txt && echo "  ok: $v" || echo "  MISSING: $v"
 done
 echo "--- 9 keymaps present ---"
@@ -1122,7 +1122,7 @@ done
 - ❌ Don't document `:PiSubmit` as a real command — it is a PRD §15 FUTURE enhancement, NOT shipped. Document built-in commands only (this plugin defines NO `:UserCommand`s).
 - ❌ Don't document `<CR>` as "submit the prompt" — there is NO Enter-to-submit in the external editor (pi re-reads the temp file only after the editor EXITS). `<CR>` accepts-if-menu-open else inserts a NEWLINE.
 - ❌ Don't contradict the dormant-by-design model — "nothing happens in my normal nvim" is EXPECTED. Say it first + loudest in the FAQ.
-- ❌ Don't tell users to `echo $PI_EDITOR_BRIDGE` to verify install — it shows nothing (process-local). Tell them `:lua print(vim.env.PI_EDITOR_BRIDGE)` from inside the launched editor, or `:checkhealth pi-editor`.
+- ❌ Don't tell users to `echo $PI_NVIM_BRIDGE` to verify install — it shows nothing (process-local). Tell them `:lua print(vim.env.PI_NVIM_BRIDGE)` from inside the launched editor, or `:checkhealth pi-editor`.
 - ❌ Don't edit README.md, any source file, or any test in this task — the README fix is S44 (a separate PRP); the vimdoc only DESCRIBES shipped code. A code/doc mismatch is a SEPARATE code task.
 - ❌ Don't paste or document the live `token` value — it is the auth boundary (PRD §12). Document the descriptor SHAPE, with a "never paste the token" warning.
 - ❌ Don't pipe a heredoc into `nvim` stdin (AGENTS.md HARD RULE — it hangs). Write validation snippets to a file; run with `+"luafile <path>"`. Wrap every nvim call in `timeout`.

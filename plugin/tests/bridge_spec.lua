@@ -12,8 +12,8 @@
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/bridge_spec.lua")'
 local uv = vim.uv
-local bridge = require("pi-editor.bridge")
-local jreader = require("pi-editor.jsonlreader")
+local bridge = require("pi-bridge.bridge")
+local jreader = require("pi-bridge.jsonlreader")
 
 -- helper: a fresh luv server mirroring the bridge extension. Calls spec(path, requests, stop).
 -- Each test gets a unique socket path. `requests` collects every decoded client request the
@@ -50,7 +50,7 @@ local function with_server(spec)
   end
 end
 
-describe("pi-editor.bridge", function()
+describe("pi-bridge.bridge", function()
   -- expose the module surface
   it("exposes connect/send/close/on_exit/is_connected", function()
     assert.are.equals("function", type(bridge.connect))

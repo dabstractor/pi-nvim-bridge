@@ -1,5 +1,5 @@
 /**
- * bridge-env.test.ts — S16: asserts `process.env.PI_EDITOR_BRIDGE` carries a valid
+ * bridge-env.test.ts — S16: asserts `process.env.PI_NVIM_BRIDGE` carries a valid
  * single-line JSON `BridgeDescriptor` after `startBridge`, is deleted by `stopBridge`,
  * is freshly rewritten on repeated `startBridge`, and that the factory's session_start
  * (tui) / session_shutdown / non-tui guard all honor that contract.
@@ -26,8 +26,8 @@ import {
 	BRIDGE_ENV,
 	__deps,
 	__setFdAvailableForTest,
-} from "../pi-editor-bridge.ts";
-import bridgeFactory from "../pi-editor-bridge.ts";
+} from "../pi-nvim-bridge.ts";
+import bridgeFactory from "../pi-nvim-bridge.ts";
 
 type StartHandler = (event: SessionStartEvent, ctx: ExtensionContext) => void;
 type ShutdownHandler = (event: SessionShutdownEvent) => void;
@@ -67,11 +67,11 @@ function mockDeps() {
 }
 
 // ============================================================================
-// TEST 1 — MOCKED, EXACT DESCRIPTOR SHAPE: after startBridge, process.env.PI_EDITOR_BRIDGE
+// TEST 1 — MOCKED, EXACT DESCRIPTOR SHAPE: after startBridge, process.env.PI_NVIM_BRIDGE
 // is a single-line JSON string parsing to an object with EXACTLY 7 keys and the expected
 // values (transport/path/token/pid/cwd/fdAvailable/serverVersion).
 // ============================================================================
-test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_EDITOR_BRIDGE", () => {
+test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_NVIM_BRIDGE", () => {
 	const mock = mockDeps();
 	__setFdAvailableForTest(true); // deterministic fd value (GOTCHA #2/#6)
 	try {
@@ -103,7 +103,7 @@ test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_
 // undefined. ALSO: stopBridge when the env was never set is a safe no-op (delete on
 // absent never throws).
 // ============================================================================
-test("stopBridge deletes process.env.PI_EDITOR_BRIDGE (and is a safe no-op when never set)", () => {
+test("stopBridge deletes process.env.PI_NVIM_BRIDGE (and is a safe no-op when never set)", () => {
 	// Pre-condition: safe no-op when nothing was ever set.
 	assert.equal(process.env[BRIDGE_ENV], undefined, "env must start unset");
 	assert.doesNotThrow(() => stopBridge(), "stopBridge must not throw when env is absent");

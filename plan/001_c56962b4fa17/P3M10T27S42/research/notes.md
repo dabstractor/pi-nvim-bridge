@@ -113,7 +113,7 @@ end
 | Check | Source | Notes |
 |---|---|---|
 | Plugin version | `require("pi-editor.bridge").version` (`:176` = `"0.1.0"`, mirrors `package.json`) | pcall (a broken bridge must not break health) |
-| Env var name | `require("pi-editor").config.env_var or "PI_EDITOR_BRIDGE"` | config may be nil if setup() never ran → default |
+| Env var name | `require("pi-editor").config.env_var or "PI_NVIM_BRIDGE"` | config may be nil if setup() never ran → default |
 | Raw env var | `vim.env[env_name]` | absent ⇒ dormant (the EXPECTED normal-session state) |
 | Parsed descriptor | `require("pi-editor").descriptor` (`:107`, set by `activate()`) | has `.transport/.path/.token/.pid/.cwd/.fdAvailable/.serverVersion` |
 | Connection live? | `require("pi-editor.bridge").is_connected()` (`:845`) | `state.connected and not state.closed` |
@@ -121,7 +121,7 @@ end
 | Socket file exists? | `vim.uv.fs_stat(descriptor.path)` | nil ⇒ socket gone (pi exited / stale) |
 
 - **Dormant-vs-active design:** in a NORMAL nvim session (user running `:checkhealth` from
-  their config), `PI_EDITOR_BRIDGE` is UNSET → the plugin is dormant BY DESIGN (PRD §7.1/§11).
+  their config), `PI_NVIM_BRIDGE` is UNSET → the plugin is dormant BY DESIGN (PRD §7.1/§11).
   A missing env var is **NOT an error**; report an informational `info` ("dormant — completion
   is only active inside a pi-launched editor"). Gate the env-detail / socket sections on the
   env var being set. The **fd section runs UNCONDITIONALLY** (the user wants to know whether
@@ -137,7 +137,7 @@ end
   `:checkhealth` runs interactively. A direct `health.check()` call with a stubbed `vim.health`
   is the clean unit test.
 - Stubs needed: `start/ok/warn/error/info` → each `function(...) t[#t+1] = {method=..., ...} end`.
-- Also stub `vim.fn.executable` (for the fd present/absent cases) + set `vim.env.PI_EDITOR_BRIDGE`
+- Also stub `vim.fn.executable` (for the fd present/absent cases) + set `vim.env.PI_NVIM_BRIDGE`
   (for the dormant/active cases) + set `require("pi-editor").descriptor`/`.bridge.server_info`
   (for the active-session cases) per-case.
 - Key cases: (a) module loads + `M.check` is a table field; (b) dormant session → NO `error`

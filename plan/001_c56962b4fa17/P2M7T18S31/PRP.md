@@ -6,7 +6,7 @@ description: |
 
 ## Goal
 
-**Feature Goal**: Ship the **completion-result → menu-population** half of pi-editor.nvim — `menu.lua`, the
+**Feature Goal**: Ship the **completion-result → menu-population** half of pi-bridge.nvim — `menu.lua`, the
 windowless menu-STATE module (the blink.cmp `list.lua` model) that consumes the S30 `completion.on_results(buf,
 items, prefix)` seam. It registers the callback idempotently from `activate()`, routes empty→close / non-empty→
 store+open, and stores `items`/`prefix`/`selected` so the later accept (S32) reads them via `get_selected()`/

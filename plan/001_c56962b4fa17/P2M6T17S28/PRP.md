@@ -31,7 +31,7 @@ description: |
 
 ## Goal
 
-**Feature Goal**: Ship the lowest layer of the pi-editor.nvim coordinate-translation stack —
+**Feature Goal**: Ship the lowest layer of the pi-bridge.nvim coordinate-translation stack —
 the two pure functions that convert a position within a single line between Neovim's native
 unit (**byte offset**) and pi's unit (**UTF‑16 code-unit offset**, i.e. a JavaScript string
 index = pi's `cursorCol`). They are the single, centralized implementation of PRD §8's

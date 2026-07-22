@@ -77,7 +77,7 @@ live unchanged when those modules land.
 
 ## User Persona (if applicable)
 
-**Target User**: The `pi-editor.nvim` plugin author and the downstream implementers of **S30+**
+**Target User**: The `pi-bridge.nvim` plugin author and the downstream implementers of **S30+**
 (completion.lua), **S38** (autosave), **S24** (bridge.lua), **S42** (health). The ftplugin is the
 buffer-side contract surface that wires the UI to those modules. End users experience it only
 indirectly (correct editing feel + working completion keys once S30 ships).
@@ -290,7 +290,7 @@ clear) — are spelled out in §Known Gotchas and embedded in the reference impl
 
 - file: plan/001_c56962b4fa17/architecture/external_deps.md
   why: "§1.6 documents the buffer-local autocmd pattern (buffer=bufnr); confirms plenary is the Lua
-        test framework; §4 confirms the pi extension sets PI_EDITOR_BRIDGE (the env var S21 reads)."
+        test framework; §4 confirms the pi extension sets PI_NVIM_BRIDGE (the env var S21 reads)."
 
 - docfile: plan/001_c56962b4fa17/prd_snapshot.md
   section: "§7.1 (filetype handshake), §7.6 (buffer-local setup: options/keymaps/autocmds), §7.4 (<CR>
@@ -304,7 +304,7 @@ clear) — are spelled out in §Known Gotchas and embedded in the reference impl
 ```bash
 pi-nvim-bridge/                  # repo root (monorepo: extension/ + plugin/)
 ├── extension/                   # P1 — pi-editor-bridge (TypeScript) — COMPLETE
-│   ├── pi-editor-bridge.ts      # writes process.env.PI_EDITOR_BRIDGE in startBridge()
+│   ├── pi-editor-bridge.ts      # writes process.env.PI_NVIM_BRIDGE in startBridge()
 │   └── protocol.ts              # BridgeDescriptor type
 ├── plugin/                      # <-- Neovim plugin root (the runtimepath entry)
 │   ├── lua/pi-editor/init.lua   # S19+S21 (DONE) — setup/defaults/config/bridge/descriptor/activate()
@@ -811,12 +811,12 @@ cd ..
 ### Level 3: Integration (real activate() → real ftplugin, end-to-end)
 
 ```bash
-# 3a. The REAL handshake: load the real plugin on rtp via --cmd (GOTCHA H), set PI_EDITOR_BRIDGE,
+# 3a. The REAL handshake: load the real plugin on rtp via --cmd (GOTCHA H), set PI_NVIM_BRIDGE,
 #     fire VimEnter (runs S20 shim -> S21 activate() -> filetype=pi-prompt -> S22 ftplugin sources),
 #     then verify the ftplugin's effect on the buffer.
 PLUGIN_ROOT="$(pwd)/plugin"
 nvim --headless --clean -u NORC --cmd "let &runtimepath=&runtimepath.',$PLUGIN_ROOT'" \
-  +"lua vim.env.PI_EDITOR_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/real.sock\",\"token\":\"sekret\",\"pid\":99,\"cwd\":\"/proj\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
+  +"lua vim.env.PI_NVIM_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/real.sock\",\"token\":\"sekret\",\"pid\":99,\"cwd\":\"/proj\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
   +"lua vim.api.nvim_exec_autocmds('VimEnter', {})" \
   +"lua local b=vim.api.nvim_get_current_buf(); print('HANDSHAKE ft='..vim.bo[b].filetype..' tw='..tostring(vim.bo[b].textwidth)..' fo=['..(vim.bo[b].formatoptions or '')..'] wrap='..tostring(vim.wo[0].wrap)..' spell='..tostring(vim.wo[0].spell))" \
   +qa 2>&1 | grep -v 'E216\|filetypedetect'
@@ -825,7 +825,7 @@ nvim --headless --clean -u NORC --cmd "let &runtimepath=&runtimepath.',$PLUGIN_R
 
 # 3b. The keymap wiring is present after the real handshake.
 nvim --headless --clean -u NORC --cmd "let &runtimepath=&runtimepath.',$PLUGIN_ROOT'" \
-  +"lua vim.env.PI_EDITOR_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/x.sock\",\"token\":\"t\",\"pid\":1,\"cwd\":\"/p\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
+  +"lua vim.env.PI_NVIM_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/x.sock\",\"token\":\"t\",\"pid\":1,\"cwd\":\"/p\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
   +"lua vim.api.nvim_exec_autocmds('VimEnter', {})" \
   +"lua local b=vim.api.nvim_get_current_buf(); local n=0; for _,m in ipairs(vim.api.nvim_buf_get_keymap(b,'i')) do if (m.desc or ''):find('^pi-editor:') then n=n+1 end end; print('KEYMAPS count='..n)" \
   +qa 2>&1 | grep -v 'E216\|filetypedetect'
@@ -833,7 +833,7 @@ nvim --headless --clean -u NORC --cmd "let &runtimepath=&runtimepath.',$PLUGIN_R
 
 # 3c. No-op safety through the real handshake: fire TextChangedI (completion.lua absent) -> no throw.
 nvim --headless --clean -u NORC --cmd "let &runtimepath=&runtimepath.',$PLUGIN_ROOT'" \
-  +"lua vim.env.PI_EDITOR_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/x.sock\",\"token\":\"t\",\"pid\":1,\"cwd\":\"/p\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
+  +"lua vim.env.PI_NVIM_BRIDGE='{\"transport\":\"unix\",\"path\":\"/tmp/x.sock\",\"token\":\"t\",\"pid\":1,\"cwd\":\"/p\",\"fdAvailable\":true,\"serverVersion\":\"0.1.0\"}'" \
   +"lua vim.api.nvim_exec_autocmds('VimEnter', {})" \
   +"lua local b=vim.api.nvim_get_current_buf(); local ok=pcall(vim.api.nvim_exec_autocmds,'TextChangedI',{buffer=b}); print('NOOP ok='..tostring(ok))" \
   +qa 2>&1 | grep -v 'E216\|filetypedetect'

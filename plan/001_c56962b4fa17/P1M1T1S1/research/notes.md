@@ -82,7 +82,7 @@ tooling. If team prefers not to add a tsconfig yet, the pi-load gate (#1) alone
 suffices for S1 since types are erased at runtime.
 
 ## JSDoc header (Mode A) — required fields
-Purpose / env var name (`PI_EDITOR_BRIDGE`) / socket transport (Unix domain
+Purpose / env var name (`PI_NVIM_BRIDGE`) / socket transport (Unix domain
 socket, JSONL framing). Mark file as lifecycle-skeleton stage (S1).
 
 ## Gotchas

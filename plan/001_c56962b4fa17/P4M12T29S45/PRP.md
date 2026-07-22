@@ -1,4 +1,4 @@
-name: "P4.M12.T29.S45 — blink.cmp completion source module (pi-editor.nvim)"
+name: "P4.M12.T29.S45 — blink.cmp completion source module (pi-bridge.nvim)"
 description: |
 
   Create `plugin/lua/pi-editor/blink_source.lua` — an OPT-IN [blink.cmp](https://github.com/Saghen/blink.cmp)

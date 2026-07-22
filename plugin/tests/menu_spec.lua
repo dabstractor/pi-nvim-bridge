@@ -12,9 +12,9 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/menu_spec.lua")'
-local menu = require("pi-editor.menu")
-local completion = require("pi-editor.completion")
-local pi = require("pi-editor")
+local menu = require("pi-bridge.menu")
+local completion = require("pi-bridge.completion")
+local pi = require("pi-bridge")
 
 if pi.config == nil then pi.setup({ debounce_ms = 10 }) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -83,7 +83,7 @@ local function wait_for(ms, predicate)
   return vim.wait(ms, predicate, 5)
 end
 
-describe("pi-editor.menu", function()
+describe("pi-bridge.menu", function()
   before_each(reset)
   after_each(reset)
 
@@ -535,7 +535,7 @@ describe("pi-editor.menu", function()
         { value = "/mood", label = "/mood", description = "Mood" },
       })
       local mbuf = menu._state.menu_buf
-      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
       -- selected row (selected=1 => row 0): Pmenu base + PmenuSel (LAST-wins) + Comment
       local g0 = hl_groups_on_row(mbuf, ns, 0)
       assert.is_true(g0.Pmenu == true, "base Pmenu on the selected row 0")
@@ -558,7 +558,7 @@ describe("pi-editor.menu", function()
       })
       assert.are.equals(1, menu._state.selected, "selected is 1-based (1 after open)")
       local mbuf = menu._state.menu_buf
-      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
       local g0 = hl_groups_on_row(mbuf, ns, 0)
       local g1 = hl_groups_on_row(mbuf, ns, 1)
       assert.is_true(g0.PmenuSel == true, "row 0 (selected-1) has PmenuSel")
@@ -579,7 +579,7 @@ describe("pi-editor.menu", function()
       -- width == max_label_w only (6), NOT two-column
       local cfg = vim.api.nvim_win_get_config(menu._state.win)
       assert.are.equals(6, cfg.width, "label-only width == max_label_w (no desc column)")
-      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
       local g0 = hl_groups_on_row(mbuf, ns, 0)
       assert.is_true(g0.Pmenu == true, "label-only still has base Pmenu")
       assert.is_true(g0.PmenuSel == true, "label-only still has PmenuSel on row 0")
@@ -594,7 +594,7 @@ describe("pi-editor.menu", function()
       -- open WITH descriptions (Comment decorations applied)
       menu.open({ { value = "/a", label = "/a", description = "Aaa" } })
       local mbuf = menu._state.menu_buf
-      local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+      local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
       local g0a = hl_groups_on_row(mbuf, ns, 0)
       assert.is_true(g0a.Comment == true, "first render has Comment")
       -- reopen WITHOUT descriptions on the SAME buffer: Comment must be GONE (cleared)
@@ -631,7 +631,7 @@ describe("pi-editor.menu", function()
           { value = "/c", label = "/c", description = "Ccc" },
         })
         local mbuf = menu._state.menu_buf
-        local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+        local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
         assert.are.equals(1, menu._state.selected)
         assert.are.equals(0, sel_row(mbuf, ns))
         local win0 = menu._state.win
@@ -661,7 +661,7 @@ describe("pi-editor.menu", function()
           { value = "/c", label = "/c" },
         })
         local mbuf = menu._state.menu_buf
-        local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+        local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
         menu.next(); menu.next() -- 1→2→3
         assert.are.equals(3, menu._state.selected)
         menu.next()             -- 3→1 (wrap)
@@ -679,7 +679,7 @@ describe("pi-editor.menu", function()
           { value = "/c", label = "/c" },
         })
         local mbuf = menu._state.menu_buf
-        local ns = vim.api.nvim_create_namespace("pi-editor-menu")
+        local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
         menu.prev()             -- 1→3 (wrap)
         assert.are.equals(3, menu._state.selected, "prev wrap: selected==3")
         assert.are.equals(2, sel_row(mbuf, ns), "prev wrap: PmenuSel@row2")

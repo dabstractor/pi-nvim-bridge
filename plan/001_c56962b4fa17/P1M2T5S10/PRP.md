@@ -39,10 +39,10 @@ by construction + 1 updated); all other extension suites (S2–S9) stay green.
 
 ## User Persona
 
-**Target User**: The `pi-editor.nvim` Neovim plugin (P2.M5) — the bridge's only
+**Target User**: The `pi-bridge.nvim` Neovim plugin (P2.M5) — the bridge's only
 client. (Indirectly: the human editing a pi prompt in their `$EDITOR`.)
 
-**Use Case**: On `VimEnter`, after reading `PI_EDITOR_BRIDGE`, the plugin opens a
+**Use Case**: On `VimEnter`, after reading `PI_NVIM_BRIDGE`, the plugin opens a
 socket connection and sends `hello` FIRST, waiting for the `HelloResult` before
 sending anything else (synchronous request/response RPC). The gate is the
 server-side enforcement of that ordering.
@@ -577,7 +577,7 @@ node --import "$JITI_REG" extension/tests/handshake-gate.test.ts 2>&1 | grep -c 
 ### Scope Discipline (did NOT bleed into other tasks)
 - [ ] No S11–S14 handler registrations (the gate is method-agnostic).
 - [ ] No S15 domain-error wrapping (the gate uses `sendError` directly, never throws).
-- [ ] No S16 `process.env.PI_EDITOR_BRIDGE` write / no S17 `commandsChanged`.
+- [ ] No S16 `process.env.PI_NVIM_BRIDGE` write / no S17 `commandsChanged`.
 - [ ] No "reject by closing" hardening (explicitly deferred — PRD doesn't require it).
 
 ---

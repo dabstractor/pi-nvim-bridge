@@ -15,7 +15,7 @@
 -- Run (from the plugin/ directory):
 --   nvim --headless --clean -u tests/minimal_init.lua \
 --     -c 'lua require("plenary.busted").run("tests/menu_geometry_spec.lua")'
-local menu = require("pi-editor.menu")
+local menu = require("pi-bridge.menu")
 local compute_width = menu._compute_width
 local compute_height = menu._compute_height
 local compute_geometry = menu._compute_geometry
@@ -27,7 +27,7 @@ local function expect_geo(actual, exp, label)
   assert.are.same(exp, actual, label or "geometry mismatch")
 end
 
-describe("pi-editor.menu geometry helpers", function()
+describe("pi-bridge.menu geometry helpers", function()
   -- surface: all three pure helpers are exposed (+ S35 _truncate / column_metrics)
   it("exposes _compute_width / _compute_height / _compute_geometry / _truncate / _column_metrics as functions", function()
     assert.are.equals("function", type(compute_width))

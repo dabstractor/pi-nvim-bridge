@@ -323,7 +323,7 @@ future richer-docs-menu task could use `getCommands` + `resolve` for hover docs 
 note as a §15-style future enhancement, not S45.
 
 **`NVIM_APPNAME` (S47) is orthogonal** — the source works in any nvim config that
-loads `pi-editor.nvim`; the minimal-config optimization doesn't affect the module.
+loads `pi-bridge.nvim`; the minimal-config optimization doesn't affect the module.
 
 **No external Lua deps added** — the module uses only vim stdlib + the in-tree
 `pi-editor.*` modules. blink.cmp is the user's plugin (loaded by THEM; we never

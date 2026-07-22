@@ -8,7 +8,7 @@
 local M = {}
 local seen = {}  -- category -> true (the dedup set)
 
---- Emit `vim.notify(msg, level, {title="pi-editor"})` AT MOST ONCE per `category` per
+--- Emit `vim.notify(msg, level, {title="pi-bridge"})` AT MOST ONCE per `category` per
 --- session. Subsequent calls with the same category are silent no-ops (PRD §11 "never
 --- spam"). `vim.schedule`s the notify so this is safe to call from luv fast context
 --- (the handshake cb) OR the nvim main loop (the disconnect handler). Never throws
@@ -23,7 +23,7 @@ function M.once(category, level, msg)
   seen[category] = true
   local l = (type(level) == "number") and level or vim.log.levels.WARN
   vim.schedule(function()
-    pcall(vim.notify, msg, l, { title = "pi-editor" })
+    pcall(vim.notify, msg, l, { title = "pi-bridge" })
   end)
 end
 
