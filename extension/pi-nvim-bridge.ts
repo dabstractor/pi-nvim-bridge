@@ -1113,6 +1113,31 @@ export function makeGetCommandsHandler(deps: {
 	};
 }
 
+/**
+ * Detect an interactive (TUI) session across host variants.
+ *
+ * HOST COMPAT — pi vs. oh-my-pi (omp):
+ *  - pi (`@earendil-works/pi-coding-agent`) sets `ctx.mode === "tui"`.
+ *  - The oh-my-pi fork (`@oh-my-pi/pi-coding-agent`, the `omp` binary) REMOVED
+ *    `ctx.mode` from `ExtensionContext` and exposes `ctx.hasUI: boolean`
+ *    instead ("true in TUI, false in print/RPC"). omp's `ctx.mode` is
+ *    `undefined`, so a bare `ctx.mode === "tui"` guard bails EVERY session
+ *    start under omp — the bridge silently no-ops and never advertises
+ *    `PI_NVIM_BRIDGE` (verified; this is the omp incompat's root cause).
+ *
+ * `hasUI` is not on pi's `ExtensionContext` type, so it is read via a
+ * localized intersection `ExtensionContext & { hasUI?: boolean }` — typecheck
+ * stays clean against pi's types while tolerating omp's property at runtime.
+ * Either signal counts as interactive; everything else (pi print/rpc/json,
+ * or omp headless) short-circuits.
+ */
+function isInteractiveSession(ctx: ExtensionContext): boolean {
+	return (
+		ctx.mode === "tui" ||
+		(ctx as ExtensionContext & { hasUI?: boolean }).hasUI === true
+	);
+}
+
 export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
 		/**
@@ -1131,8 +1156,15 @@ export default function (pi: ExtensionAPI): void {
 		 * no provider capture, and (once added below) no socket bind, no env-var
 		 * advertisement, no commandsChanged emit. All future session_start logic
 		 * MUST be placed BELOW this guard so it inherits non-TUI protection.
+		 *
+		 * HOST COMPAT: pi signals TUI via `ctx.mode === "tui"`; the oh-my-pi fork
+		 * (`omp`) dropped `ctx.mode` entirely and exposes `ctx.hasUI: boolean`
+		 * instead (true in TUI, false in print/RPC). {@link isInteractiveSession}
+		 * accepts EITHER shape so the bridge runs under both hosts — without it,
+		 * omp's `ctx.mode === undefined` makes this guard bail every time and
+		 * `PI_NVIM_BRIDGE` is never advertised (the bridge silently no-ops).
 		 */
-		if (ctx.mode !== "tui") return;
+		if (!isInteractiveSession(ctx)) return;
 
 		console.log(
 			`pi-nvim-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`,

@@ -111,6 +111,13 @@ Critical facts this gives us:
    one trailing newline. There is no live sync — see §11 for the "autosave on
    quit" implication.
 
+> **Host compat (oh-my-pi / `omp`):** the `omp` fork
+> (`@oh-my-pi/pi-coding-agent`) launches `$EDITOR` the same way — `Bun.spawn`
+> with inherited stdio and **no `env:` override** — so a
+> `process.env.PI_NVIM_BRIDGE` write propagates to the child Neovim exactly as
+> under pi (Bun's `process.env` is the live env children inherit). The discovery
+> in fact (1) therefore holds under both hosts.
+
 ### 2.2 The autocomplete engine
 
 pi's completion lives in `packages/tui/src/autocomplete.ts`:
@@ -348,6 +355,12 @@ Use JSON‑RPC 2.0 envelopes for future‑proofing:
 
 > Per pi docs: **do not start background resources (sockets) from the factory
 > body**. Start them in `session_start`; tear them down in `session_shutdown`.
+>
+> **TUI-only gate is host-aware** (see §6.8): `session_start` short-circuits
+> unless the session is interactive. pi signals that with `ctx.mode === "tui"`;
+> the `omp` fork exposes `ctx.hasUI === true` instead. `isInteractiveSession()`
+> accepts either, so the bridge activates under both hosts and stays dormant in
+> print/RPC/JSON (and omp headless) modes.
 
 ### 6.3 Capturing the provider (reference skeleton)
 
@@ -439,10 +452,19 @@ const handlers = {
 ```ts
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_e, ctx) => {
+    if (!isInteractiveSession(ctx)) return;   // TUI-only — host-aware (see §6.8)
     captureProvider(ctx);
     startBridge(ctx, ctx.cwd);
   });
   pi.on("session_shutdown", () => stopBridge());
+}
+
+// Host-aware TUI detection: pi sets ctx.mode === "tui"; the omp fork dropped
+// ctx.mode and exposes ctx.hasUI === true instead. hasUI isn't on pi's type, so
+// it is read via a localized intersection (typecheck stays clean vs. pi's types).
+function isInteractiveSession(ctx: ExtensionContext): boolean {
+  return ctx.mode === "tui" ||
+    (ctx as ExtensionContext & { hasUI?: boolean }).hasUI === true;
 }
 ```
 
@@ -455,6 +477,47 @@ export default function (pi: ExtensionAPI) {
 - [ ] Survives multiple editor open/close cycles within one session (server stays up; each editor is just a new connection).
 - [ ] Idempotent start/stop; safe across `session_start`/`session_shutdown` churn.
 - [ ] `/reload` re‑captures the provider and emits `commandsChanged` to connected clients.
+
+### 6.8 Host compatibility — pi and oh-my-pi (`omp`)
+
+The extension runs under **both** pi (`@earendil-works/pi-coding-agent`, the
+`pi` binary) and its **oh-my-pi** fork (`@oh-my-pi/pi-coding-agent`, the `omp`
+binary). They share the extension runtime contract the bridge depends on —
+`ctx.ui.addAutocompleteProvider`, `ctx.cwd`, and the `session_start` /
+`session_shutdown` events — but diverge in the places below:
+
+| concern | pi | omp (`oh-my-pi`) |
+|---|---|---|
+| interactive-mode signal | `ctx.mode === "tui"` | `ctx.hasUI === true` (no `ctx.mode`) |
+| manifest discovery key | `"pi": { "extensions": [...] }` | reads `(pkg.omp ?? pkg.pi).extensions` — `pi` works as fallback |
+| config / plugin dir | `~/.pi/agent/extensions/` | `~/.omp/plugins/` |
+| runtime | Node | Bun |
+| install / list CLI | `pi install` / `pi list` | `omp plugin install` / `omp plugin list` |
+| extension type imports | `@earendil-works/*` | `@oh-my-pi/*` |
+
+The bridge sidesteps every divergence by construction:
+
+- **Manifest:** ships `"pi": { "extensions": [...] }`; omp's `(omp ?? pi)`
+  fallback discovers it unchanged (`omp plugin doctor` reports it healthy).
+- **Type imports:** all `@earendil-works/*` imports are `import type`-only, so
+  jiti/Bun erases them at load — no runtime resolution of a package omp lacks.
+- **Runtime:** uses only Node builtins (`net`, `crypto`, `fs`, `os`, `path`),
+  all of which Bun implements; `process.env` writes propagate to the spawned
+  `$EDITOR` under both Node and Bun.
+- **Mode gate:** `isInteractiveSession(ctx)` (§6.6) accepts `ctx.mode === "tui"`
+  **or** `ctx.hasUI === true`. Without this, omp's `ctx.mode === undefined`
+  makes the old `ctx.mode !== "tui"` guard bail every `session_start` — the
+  bridge silently no-ops and `PI_NVIM_BRIDGE` is never advertised. This dual
+  detection is **the** fix that enables omp; it is the root cause of the prior
+  incompat.
+
+> The Neovim plugin side (Component B) needs **no** host-specific change: it keys
+> only on the `PI_NVIM_BRIDGE` env var, which is host-agnostic.
+
+> **Scope note:** this compat covers the bridge specifically. *Other* pi plugins
+> often break under omp due to broader API drift (e.g. omp removed
+> `getGlobalSettings`, which pi plugins call). The bridge avoids this because it
+> uses only the stable API subset above.
 
 ---
 
@@ -710,7 +773,8 @@ pi-nvim-bridge/                      # ONE repo, two components
 
 ### 10.1 Prerequisites
 
-- pi (with extension support).
+- **pi** (with extension support) — or the **oh-my-pi** fork (`omp`); the
+  extension runs under either host (see §6.8).
 - Neovim **0.11+** (0.12 verified) — the exact-UTF-16 cursor conversion needs
   the 3-arg `vim.str_utfindex` overload added in 0.11. No plugin manager required
   for core features.
@@ -727,6 +791,12 @@ unresolved). Install it as a package:
 pi install git:github.com/dabstractor/pi-nvim-bridge
 # or: pi install npm:pi-nvim-bridge
 pi list      # should show "pi-nvim-bridge"
+
+# oh-my-pi (omp) host — omp reads the same `pi.extensions` manifest key as a
+# fallback (`(pkg.omp ?? pkg.pi).extensions`), so install is the omp equivalent:
+#   omp plugin install npm:pi-nvim-bridge
+#   omp plugin list        # should show "pi-nvim-bridge"
+#   omp plugin doctor      # should report it healthy
 ```
 
 `PI_NVIM_BRIDGE` is process-local (never visible in a shell); verify by opening
