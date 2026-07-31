@@ -1,0 +1,52 @@
+h1.0 Pi External‑Editor Completion — Spec & Implementation Guide
+ h2.0 Table of Contents
+ h2.1 1. Goals & Non‑Goals
+  h3.0 Goals
+  h3.1 Non‑Goals (v1)
+ h2.2 2. Background: How pi Launches $EDITOR and Does Completion
+  h3.2 2.1 Editor launch (interactive TUI mode)
+  h3.3 2.2 The autocomplete engine
+  h3.4 2.3 The public hook we exploit
+ h2.3 3. Architecture Overview
+ h2.4 4. The Core Technique
+ h2.5 5. IPC Protocol
+  h3.5 5.1 Transport
+  h3.6 5.2 Framing
+  h3.7 5.3 Connection lifecycle & handshake
+  h3.8 5.4 Methods
+  h3.9 5.5 Timing & cancellation
+ h2.6 6. Component A — pi-editor-bridge (pi extension)
+  h3.10 6.1 Responsibilities
+  h3.11 6.2 Events used
+  h3.12 6.3 Capturing the provider (reference skeleton)
+  h3.13 6.4 Server lifecycle (reference skeleton)
+  h3.14 6.5 Request handling (reference skeleton)
+  h3.15 6.6 Default export
+  h3.16 6.7 Requirements checklist (extension)
+ h2.7 7. Component B — pi-bridge.nvim (Neovim plugin)
+  h3.17 7.1 Activation gate
+  h3.18 7.2 Module layout
+  h3.19 7.3 bridge.lua — socket client (reference skeleton)
+  h3.20 7.4 completion.lua — trigger & accept flow
+  h3.21 7.5 menu.lua — dependency‑free floating popup
+  h3.22 7.6 Buffer‑local setup (ftplugin/pi-prompt.lua)
+  h3.23 7.7 Optional completion‑engine sources
+ h2.8 8. Coordinate & Encoding Contract
+ h2.9 9. File Layouts
+  h3.24 9.1 Extension (pi side)
+  h3.25 9.2 Plugin (Neovim side)
+ h2.10 10. Installation & Configuration
+  h3.26 10.1 Prerequisites
+  h3.27 10.2 Install the bridge extension
+  h3.28 10.3 Install the Neovim plugin
+  h3.29 10.4 $EDITOR wiring
+  h3.30 10.5 Default setup() options
+ h2.11 11. Edge Cases, Failure Modes & Limitations
+ h2.12 12. Security
+ h2.13 13. Implementation Plan (Phased)
+ h2.14 14. Testing Strategy
+ h2.15 15. Future Enhancements
+ h2.16 16. Reference: Key pi Source Locations
+  h3.31 TL;DR
+---
+code:19 para:50 list:26 table:4 quote:6
