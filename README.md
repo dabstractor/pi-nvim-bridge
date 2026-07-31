@@ -43,7 +43,8 @@ completions pi already offers.
 
 ## Prerequisites
 
-- **pi** with extension support.
+- **pi** with extension support — or the **oh-my-pi** fork (`omp`); the
+  extension runs under either host (see [Installation](#installation) below).
 - **Neovim ≥ 0.11** (0.12 verified) for the companion plugin — the exact-UTF-16
   cursor conversion needs the 3-arg `vim.str_utfindex` overload added in 0.11;
   `:checkhealth pi-bridge` enforces the floor.
@@ -69,6 +70,23 @@ Verify:
 ```bash
 pi list          # should show "pi-nvim-bridge"
 ```
+
+### oh-my-pi (`omp`)
+
+The extension also runs under the **oh-my-pi** fork (`omp`, Bun runtime) with
+**zero code change**: every `@earendil-works/*` import is `import type`-only
+(so omp's loader erases it at load), and omp reads the same `"pi"` manifest key
+as a fallback (`(pkg.omp ?? pkg.pi).extensions`).
+
+```bash
+omp plugin install npm:pi-nvim-bridge
+omp plugin list        # should show "pi-nvim-bridge"
+omp plugin doctor      # should report it healthy (✔ plugin:pi-nvim-bridge)
+```
+
+> Prefer `omp` over `pi` only if you already run the oh-my-pi fork. The
+> companion `pi-bridge.nvim` plugin install is identical under either host —
+> it keys only on the `PI_NVIM_BRIDGE` env var the bridge advertises.
 
 > ⚠️ **Multi-file package — no single-file drop-in.**
 > This extension is composed of four interdependent `.ts` files
