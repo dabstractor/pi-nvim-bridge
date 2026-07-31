@@ -174,7 +174,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S2",
                   "title": "shell.lua module state + resolve_shell(prefer) + pick_driver(basename) + session_cwd()",
-                  "status": "Researching",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S4"
@@ -193,7 +193,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S3",
                   "title": "ensure(on_ready) — spawn via vim.uv.spawn + driver delegation",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S2"
