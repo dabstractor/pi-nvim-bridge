@@ -4,28 +4,28 @@
       "type": "Phase",
       "id": "P1",
       "title": "Host compat (omp): verify + sync install docs",
-      "status": "Planned",
+      "status": "Researching",
       "description": "The code already implements omp (oh-my-pi) support via the dual-detection mode gate isInteractiveSession(ctx) at extension/pi-nvim-bridge.ts:1134-1138. This phase only verifies the implementation matches the expanded PRD and syncs the user-facing install docs. No production code change is expected; if verification finds a gap, fix it minimally.",
       "milestones": [
         {
           "type": "Milestone",
           "id": "P1.M1",
           "title": "omp compat verification & install docs",
-          "status": "Planned",
+          "status": "Researching",
           "description": "Verify the omp dual-detection mode gate, manifest discovery, and import-type-only usage are correct, then document the omp host install path in README.md.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Verify omp dual-detection + document omp install",
-              "status": "Planned",
+              "status": "Researching",
               "description": "Verify the isInteractiveSession(ctx) dual-detection gate accepts ctx.mode === 'tui' OR ctx.hasUI === true, that session_start guards on it, that the manifest ships the 'pi' extensions key, and that all @earendil-works/* imports are import type-only. Then sync README.md install instructions for the omp host.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S1",
                   "title": "Verify isInteractiveSession dual-detection + session_start guard + manifest + import-type-only",
-                  "status": "Researching",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-extension-side.md, isInteractiveSession(ctx) is implemented at extension/pi-nvim-bridge.ts:1134-1138 as `ctx.mode === \"tui\" || (ctx as ExtensionContext & { hasUI?: boolean }).hasUI === true`. The session_start handler (L1142) guards on it at L1167: `if (!isInteractiveSession(ctx)) return;`. All @earendil-works/* imports use `import type` (L135, L137-142). package.json L28-32 ships `\"pi\": { \"extensions\": [\"./extension/pi-nvim-bridge.ts\"] }` — omp's `(pkg.omp ?? pkg.pi).extensions` fallback discovers it unchanged.\n2. INPUT: The existing extension source files at extension/pi-nvim-bridge.ts, extension/protocol.ts, package.json.\n3. LOGIC: VERIFY (not implement) the following claims from PRD §6.8: (a) isInteractiveSession accepts both ctx.mode==='tui' and ctx.hasUI===true; (b) session_start guards on it before captureProvider/startBridge; (c) the descriptor (startBridge at L570-578) is host-agnostic; (d) package.json manifest key is 'pi' (omp fallback works); (e) every @earendil-works/* import is `import type`-only (grep for `import {` from @earendil-works and confirm none are value imports). If any gap is found, fix it minimally. Run `npm run typecheck` to confirm no regression.\n4. OUTPUT: Verification report (in commit message or PR description) confirming all 5 claims. No new code unless a gap is found.\n5. MOCKING: None — this is a verification/read-only task against the real source.\n6. DOCS: [Mode A] If the JSDoc on isInteractiveSession (L1119-1133) has drifted from the PRD §6.8 divergence table, update it to match. If no drift, no doc change.",
@@ -39,7 +39,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Sync README.md install section for omp host path",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
