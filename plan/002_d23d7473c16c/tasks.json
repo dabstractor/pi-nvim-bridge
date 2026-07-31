@@ -83,7 +83,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T1.S1",
                   "title": "Add optional shell fields to BridgeDescriptor + HelloResult + PingResult types",
-                  "status": "Researching",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-extension-side.md, BridgeDescriptor is at extension/protocol.ts:83-91 with 7 REQUIRED fields (transport, path, token, pid, cwd, fdAvailable, serverVersion). HelloResult (L107-112) has ok/serverVersion/cwd/fdAvailable. PingResult (L117-123) has ok/pid/cwd/fdAvailable/serverVersion. All fields are currently required; adding optionals is backward-compatible.\n2. INPUT: The existing type definitions in extension/protocol.ts.\n3. LOGIC: Add three OPTIONAL fields to BridgeDescriptor (PRD §17.10.1): `shell?: string` (resolved execution shell binary, e.g. \"/bin/zsh\"), `shellSource?: \"pi\" | \"$SHELL\" | \"default\"` (how it was derived), `shellPath?: string` (raw shellPath setting if user set one). Add the same three optional fields to HelloResult and PingResult (PRD §17.10.1: \"the hello result mirrors these\"). Update the header comment block at L73-82 that says \"all fields required\" to note the new optional fields. All optional (back-compat with older clients that don't read them).\n4. OUTPUT: BridgeDescriptor, HelloResult, PingResult types extended with optional shell fields. The `satisfies BridgeDescriptor` guard at pi-nvim-bridge.ts:570 will now accept shell fields.\n5. MOCKING: None — type-only change.\n6. DOCS: [Mode A] Update the JSDoc header comment at protocol.ts:73-82 to note the new optional fields and their advisory nature (PRD §17.10.2 honesty note: falls back to $SHELL if absent).",
@@ -99,7 +99,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T1.S2",
                   "title": "Implement resolveShell() + populate descriptor fields in startBridge",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S1"

@@ -73,9 +73,11 @@ export interface JsonRpcNotification {
 /* ==========================================================================
  * §B — BridgeDescriptor: JSON-serialized to process.env.PI_NVIM_BRIDGE (S16) and
  *      vim.json.decode'd by the Neovim activation gate (PRD §7.1). MUST be a plain
- *      JSON object (all fields required, JSON-serializable). `transport:"unix"` is a
- *      v1 literal; PRD §5.1 names a future TCP variant — extend as a discriminated
- *      union on `transport` when that lands.
+ *      JSON object (JSON-serializable). The 7 base fields above are required;
+ *      the §17.10 shell.* fields are OPTIONAL and ADVISORY — absent on older
+ *      builds/clients is fine, the plugin falls back to $SHELL (PRD §17.10.2).
+ *      `transport:"unix"` is a v1 literal; PRD §5.1 names a future TCP variant —
+ *      extend as a discriminated union on `transport` when that lands.
  *      Field value sources: path=socketPath; token=randomUUID-derived (the REAL auth
  *      boundary, PRD §12); pid=process.pid; cwd=ctx.cwd; fdAvailable=fd resolved;
  *      serverVersion=bridge version string (PRD §6.4 hardcodes "0.1.0").
@@ -88,6 +90,12 @@ export interface BridgeDescriptor {
 	cwd: string;
 	fdAvailable: boolean;
 	serverVersion: string;
+	// §17.10 (NEW) — OPTIONAL, advisory shell info so the plugin's !/!! completion
+	// can match the shell pi executes commands in (prefer:"pi"). Absent on older
+	// builds/clients is fine — the plugin falls back to $SHELL (PRD §17.10.2).
+	shell?: string; // "/bin/zsh" — resolved execution shell binary
+	shellSource?: "pi" | "$SHELL" | "default"; // how `shell` was derived
+	shellPath?: string; // raw shellPath setting, if the user set one
 }
 
 /* ==========================================================================
@@ -103,23 +111,36 @@ export interface HelloParams {
 	client?: string;
 	clientVersion?: string;
 }
-/** `hello` (C→S) success result: server identity + capabilities. */
+/** `hello` (C→S) success result: server identity + capabilities. (+ optional
+ *  §17.10 advisory shell.* mirror; plugin falls back to $SHELL if absent.) */
 export interface HelloResult {
 	ok: true;
 	serverVersion: string;
 	cwd: string;
 	fdAvailable: boolean;
+	// §17.10 (NEW) — OPTIONAL advisory mirror of BridgeDescriptor.shell* (PRD §17.10.1:
+	// "the hello result mirrors these"). Lets the plugin read the resolved shell
+	// post-handshake; falls back to $SHELL if absent.
+	shell?: string;
+	shellSource?: "pi" | "$SHELL" | "default";
+	shellPath?: string;
 }
 
 /** `ping` (C→S): empty params. */
 export type PingParams = Record<string, never>;
-/** `ping` (C→S) result: liveness + server info. */
+/** `ping` (C→S) result: liveness + server info. (+ optional §17.10 advisory
+ *  shell.* mirror; plugin falls back to $SHELL if absent.) */
 export interface PingResult {
 	ok: true;
 	pid: number;
 	cwd: string;
 	fdAvailable: boolean;
 	serverVersion: string;
+	// §17.10 (NEW) — OPTIONAL advisory mirror of BridgeDescriptor.shell* (PingResult
+	// is HelloResult + pid). Same semantics/fallback as HelloResult.
+	shell?: string;
+	shellSource?: "pi" | "$SHELL" | "default";
+	shellPath?: string;
 }
 
 /**

@@ -105,6 +105,55 @@ test("wire type shapes compile and round-trip key literals", () => {
 		fdAvailable: true,
 		serverVersion: "0.1.0",
 	};
+
+	// --- §17.10 OPTIONAL advisory shell fields (PRD §17.10.1/§7.10.2) ---
+	// (a) BridgeDescriptor ACCEPTS the three optional shell fields:
+	const descWithShell: BridgeDescriptor = {
+		transport: "unix",
+		path: "/tmp/x.sock",
+		token: "deadbeef",
+		pid: 1,
+		cwd: "/p",
+		fdAvailable: true,
+		serverVersion: "0.1.0",
+		shell: "/bin/zsh",
+		shellSource: "pi",
+		shellPath: "/bin/zsh",
+	};
+	assert.equal(descWithShell.shell, "/bin/zsh");
+
+	// (b) HelloResult ACCEPTS the mirror:
+	const helloWithShell: HelloResult = {
+		ok: true,
+		serverVersion: "0.1.0",
+		cwd: "/p",
+		fdAvailable: true,
+		shell: "/bin/bash",
+		shellSource: "default",
+	};
+	assert.equal(helloWithShell.shellSource, "default");
+
+	// (c) PingResult ACCEPTS the mirror:
+	const pingWithShell: PingResult = {
+		ok: true,
+		pid: 1,
+		cwd: "/p",
+		fdAvailable: true,
+		serverVersion: "0.1.0",
+		shell: "/bin/sh",
+		shellSource: "$SHELL",
+	};
+	assert.equal(pingWithShell.shellSource, "$SHELL");
+
+	// (d) shellSource accepts EACH union member (compile-time union exhaustiveness):
+	const src: "pi" | "$SHELL" | "default" = "$SHELL";
+	const dPi: BridgeDescriptor = { transport: "unix", path: "/", token: "t", pid: 0, cwd: "/", fdAvailable: false, serverVersion: "0", shellSource: "pi" };
+	const dEnv: BridgeDescriptor = { transport: "unix", path: "/", token: "t", pid: 0, cwd: "/", fdAvailable: false, serverVersion: "0", shellSource: "$SHELL" };
+	const dDef: BridgeDescriptor = { transport: "unix", path: "/", token: "t", pid: 0, cwd: "/", fdAvailable: false, serverVersion: "0", shellSource: "default" };
+	assert.equal(src, "$SHELL");
+	// NOTE: the existing `desc`/`helloRes`/`pingRes` literals above (WITHOUT shell
+	// fields) are the proof that the new fields are OPTIONAL and every existing
+	// producer still type-checks (the back-compat guarantee).
 	const gsParams: GetSuggestionsParams = {
 		lines: ["/mo"],
 		cursorLine: 0,
