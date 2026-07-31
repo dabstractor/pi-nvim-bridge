@@ -246,4 +246,128 @@ function M.reset()
 	state.failed     = false
 end
 
+-- ===========================================================================
+-- §17.5.2 spawn layer (ensure + the read_start route stubs)
+-- ===========================================================================
+
+--- The §17.5.2 spawn layer of the completion daemon. Idempotent lifecycle entry point:
+--- spawn-if-needed (via `state.driver.start`) then cache the proc/pipes for the session.
+--- Called by S4's `request()` before every framed request (and by completion routing
+--- P2.M2.T3 at first `!` activation).
+---
+--- Short-circuits on `state.failed` (daemon previously crashed / permanently disabled —
+--- §17.12 "no auto-respawn in v1") and on `state.proc` (already running — the
+--- "subsequent calls are instant" cache). On the spawn path: reads config FRESH (lazy
+--- require — async handshake + test mocks), resolves the shell (§17.4 via M.resolve_shell),
+--- picks the driver (§17.4.2 via M.pick_driver), and delegates the actual `vim.uv.spawn`
+--- to `state.driver.start({ shell, cwd, startup_timeout_ms }, cb)`. The
+--- `startup_timeout_ms` cold-start timer lives INSIDE the driver (S3 passes it THROUGH;
+--- it does NOT build a uv timer).
+---
+--- Sets `state.failed = true` on BOTH terminal paths (no-driver AND spawn error) so a
+--- broken daemon does not re-attempt resolve→pick→spawn on every keystroke (§17.12
+--- "menu never opens for ! lines"). The §17.12 one-time degrade NOTIFY is P2.M2.T3.S4's
+--- job — ensure sets only the FACT (`failed`).
+---
+--- NEVER throws: `pcall`s `state.driver.start` AND `stdout:read_start` (a buggy/
+--- malformed driver or handle degrades to a spawn error); guards `on_ready`'s type; the
+--- resolution helpers are already never-throws (S2). The driver's cb may fire from luv
+--- fast context — ensure's cb touches NO `vim.api.*` (only state writes +
+--- `stdout:read_start` + `on_ready`), so NO `vim.schedule` is needed here (the eventual
+--- menu hop is S5's job — `:help E5560`). Returns NOTHING; communicates via
+--- `on_ready(err|nil)` (node-style; S4 passes its own cb).
+---@param on_ready fun(err:string|nil) Called with nil on success/cached-ready; an err string on every failure.
+function M.ensure(on_ready)
+	if type(on_ready) ~= "function" then on_ready = function() end end -- never-throws on a bad arg
+	-- (1) Short-circuit: daemon previously crashed / permanently disabled (§17.12 no-respawn-in-v1).
+	if state.failed then return on_ready("daemon disabled") end
+	-- (2) Cache: already running (proc is set ONLY on a successful spawn — NOT state.driver,
+	--     which is set before spawn). Contract point 4 ("subsequent calls are instant").
+	if state.proc then return on_ready(nil) end
+	-- (3) Read config FRESH (lazy require — async handshake + test mocks; defensive:
+	--     config.shell may be nil until P2.M3.T6.S1). ⚠ NOT `pi.config.shell or {}`
+	--     (throws if config nil) — use the AND-chain.
+	local pi = require("pi-bridge")
+	local cfg = (pi.config and pi.config.shell) or {}
+	-- (4) Resolve ONE shell (§17.4; consistent with what pi EXECUTES). source is unused by
+	--     ensure (health §17.15 reports it).
+	local resolved = M.resolve_shell(cfg.prefer or "pi")
+	state.shell = resolved
+	-- (5) Pick the driver (§17.4.2). No driver → permanent degrade (§17.6.4): set failed so
+	--     the next ensure short-circuits (do NOT retry resolve→pick per keystroke).
+	state.driver = M.pick_driver(resolved)
+	if not state.driver then
+		state.failed = true
+		return on_ready("no driver for " .. tostring(resolved))
+	end
+	-- (6) Build the driver opts (the spawn delegation contract; startup_timeout_ms passed
+	--     THROUGH — the driver owns the cold-start timer). cwd nil is acceptable (a driver
+	--     may default its own cwd).
+	local opts = {
+		shell              = resolved,
+		cwd                = M.session_cwd(),
+		startup_timeout_ms = cfg.startup_timeout_ms or 5000,
+	}
+	-- (7) Delegate spawn to the driver. pcall so a buggy driver.start (throws vs calls cb
+	--     with err) degrades to a spawn error. The driver calls cb from its own (possibly
+	--     luv) context — our cb is fast-context-safe.
+	local ok, spawn_err = pcall(state.driver.start, opts, function(err, proc, stdin, stdout)
+		-- (8a) FAILURE: driver reported err (binary missing / rc error / startup timeout).
+		--     Mark permanently failed (§17.12) so the next ensure short-circuits.
+		if err then
+			state.driver = nil
+			state.failed = true
+			return on_ready(err)
+		end
+		-- (8b) SUCCESS: cache the handles + cwd; wire stdout:read_start to the _feed/_reset
+		--     route (the §17.5.2 skeleton callback EXACTLY). pcall read_start (the handle
+		--     the driver returned could be malformed).
+		state.proc, state.stdin, state.stdout = proc, stdin, stdout
+		state.cwd = opts.cwd
+		pcall(function()
+			stdout:read_start(function(_, chunk)
+				if chunk then M._feed(chunk) else M._reset() end -- data → S5 stub; EOF → S6 stub
+			end)
+		end)
+		on_ready(nil)
+	end)
+	-- (8c) driver.start ITSELF threw (not just called cb with err): treat as spawn error (D4).
+	if not ok then
+		state.driver = nil
+		state.failed = true
+		on_ready(tostring(spawn_err))
+	end
+end
+
+--- Forward-contract stub for S5: append a stdout chunk to the rx buffer. S5 will REPLACE
+--- this body with the full `__PIRESP_START__`/`__PIRESP_END__` sentinel slicing +
+--- `vim.json.decode` + AutocompleteItem normalization → the gen-guarded
+--- `state.pending_cb`. S3 ships append-only so the read_start wiring ensure installs is
+--- complete + a stray chunk during S3's window (before S5 lands) degrades to a no-op,
+--- never errors. Runs on the libuv loop (fast context) — S5 must `vim.schedule` the
+--- final menu hop (`:help E5560`). NEVER throws (string concat + a table write). Exported
+--- so S5 replaces via `M._feed = ...` + tests assert the read_start route.
+---@param chunk string? A stdout chunk (nil/"" tolerated).
+function M._feed(chunk)
+	state.rx_buf = state.rx_buf .. (chunk or "")
+end
+
+--- Forward-contract stub for S6: the §17.12 EOF-on-daemon-pipe path (shell crashed
+--- mid-session). Marks the daemon unhealthy (`state.failed = true`) + nils proc/pipes so
+--- the next `ensure` short-circuits via the `failed` guard (no auto-respawn in v1). S6's
+--- `teardown()` will REPLACE/EXTEND this: prepend `uv.process_kill(proc, "sigkill")` +
+--- `pipe:read_stop()` + `pipe:close()`×3 THEN clear state (on EOF the proc is already
+--- dead, so kill is moot; pipe-close matters for real handles — S6 owns it). Does NOT
+--- call `M.reset()` (that clears `failed = false`; `_reset` must LEAVE `failed = true` —
+--- a CRASH is not a clean exit). Runs on the libuv loop (fast context). NEVER throws
+--- (plain table assignments). Exported so S6 replaces it.
+function M._reset()
+	state.failed = true
+	state.proc   = nil
+	state.stdin  = nil
+	state.stdout = nil
+	state.driver = nil
+	state.rx_buf = ""
+end
+
 return M
