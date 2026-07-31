@@ -122,6 +122,7 @@ test("gate: `hello` is EXEMPT pre-handshake (routes to handler, flips the flag)"
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -180,6 +181,7 @@ test("REAL: pre-handshake ping ⇒ -32600, then hello ⇒ HelloResult, then ping
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);

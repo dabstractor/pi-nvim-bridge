@@ -359,6 +359,7 @@ test("REAL: a handshaken client receives the commandsChanged broadcast over a Un
 			getToken: () => REAL_TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -412,6 +413,7 @@ test("REAL: closeAllConnections() (via stopBridge) closes a live client", async 
 			getToken: () => REAL_TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);

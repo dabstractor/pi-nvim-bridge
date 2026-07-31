@@ -68,6 +68,7 @@ test("makeHelloHandler: good token → returns HelloResult + flips handshakeComp
 		getToken: () => TOKEN,
 		getCwd: () => "/tmp/proj",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	const result = handler({ token: TOKEN }, state);
@@ -86,6 +87,7 @@ test("makeHelloHandler: client/clientVersion params are ignored (accepted)", () 
 		getToken: () => TOKEN,
 		getCwd: () => "/tmp",
 		getFdAvailable: () => false,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	// Both extra fields present — must still succeed and be ignored.
@@ -103,6 +105,7 @@ test("makeHelloHandler: bad token → throws BridgeRpcError(-32600, fatal:true)"
 		getToken: () => TOKEN,
 		getCwd: () => "/tmp",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	assert.throws(
@@ -124,6 +127,7 @@ test("makeHelloHandler: missing token param → bad token", () => {
 		getToken: () => TOKEN,
 		getCwd: () => "/tmp",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	assert.throws(
@@ -138,6 +142,7 @@ test("makeHelloHandler: wrong-type token (number) → bad token", () => {
 		getToken: () => TOKEN,
 		getCwd: () => "/tmp",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	// The wire param type is `unknown`; a numeric token is malformed on the wire.
@@ -153,6 +158,7 @@ test("makeHelloHandler: null params → bad token", () => {
 		getToken: () => TOKEN,
 		getCwd: () => "/tmp",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	assert.throws(
@@ -167,6 +173,7 @@ test("makeHelloHandler: getToken()===undefined (stopped bridge) → bad token", 
 		getToken: () => undefined,
 		getCwd: () => "/tmp",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	// Even a client that "knows" the (now-cleared) token must be rejected.
@@ -183,10 +190,43 @@ test("makeHelloHandler: getCwd()===undefined → result.cwd==='' (defensive fall
 		getToken: () => TOKEN,
 		getCwd: () => undefined,
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	const result = handler({ token: TOKEN }, state) as HelloResultShape;
 	assert.equal(result.cwd, "", "missing cwd must serialize as empty string");
+	assert.equal(result.ok, true);
+});
+
+test("makeHelloHandler: getShellInfo stub → result carries shell/shellSource/shellPath", () => {
+	const state: ConnectionState = { handshakeComplete: false };
+	const handler = makeHelloHandler({
+		getToken: () => TOKEN,
+		getCwd: () => "/tmp",
+		getFdAvailable: () => true,
+		getShellInfo: () => ({ shell: "/bin/zsh", shellSource: "pi", shellPath: "/bin/zsh" }),
+		version: BRIDGE_VERSION,
+	});
+	const result = handler({ token: TOKEN }, state) as HelloResultShape;
+	assert.equal(result.shell, "/bin/zsh");
+	assert.equal(result.shellSource, "pi");
+	assert.equal(result.shellPath, "/bin/zsh");
+	assert.equal(state.handshakeComplete, true);
+});
+
+test("makeHelloHandler: getShellInfo()=>undefined → shell fields ABSENT (advisory, §17.10)", () => {
+	const state: ConnectionState = { handshakeComplete: false };
+	const handler = makeHelloHandler({
+		getToken: () => TOKEN,
+		getCwd: () => "/tmp",
+		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
+		version: BRIDGE_VERSION,
+	});
+	const result = handler({ token: TOKEN }, state) as Record<string, unknown>;
+	assert.equal("shell" in result, false, "shell key must be ABSENT when getShellInfo returns undefined");
+	assert.equal("shellSource" in result, false);
+	assert.equal("shellPath" in result, false);
 	assert.equal(result.ok, true);
 });
 
@@ -195,6 +235,7 @@ test("makeHelloHandler: token value NEVER appears in the thrown message (PRD §1
 		getToken: () => TOKEN,
 		getCwd: () => "/tmp",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	try {
@@ -219,6 +260,7 @@ test("dispatch: valid hello JSONL → success envelope + handshakeComplete", asy
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp/proj",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -256,6 +298,7 @@ test("dispatch: bad-token hello → -32600 envelope + sock.end()", async () => {
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -294,6 +337,7 @@ test("REAL: hello success + bad-token→disconnect over a real Unix socket", asy
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -378,4 +422,7 @@ type HelloResultShape = {
 	serverVersion?: string;
 	cwd?: string;
 	fdAvailable?: boolean;
+	shell?: string; // §17.10 (S3) — advisory shell mirror
+	shellSource?: string; // §17.10 (S3)
+	shellPath?: string; // §17.10 (S3)
 };

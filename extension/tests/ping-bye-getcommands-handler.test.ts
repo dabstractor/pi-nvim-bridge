@@ -174,7 +174,7 @@ function makeRecordingDeps(opts: {
 	fdAvailable: boolean;
 	version: string;
 }) {
-	const calls = { getPid: 0, getCwd: 0, getFdAvailable: 0 };
+	const calls = { getPid: 0, getCwd: 0, getFdAvailable: 0, getShellInfo: 0 };
 	return {
 		deps: {
 			getPid: () => {
@@ -188,6 +188,10 @@ function makeRecordingDeps(opts: {
 			getFdAvailable: () => {
 				calls.getFdAvailable++;
 				return opts.fdAvailable;
+			},
+			getShellInfo: () => {
+				calls.getShellInfo++;
+				return undefined; // S3: advisory; absent-shell path (keys omitted via conditional spread)
 			},
 			version: opts.version,
 		},
@@ -204,6 +208,7 @@ test("UNIT ping: happy path → returns PingResult with exact pid/cwd/fdAvailabl
 		getPid: () => 4242,
 		getCwd: () => "/tmp/proj",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	const got = handler({}, { handshakeComplete: true });
@@ -216,11 +221,45 @@ test("UNIT ping: happy path → returns PingResult with exact pid/cwd/fdAvailabl
 	});
 });
 
+test("UNIT ping: getShellInfo stub → result carries shell/shellSource/shellPath", () => {
+	const handler = makePingHandler({
+		getPid: () => 4242,
+		getCwd: () => "/tmp/proj",
+		getFdAvailable: () => true,
+		getShellInfo: () => ({ shell: "/bin/zsh", shellSource: "pi", shellPath: "/bin/zsh" }),
+		version: BRIDGE_VERSION,
+	});
+	const got = handler({}, { handshakeComplete: true }) as {
+		shell?: string;
+		shellSource?: string;
+		shellPath?: string;
+	};
+	assert.equal(got.shell, "/bin/zsh");
+	assert.equal(got.shellSource, "pi");
+	assert.equal(got.shellPath, "/bin/zsh");
+});
+
+test("UNIT ping: getShellInfo()=>undefined → shell fields ABSENT (advisory, §17.10)", () => {
+	const handler = makePingHandler({
+		getPid: () => 4242,
+		getCwd: () => "/tmp/proj",
+		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
+		version: BRIDGE_VERSION,
+	});
+	const got = handler({}, { handshakeComplete: true }) as Record<string, unknown>;
+	assert.equal("shell" in got, false, "shell key must be ABSENT when getShellInfo returns undefined");
+	assert.equal("shellSource" in got, false);
+	assert.equal("shellPath" in got, false);
+	assert.equal(got.ok, true);
+});
+
 test("UNIT ping: getCwd()===undefined → result.cwd===\"\" (defensive fallback, mirrors hello)", () => {
 	const handler = makePingHandler({
 		getPid: () => 1,
 		getCwd: () => undefined,
 		getFdAvailable: () => false,
+		getShellInfo: () => undefined,
 		version: "0.1.0",
 	});
 	const got = handler({}, { handshakeComplete: true }) as { cwd: string };
@@ -232,6 +271,7 @@ test("UNIT ping: sync return → result is a plain object (NOT a Promise)", () =
 		getPid: () => 7,
 		getCwd: () => "/x",
 		getFdAvailable: () => true,
+		getShellInfo: () => undefined,
 		version: BRIDGE_VERSION,
 	});
 	const r = handler({}, { handshakeComplete: true });
@@ -383,6 +423,7 @@ test("DISPATCH ping: valid (post-handshake) → success envelope; socket NOT clo
 			getPid: () => 4242,
 			getCwd: () => "/tmp/proj",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -419,6 +460,7 @@ test("DISPATCH ping: pre-handshake → -32600 \"handshake required\" (S10 gate)"
 			getPid: () => 1,
 			getCwd: () => "/x",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -449,6 +491,7 @@ test("DISPATCH ping: empty-params method ignores unknown params (no -32602)", as
 			getPid: () => 7,
 			getCwd: () => "/x",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -653,6 +696,7 @@ test("REAL: hello → ping → getCommands → bye(client observes close) over a
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -663,6 +707,7 @@ test("REAL: hello → ping → getCommands → bye(client observes close) over a
 			getPid: () => process.pid,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
@@ -754,6 +799,7 @@ test("SECURITY: the TOKEN value never appears in any ping/bye/getCommands respon
 			getPid: () => 1,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);

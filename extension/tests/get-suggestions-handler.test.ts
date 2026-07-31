@@ -515,6 +515,7 @@ test("REAL: hello → getSuggestions(\"/m\") ⇒ result; getSuggestions(\"zzz\")
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);

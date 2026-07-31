@@ -252,7 +252,7 @@ test("REAL: end-to-end JSONL round-trip over a Unix socket (hello → method-not
 	// register a hello handler and have the client hello-first, then proceed.
 	registerBridgeHandler(
 		"hello",
-		makeHelloHandler({ getToken: () => REAL_TOKEN, getCwd: () => "/tmp", getFdAvailable: () => true, version: BRIDGE_VERSION }),
+		makeHelloHandler({ getToken: () => REAL_TOKEN, getCwd: () => "/tmp", getFdAvailable: () => true, getShellInfo: () => undefined, version: BRIDGE_VERSION }),
 	);
 	const sockpath = join(tmpdir(), `pi-bridge-conn-test-${randomUUID()}.sock`);
 	const server = createServer((c) => onConnection(c));

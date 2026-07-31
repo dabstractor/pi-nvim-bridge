@@ -504,6 +504,7 @@ test("REAL: hello → shouldTriggerFileCompletion(\"/set\") ⇒ false; shouldTri
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);

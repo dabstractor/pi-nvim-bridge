@@ -695,6 +695,7 @@ export function makeHelloHandler(deps: {
 	getToken: () => string | undefined;
 	getCwd: () => string | undefined;
 	getFdAvailable: () => boolean;
+	getShellInfo: () => ShellInfo | undefined; // §17.10 (S3) — advisory shell mirror
 	version: string;
 }): MethodHandler {
 	return (params: unknown, state: ConnectionState): HelloResult => {
@@ -708,11 +709,13 @@ export function makeHelloHandler(deps: {
 			throw new BridgeRpcError(-32600, "bad token", { fatal: true });
 		}
 		state.handshakeComplete = true; // S10 gates every other method on this.
+		const sh = deps.getShellInfo(); // §17.10 (S3) — advisory; omitted when unresolved
 		return {
 			ok: true,
 			serverVersion: deps.version,
 			cwd: deps.getCwd() ?? "",
 			fdAvailable: deps.getFdAvailable(),
+			...(sh ? { shell: sh.shell, shellSource: sh.shellSource, shellPath: sh.shellPath } : {}),
 		};
 	};
 }
@@ -742,15 +745,20 @@ export function makePingHandler(deps: {
 	getPid: () => number;
 	getCwd: () => string | undefined;
 	getFdAvailable: () => boolean;
+	getShellInfo: () => ShellInfo | undefined; // §17.10 (S3) — advisory shell mirror
 	version: string;
 }): MethodHandler {
-	return (_params: unknown, _state: ConnectionState): PingResult => ({
-		ok: true,
-		pid: deps.getPid(),
-		cwd: deps.getCwd() ?? "", // defensive fallback (mirrors hello's getCwd() ?? "")
-		fdAvailable: deps.getFdAvailable(),
-		serverVersion: deps.version,
-	});
+	return (_params: unknown, _state: ConnectionState): PingResult => {
+		const sh = deps.getShellInfo(); // §17.10 (S3) — advisory; omitted when unresolved
+		return {
+			ok: true,
+			pid: deps.getPid(),
+			cwd: deps.getCwd() ?? "", // defensive fallback (mirrors hello's getCwd() ?? "")
+			fdAvailable: deps.getFdAvailable(),
+			serverVersion: deps.version,
+			...(sh ? { shell: sh.shell, shellSource: sh.shellSource, shellPath: sh.shellPath } : {}),
+		};
+	};
 }
 
 /**
@@ -1248,7 +1256,7 @@ export default function (pi: ExtensionAPI): void {
 		// handshake flag; S10 adds the gate that blocks every non-hello method until it's set.
 		registerBridgeHandler(
 			"hello",
-			makeHelloHandler({ getToken, getCwd, getFdAvailable, version: BRIDGE_VERSION }),
+			makeHelloHandler({ getToken, getCwd, getFdAvailable, getShellInfo, version: BRIDGE_VERSION }),
 		);
 		// S11: register `getSuggestions` AFTER `hello` (so the provider is captured and the
 		// token exists) and AFTER startBridge. The handler delegates to pi's live
@@ -1293,7 +1301,7 @@ export default function (pi: ExtensionAPI): void {
 		// All three are idempotent (Map.set) — safe across reload/new/resume/fork.
 		registerBridgeHandler(
 			"ping",
-			makePingHandler({ getPid, getCwd, getFdAvailable, version: BRIDGE_VERSION }),
+			makePingHandler({ getPid, getCwd, getFdAvailable, getShellInfo, version: BRIDGE_VERSION }),
 		);
 		registerBridgeHandler("bye", makeByeHandler());
 		registerBridgeHandler(

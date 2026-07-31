@@ -484,6 +484,7 @@ test("REAL: hello → applyCompletion(\"/m\" + item model) ⇒ {lines:[\"/model 
 			getToken: () => TOKEN,
 			getCwd: () => "/tmp",
 			getFdAvailable: () => true,
+			getShellInfo: () => undefined,
 			version: BRIDGE_VERSION,
 		}),
 	);
