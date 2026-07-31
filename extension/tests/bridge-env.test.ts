@@ -26,6 +26,8 @@ import {
 	BRIDGE_ENV,
 	__deps,
 	__setFdAvailableForTest,
+	__setShellInfoForTest, // NEW (S2)
+	type ShellInfo, // NEW (S2) — for the injection literal
 } from "../pi-nvim-bridge.ts";
 import bridgeFactory from "../pi-nvim-bridge.ts";
 
@@ -66,6 +68,15 @@ function mockDeps() {
 	};
 }
 
+// The deterministic injected ShellInfo (full 3 fields → 10 keys). Decouples the
+// descriptor-shape assertions from the live `$SHELL` (which varies per machine).
+// NEW (S2) — bridge-env.test.ts GOTCHA #1/#3.
+const SHELL_INFO_STUB: ShellInfo = {
+	shell: "/bin/zsh",
+	shellSource: "pi",
+	shellPath: "/bin/zsh",
+};
+
 // ============================================================================
 // TEST 1 — MOCKED, EXACT DESCRIPTOR SHAPE: after startBridge, process.env.PI_NVIM_BRIDGE
 // is a single-line JSON string parsing to an object with EXACTLY 7 keys and the expected
@@ -74,6 +85,7 @@ function mockDeps() {
 test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_NVIM_BRIDGE", () => {
 	const mock = mockDeps();
 	__setFdAvailableForTest(true); // deterministic fd value (GOTCHA #2/#6)
+	__setShellInfoForTest(SHELL_INFO_STUB); // NEW (S2) — deterministic shell
 	try {
 		const fakeCtx = { cwd: "/test/proj" } as ExtensionContext; // WITH cwd (GOTCHA #3)
 		startBridge(fakeCtx);
@@ -90,9 +102,13 @@ test("startBridge writes a valid single-line BridgeDescriptor to process.env.PI_
 		assert.equal(desc.cwd, "/test/proj");
 		assert.equal(desc.fdAvailable, true, "fdAvailable === real getFdAvailable() value");
 		assert.equal(desc.serverVersion, "0.1.0", "serverVersion is '0.1.0' (NOT version/0.0.1)");
-		assert.equal(Object.keys(desc).length, 7, "exactly 7 keys — no stray `version`");
+		assert.equal(desc.shell, "/bin/zsh"); // NEW (S2)
+		assert.equal(desc.shellSource, "pi"); // NEW (S2)
+		assert.equal(desc.shellPath, "/bin/zsh"); // NEW (S2)
+		assert.equal(Object.keys(desc).length, 10, "7 base + 3 shell — no stray `version`");
 	} finally {
 		__setFdAvailableForTest(undefined); // reset fd cache (GOTCHA #6)
+		__setShellInfoForTest(undefined); // NEW (S2) — reset shell cache
 		mock.restore();
 		stopBridge(); // deletes the env var
 	}
@@ -110,6 +126,7 @@ test("stopBridge deletes process.env.PI_NVIM_BRIDGE (and is a safe no-op when ne
 
 	const mock = mockDeps();
 	__setFdAvailableForTest(false); // deterministic; also exercises the false branch
+	__setShellInfoForTest(SHELL_INFO_STUB); // NEW (S2) — deterministic shell
 	try {
 		startBridge({ cwd: "/test/proj" } as ExtensionContext);
 		assert.equal(typeof process.env[BRIDGE_ENV], "string", "env set after startBridge");
@@ -118,6 +135,7 @@ test("stopBridge deletes process.env.PI_NVIM_BRIDGE (and is a safe no-op when ne
 		assert.equal(process.env[BRIDGE_ENV], undefined, "env deleted after stopBridge");
 	} finally {
 		__setFdAvailableForTest(undefined);
+		__setShellInfoForTest(undefined); // NEW (S2) — reset shell cache
 		mock.restore();
 		stopBridge();
 	}
@@ -131,6 +149,7 @@ test("stopBridge deletes process.env.PI_NVIM_BRIDGE (and is a safe no-op when ne
 test("startBridge is idempotent: each call writes a FRESH descriptor (2nd overwrites 1st)", () => {
 	const mock = mockDeps();
 	__setFdAvailableForTest(true);
+	__setShellInfoForTest(SHELL_INFO_STUB); // NEW (S2) — deterministic shell
 	try {
 		const ctx = { cwd: "/test/proj" } as ExtensionContext;
 
@@ -152,9 +171,10 @@ test("startBridge is idempotent: each call writes a FRESH descriptor (2nd overwr
 		assert.notEqual(desc.path, firstPath, "2nd socket path differs from 1st");
 		assert.notEqual(desc.token, firstToken, "2nd token differs from 1st");
 		assert.equal(desc.serverVersion, "0.1.0");
-		assert.equal(Object.keys(desc).length, 7);
+		assert.equal(Object.keys(desc).length, 10); // CHANGED 7 → 10 (NEW S2)
 	} finally {
 		__setFdAvailableForTest(undefined);
+		__setShellInfoForTest(undefined); // NEW (S2) — reset shell cache
 		mock.restore();
 		stopBridge();
 	}
@@ -183,6 +203,7 @@ test("factory wiring: session_start(tui) sets env, session_shutdown deletes, non
 
 	const mock = mockDeps();
 	__setFdAvailableForTest(true);
+	__setShellInfoForTest(SHELL_INFO_STUB); // NEW (S2) — deterministic shell
 	try {
 		const { startHandler, shutdownHandler } = captureHandlers();
 		const STARTUP = { reason: "startup" } as SessionStartEvent;
@@ -227,6 +248,7 @@ test("factory wiring: session_start(tui) sets env, session_shutdown deletes, non
 		}
 	} finally {
 		__setFdAvailableForTest(undefined);
+		__setShellInfoForTest(undefined); // NEW (S2) — reset shell cache
 		mock.restore();
 		stopBridge();
 	}

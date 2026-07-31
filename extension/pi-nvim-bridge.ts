@@ -316,6 +316,12 @@ export const NVIM_APPNAME_OPTIN_ENV = "PI_NVIM_APPNAME";
  */
 export const DEFAULT_NVIM_APPNAME = "pi-bridge";
 
+/** The opt-in env var THIS extension reads to mirror pi's `shellPath` setting
+ *  (PRD §17.10.2). The extension CANNOT read `settingsManager`/`getShellConfig`
+ *  (not on `ExtensionContext`), so the user sets this once to advertise the
+ *  shell pi runs `!`/`!!` in. Absent ⇒ fall back to `$SHELL` (`/bin/bash`). */
+export const SHELL_MIRROR_ENV = "PI_NVIM_SHELL";
+
 /** The session's cwd (stored from `ctx.cwd` on `session_start`). Read via
  *  {@link getCwd}; used by {@link makeHelloHandler} for `HelloResult.cwd` and (later)
  *  by S16's `PI_NVIM_BRIDGE` descriptor. */
@@ -387,6 +393,67 @@ function isExecutableFile(p: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * Resolved shell info for the §17.10 advisory descriptor fields. `shell` is the
+ * binary pi will execute `!`/`!!` commands in; `shellSource` says how it was
+ * derived; `shellPath` is present only in the "pi" branch. Exported so S3 can
+ * type its injected `getShell` dep on {@link makeHelloHandler}/{@link makePingHandler}.
+ */
+export interface ShellInfo {
+	shell: string;
+	shellSource: "pi" | "$SHELL" | "default";
+	shellPath?: string;
+}
+
+/** Cached {@link ShellInfo} (resolved ONCE per process via {@link resolveShell}).
+ *  Read via {@link getShellInfo}; used by {@link startBridge} for the §17.10
+ *  `PI_NVIM_BRIDGE` descriptor fields (and, later, by S3's hello/ping handlers). */
+let shellCache: ShellInfo | undefined;
+
+/**
+ * @returns the resolved {@link ShellInfo} (cached on first call; one-time per
+ *  process). Mirrors {@link getFdAvailable}'s lazy-cache shape. Test seam:
+ *  {@link __setShellInfoForTest}.
+ */
+export function getShellInfo(): ShellInfo {
+	if (shellCache === undefined) shellCache = resolveShell();
+	return shellCache;
+}
+
+/** Test seam: override the cached shell info (pass `undefined` to reset so the
+ *  next {@link getShellInfo} call re-resolves). Parallels {@link __setFdAvailableForTest}. */
+export function __setShellInfoForTest(v: ShellInfo | undefined): void {
+	shellCache = v;
+}
+
+/**
+ * Resolve the shell pi will execute `!`/`!!` commands in (PRD §17.10.2). ADVISORY:
+ * the result populates the `shell`/`shellSource`/`shellPath` descriptor fields so
+ * the plugin's `prefer:"pi"` completion can match pi's execution shell; the plugin
+ * falls back to `$SHELL` if these fields are absent (PRD §17.4 fallback chain).
+ *
+ * HONESTY NOTE (PRD §17.10.2): `settingsManager`/`getShellConfig()` are NOT on
+ * `ExtensionContext`, so this extension CANNOT read pi's real `shellPath` setting
+ * through the public API. It replicates `getShellConfig`'s ~10-line resolution via
+ * the same inputs pi uses:
+ *  (a) {@link SHELL_MIRROR_ENV} (`PI_NVIM_SHELL`) — a bridge-local mirror of the
+ *      `shellPath` setting the user sets once. If set ⇒ `"pi"` (shellPath = that value).
+ *  (b) Else `process.env.SHELL` ⇒ `"$SHELL"` (no shellPath).
+ *  (c) Else `/bin/bash` (pi's getShellConfig default on Unix) ⇒ `"default"` (no shellPath).
+ * If this mismatch bites real users, PRD §17.17 proposes a tiny upstream
+ * `ctx.getShellConfig()` (matching §15's "propose upstream only if it bites" posture).
+ *
+ * Exported (unlike {@link resolveFdAvailable}) so the 3-branch chain is directly
+ * unit-testable. Pure: reads only process.env, no module state, no side effects.
+ */
+export function resolveShell(): ShellInfo {
+	const explicit = process.env[SHELL_MIRROR_ENV];
+	if (explicit) return { shell: explicit, shellSource: "pi", shellPath: explicit };
+	const sh = process.env.SHELL;
+	if (sh) return { shell: sh, shellSource: "$SHELL" };
+	return { shell: "/bin/bash", shellSource: "default" };
 }
 
 /**
@@ -567,6 +634,7 @@ export function startBridge(ctx: ExtensionContext): void {
 	 * plugin never activates and the bridge is unreachable. The descriptor is a flat
 	 * JSON object → JSON.stringify emits a single line (no "\n") — the safe env value.
 	 */
+	const shellInfo = getShellInfo(); // §17.10 — advisory shell fields (cached; resolveShell runs ≤1×/process)
 	process.env[BRIDGE_ENV] = JSON.stringify({
 		transport: "unix",
 		path: socketPath, // module-level let — guaranteed set above
@@ -575,6 +643,9 @@ export function startBridge(ctx: ExtensionContext): void {
 		cwd: ctx.cwd, // read DIRECTLY (module `cwd` is set in session_start AFTER startBridge)
 		fdAvailable: getFdAvailable(), // REAL resolver — consistent with hello/ping (GOTCHA #2)
 		serverVersion: BRIDGE_VERSION, // "0.1.0" — NOT "0.0.1" (GOTCHA #1)
+		shell: shellInfo.shell, // §17.10 — advisory; plugin falls back to $SHELL if absent
+		shellSource: shellInfo.shellSource,
+		shellPath: shellInfo.shellPath, // undefined in $SHELL/default branches → JSON.stringify omits
 	} satisfies BridgeDescriptor); // compile-time guard against the `version` typo
 	/**
 	 * [Mode A] Optional NVIM_APPNAME opt-in — minimal-config optimization (PRD §10.4).
