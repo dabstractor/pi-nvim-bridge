@@ -85,13 +85,15 @@ the E2E proof. Do not invent a second, stdin-based path to the same proof.
 - **Always wrap risky commands in `timeout`.** Example: `timeout 90 <cmd>`. A hung
   headless nvim with no timeout will block your whole turn.
 - **Prefer `read` / `edit` / `write` over shell heredocs** for emitting file content.
+- Test runner (run from the repo root):
+  - Plenary spec: `timeout 90 nvim --headless --clean -u tests/minimal_init.lua -c 'lua require("plenary.busted").run("tests/<spec>.lua")'`
+  - Smoke (no plenary): `timeout 60 nvim --headless --clean -u NORC +"luafile tests/<module>_smoke.lua" +qa`
+
+## Hard rules for cleanup, PRP research and implementation agents (not interactive sessions):
 - **You may ONLY modify** `src/`, `tests/`, `lib/`, `plugin/`, and other implementation
   dirs, plus repo-root meta files like this one. Never touch `PRD.md`, `plan/`, any
   `PRP.md`, `tasks.json`, `prd_snapshot.md`, or `TEST_RESULTS.md`.
 - **Never run** `prd`, `run-prd.sh`, `tsk`, or any pipeline/orchestration script.
-- Test runner (run from the repo root):
-  - Plenary spec: `timeout 90 nvim --headless --clean -u tests/minimal_init.lua -c 'lua require("plenary.busted").run("tests/<spec>.lua")'`
-  - Smoke (no plenary): `timeout 60 nvim --headless --clean -u NORC +"luafile tests/<module>_smoke.lua" +qa`
 
 ---
 
