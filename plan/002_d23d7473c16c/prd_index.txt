@@ -1,0 +1,81 @@
+h1.0 Pi External‑Editor Completion — Spec & Implementation Guide
+ h2.0 Table of Contents
+ h2.1 1. Goals & Non‑Goals
+  h3.0 Goals
+  h3.1 Non‑Goals (v1)
+ h2.2 2. Background: How pi Launches $EDITOR and Does Completion
+  h3.2 2.1 Editor launch (interactive TUI mode)
+  h3.3 2.2 The autocomplete engine
+  h3.4 2.3 The public hook we exploit
+ h2.3 3. Architecture Overview
+ h2.4 4. The Core Technique
+ h2.5 5. IPC Protocol
+  h3.5 5.1 Transport
+  h3.6 5.2 Framing
+  h3.7 5.3 Connection lifecycle & handshake
+  h3.8 5.4 Methods
+  h3.9 5.5 Timing & cancellation
+ h2.6 6. Component A — pi-nvim-bridge (pi extension)
+  h3.10 6.1 Responsibilities
+  h3.11 6.2 Events used
+  h3.12 6.3 Capturing the provider (reference skeleton)
+  h3.13 6.4 Server lifecycle (reference skeleton)
+  h3.14 6.5 Request handling (reference skeleton)
+  h3.15 6.6 Default export
+  h3.16 6.7 Requirements checklist (extension)
+  h3.17 6.8 Host compatibility — pi and oh-my-pi (omp)
+ h2.7 7. Component B — pi-bridge.nvim (Neovim plugin)
+  h3.18 7.1 Activation gate
+  h3.19 7.2 Module layout
+  h3.20 7.3 bridge.lua — socket client (reference skeleton)
+  h3.21 7.4 completion.lua — trigger & accept flow
+  h3.22 7.5 menu.lua — dependency‑free floating popup
+  h3.23 7.6 Buffer‑local setup (ftplugin/pi-prompt.lua)
+  h3.24 7.7 Optional completion‑engine sources
+ h2.8 8. Coordinate & Encoding Contract
+ h2.9 9. File Layouts
+ h2.10 10. Installation & Configuration
+  h3.25 10.1 Prerequisites
+  h3.26 10.2 Install the bridge extension
+  h3.27 10.3 Install the Neovim plugin
+  h3.28 10.4 $EDITOR wiring
+  h3.29 10.5 Default setup() options
+ h2.11 11. Edge Cases, Failure Modes & Limitations
+ h2.12 12. Security
+ h2.13 13. Implementation Plan (Phased)
+ h2.14 14. Testing Strategy
+ h2.15 15. Future Enhancements
+ h2.16 16. Reference: Key pi Source Locations
+ h2.17 17. Shell Completion for !/!! Bash Mode
+  h3.30 17.1 Motivation & scope
+  h3.31 17.2 The shell mismatch — the central design constraint
+  h3.32 17.3 Architecture & integration points
+  h3.33 17.4 Shell resolution — the prefer contract (default "pi")
+   h4.0 17.4.1 What descriptor.shell contains
+   h4.1 17.4.2 Driver selection
+   h4.2 17.4.3 The one‑time educational notice
+  h3.34 17.5 The completion daemon
+   h4.3 17.5.1 Framing protocol (transport‑agnostic)
+   h4.4 17.5.2 shell.lua — reference skeleton
+  h3.35 17.6 Per‑shell drivers
+   h4.5 17.6.1 fish — Tier 1 (clean win)
+   h4.6 17.6.2 zsh — Tier 1 (capture‑completion)
+   h4.7 17.6.3 bash — Tier 2 (best‑effort)
+   h4.8 17.6.4 unknown shells — degrade
+  h3.36 17.7 Routing in the plugin (completion.lua extension)
+  h3.37 17.8 Local acceptance & quoting (NOT pi's applyCompletion)
+  h3.38 17.9 Trigger & UX parity with the TUI
+  h3.39 17.10 Bridge descriptor extension (the only Component A change)
+   h4.9 17.10.1 BridgeDescriptor (extension/protocol.ts)
+   h4.10 17.10.2 Resolution in the extension (why it can't call getShellConfig)
+  h3.40 17.11 Configuration
+  h3.41 17.12 Failure modes & degradation
+  h3.42 17.13 Security
+  h3.43 17.14 Coordinate & encoding notes (shell path)
+  h3.44 17.15 Testing strategy (shell‑specific)
+  h3.45 17.16 Implementation phasing (appends to §13 as Phase 6)
+  h3.46 17.17 Future enhancements (appends to §15)
+  h3.47 17.18 Key pi source locations (shell/completion)
+  h3.48 TL;DR
+---
+code:29 para:98 list:41 table:7 quote:17

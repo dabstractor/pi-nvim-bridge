@@ -1,0 +1,662 @@
+{
+  "backlog": [
+    {
+      "type": "Phase",
+      "id": "P1",
+      "title": "Host compat (omp): verify + sync install docs",
+      "status": "Planned",
+      "description": "The code already implements omp (oh-my-pi) support via the dual-detection mode gate isInteractiveSession(ctx) at extension/pi-nvim-bridge.ts:1134-1138. This phase only verifies the implementation matches the expanded PRD and syncs the user-facing install docs. No production code change is expected; if verification finds a gap, fix it minimally.",
+      "milestones": [
+        {
+          "type": "Milestone",
+          "id": "P1.M1",
+          "title": "omp compat verification & install docs",
+          "status": "Planned",
+          "description": "Verify the omp dual-detection mode gate, manifest discovery, and import-type-only usage are correct, then document the omp host install path in README.md.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M1.T1",
+              "title": "Verify omp dual-detection + document omp install",
+              "status": "Planned",
+              "description": "Verify the isInteractiveSession(ctx) dual-detection gate accepts ctx.mode === 'tui' OR ctx.hasUI === true, that session_start guards on it, that the manifest ships the 'pi' extensions key, and that all @earendil-works/* imports are import type-only. Then sync README.md install instructions for the omp host.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S1",
+                  "title": "Verify isInteractiveSession dual-detection + session_start guard + manifest + import-type-only",
+                  "status": "Researching",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-extension-side.md, isInteractiveSession(ctx) is implemented at extension/pi-nvim-bridge.ts:1134-1138 as `ctx.mode === \"tui\" || (ctx as ExtensionContext & { hasUI?: boolean }).hasUI === true`. The session_start handler (L1142) guards on it at L1167: `if (!isInteractiveSession(ctx)) return;`. All @earendil-works/* imports use `import type` (L135, L137-142). package.json L28-32 ships `\"pi\": { \"extensions\": [\"./extension/pi-nvim-bridge.ts\"] }` — omp's `(pkg.omp ?? pkg.pi).extensions` fallback discovers it unchanged.\n2. INPUT: The existing extension source files at extension/pi-nvim-bridge.ts, extension/protocol.ts, package.json.\n3. LOGIC: VERIFY (not implement) the following claims from PRD §6.8: (a) isInteractiveSession accepts both ctx.mode==='tui' and ctx.hasUI===true; (b) session_start guards on it before captureProvider/startBridge; (c) the descriptor (startBridge at L570-578) is host-agnostic; (d) package.json manifest key is 'pi' (omp fallback works); (e) every @earendil-works/* import is `import type`-only (grep for `import {` from @earendil-works and confirm none are value imports). If any gap is found, fix it minimally. Run `npm run typecheck` to confirm no regression.\n4. OUTPUT: Verification report (in commit message or PR description) confirming all 5 claims. No new code unless a gap is found.\n5. MOCKING: None — this is a verification/read-only task against the real source.\n6. DOCS: [Mode A] If the JSDoc on isInteractiveSession (L1119-1133) has drifted from the PRD §6.8 divergence table, update it to match. If no drift, no doc change.",
+                  "prd_selectors": [
+                    "h3.17",
+                    "h3.11",
+                    "h3.15"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S2",
+                  "title": "Sync README.md install section for omp host path",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: README.md currently documents only the pi host install path (pi install, pi list). PRD §6.8 documents the omp divergence: omp discovers extensions via `(pkg.omp ?? pkg.pi).extensions`, installs via `omp plugin install npm:pi-nvim-bridge`, lists via `omp plugin list`, and health-checks via `omp plugin doctor`. The extension runtime is identical under both hosts because all @earendil-works/* imports are type-only (erased by both Node/jiti and Bun/jiti).\n2. INPUT: The verified claims from P1.M1.T1.S1 confirming the bridge runs unchanged under omp.\n3. LOGIC: Update README.md install section to add: (a) the omp host install commands (`omp plugin install npm:pi-nvim-bridge`, `omp plugin list`, `omp plugin doctor`); (b) a one-line note that the extension runs under either host (pi or omp) with zero code change. Place the omp path as an alternative subsection alongside the existing pi path. Do NOT change the Neovim plugin install instructions (host-agnostic — keys only on PI_NVIM_BRIDGE env var).\n4. OUTPUT: README.md install section now documents both pi and omp host paths.\n5. MOCKING: None.\n6. DOCS: This IS the doc update (Mode B rides here per the delta PRD). The final changeset-level docs task (P2.M4.T7) will further augment README.md with the shell-completion feature blurb.",
+                  "prd_selectors": [
+                    "h3.17",
+                    "h2.10",
+                    "h3.25",
+                    "h3.26"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Phase",
+      "id": "P2",
+      "title": "Shell Completion for !/!! Bash Mode",
+      "status": "Researching",
+      "description": "Additive subsystem per PRD §17. Reuses the existing menu, activation gate, debounce/supersession, and VimLeavePre teardown. Adds one Lua module tree (lua/pi-bridge/shell*) plus a single enriched descriptor field-set on Component A. Component A changes by exactly one descriptor field-set (all optional, back-compat). The daemon is a child of the nvim process (vim.uv.spawn), not of pi, and never touches the bridge socket.",
+      "milestones": [
+        {
+          "type": "Milestone",
+          "id": "P2.M1",
+          "title": "Pescriptor shell fields + daemon manager + spike",
+          "status": "Planned",
+          "description": "First vertical slice: the descriptor advertises the resolved shell, and shell.lua can resolve -> spawn -> do a framed round-trip in isolation (proven with fish, printed to :messages). No plugin integration yet.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P2.M1.T1",
+              "title": "Bridge descriptor shell/shellSource/shellPath",
+              "status": "Planned",
+              "description": "Add three optional fields (shell, shellSource, shellPath) to BridgeDescriptor, HelloResult, and PingResult in protocol.ts. Implement resolveShell() in the extension replicating getShellConfig's resolution. Populate the fields in startBridge and mirror in hello/ping handlers. Extract the fields in bridge.lua M.server_info.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T1.S1",
+                  "title": "Add optional shell fields to BridgeDescriptor + HelloResult + PingResult types",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-extension-side.md, BridgeDescriptor is at extension/protocol.ts:83-91 with 7 REQUIRED fields (transport, path, token, pid, cwd, fdAvailable, serverVersion). HelloResult (L107-112) has ok/serverVersion/cwd/fdAvailable. PingResult (L117-123) has ok/pid/cwd/fdAvailable/serverVersion. All fields are currently required; adding optionals is backward-compatible.\n2. INPUT: The existing type definitions in extension/protocol.ts.\n3. LOGIC: Add three OPTIONAL fields to BridgeDescriptor (PRD §17.10.1): `shell?: string` (resolved execution shell binary, e.g. \"/bin/zsh\"), `shellSource?: \"pi\" | \"$SHELL\" | \"default\"` (how it was derived), `shellPath?: string` (raw shellPath setting if user set one). Add the same three optional fields to HelloResult and PingResult (PRD §17.10.1: \"the hello result mirrors these\"). Update the header comment block at L73-82 that says \"all fields required\" to note the new optional fields. All optional (back-compat with older clients that don't read them).\n4. OUTPUT: BridgeDescriptor, HelloResult, PingResult types extended with optional shell fields. The `satisfies BridgeDescriptor` guard at pi-nvim-bridge.ts:570 will now accept shell fields.\n5. MOCKING: None — type-only change.\n6. DOCS: [Mode A] Update the JSDoc header comment at protocol.ts:73-82 to note the new optional fields and their advisory nature (PRD §17.10.2 honesty note: falls back to $SHELL if absent).",
+                  "prd_selectors": [
+                    "h3.39",
+                    "h4.9",
+                    "h4.10",
+                    "h3.8",
+                    "h2.5"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T1.S2",
+                  "title": "Implement resolveShell() + populate descriptor fields in startBridge",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-extension-side.md, the resolver pattern to mirror is resolveFdAvailable (pi-nvim-bridge.ts:346-361): module-level cache + getter `getFdAvailable()` + test seam `__setFdAvailableForTest()`. The descriptor is written in startBridge at L570-578 with `satisfies BridgeDescriptor` guard. settingsManager/getShellConfig are NOT on ExtensionContext, so the extension CANNOT read pi's real shellPath setting — it replicates the resolution via env vars (PRD §17.10.2).\n2. INPUT: The extended BridgeDescriptor type from P2.M1.T1.S1.\n3. LOGIC: Implement resolveShell() mirroring resolveFdAvailable's cache+getter+test-seam pattern. Resolution chain (PRD §17.10.2): (a) process.env.PI_NVIM_SHELL set -> { shell: that, shellSource: \"pi\", shellPath: that }; (b) else process.env.SHELL set -> { shell: that, shellSource: \"$SHELL\" }; (c) else -> { shell: \"/bin/bash\", shellSource: \"default\" }. Add a module-level cache `let shellCache: { shell: string; shellSource: string; shellPath?: string } | undefined`. Export `getShellInfo()` getter + `__setShellInfoForTest()` test seam. Populate the three fields in the startBridge descriptor object literal at L570-578 (add `shell: info.shell, shellSource: info.shellSource, shellPath: info.shellPath` alongside the existing fields). The `satisfies BridgeDescriptor` guard will typecheck now that the fields exist on the interface.\n4. OUTPUT: resolveShell() + getShellInfo() + __setShellInfoForTest() exported. The PI_NVIM_BRIDGE env blob now includes shell/shellSource/shellPath.\n5. MOCKING: Tests stub process.env.PI_NVIM_SHELL and process.env.SHELL; call __setShellInfoForTest(undefined) to reset cache between cases.\n6. DOCS: [Mode A] JSDoc on resolveShell() citing PRD §17.10.2's honesty note (advisory-only; falls back to $SHELL; cannot read pi's real shellPath setting).",
+                  "prd_selectors": [
+                    "h3.39",
+                    "h4.10",
+                    "h3.33",
+                    "h4.0"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T1.S3",
+                  "title": "Wire shell fields into makeHelloHandler + makePingHandler deps injection",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T1.S1",
+                    "P2.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-extension-side.md, makeHelloHandler (pi-nvim-bridge.ts:623-649) and makePingHandler (L670-686) are deps-injected factories. makeHelloHandler deps: { getToken, getCwd, getFdAvailable, version }. makePingHandler deps: { getPid, getCwd, getFdAvailable, version }. Both return objects that include cwd/fdAvailable — they should now also include shell fields. Registration sites: hello at L1180, ping at L1225.\n2. INPUT: getShellInfo() from P2.M1.T1.S2. Extended HelloResult/PingResult types from P2.M1.T1.S1.\n3. LOGIC: Add `getShellInfo: () => { shell: string; shellSource: string; shellPath?: string } | undefined` to both makeHelloHandler and makePingHandler deps objects. In makeHelloHandler's return, add `shell: deps.getShellInfo()?.shell, shellSource: deps.getShellInfo()?.shellSource, shellPath: deps.getShellInfo()?.shellPath` (mirroring how getCwd is used with `?? \"\"`). Same for makePingHandler. At the registration sites (L1180 for hello, L1225 for ping), pass `getShellInfo` in the deps alongside getFdAvailable.\n4. OUTPUT: hello and ping RPC responses now carry shell/shellSource/shellPath when the bridge has resolved them.\n5. MOCKING: Existing hello-handler.test.ts pattern — inject stub getShellInfo into deps. Assert the result includes shell fields.\n6. DOCS: none — internal handler wiring, no user-facing/config/API surface change.",
+                  "prd_selectors": [
+                    "h3.39",
+                    "h4.9",
+                    "h3.8"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T1.S4",
+                  "title": "Extract shell fields in bridge.lua M.server_info + descriptor type",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md, M.server_info (bridge.lua:188) is a pi-bridge.ServerInfo|nil set at L332 inside the handshake success branch (resolve_handshake). The ServerInfo class (L183-187) currently has serverVersion/cwd/fdAvailable. The descriptor is also available via init.lua M.descriptor (L110), populated from PI_NVIM_BRIDGE env var. The existing extraction at L329-333 defensively reads result fields (e.g. `info.cwd = result.cwd or descriptor.cwd`).\n2. INPUT: The extended HelloResult type from P2.M1.T1.S1 (now carries shell/shellSource/shellPath in the hello response). The descriptor from PI_NVIM_BRIDGE env var (also carries them from P2.M1.T1.S2).\n3. LOGIC: (a) Add `shell`, `shellSource`, `shellPath` fields to the pi-bridge.ServerInfo class annotation (bridge.lua L183-187). (b) In the ServerInfo extraction (L329-333 area), defensively read them from the hello result with fallback to descriptor: `info.shell = result.shell or descriptor.shell; info.shellSource = result.shellSource or descriptor.shellSource; info.shellPath = result.shellPath`. (c) Also add shell/shellSource/shellPath to the pi-bridge.BridgeDescriptor class annotation (init.lua L98-108). (d) Export a helper `M.get_shell_info()` that returns `{ shell=..., shellSource=..., shellPath=... }` from M.server_info (or M.descriptor if server_info is nil) for shell.lua to consume.\n4. OUTPUT: bridge.lua M.server_info carries shell fields after handshake. M.get_shell_info() exposes them for shell.lua.\n5. MOCKING: Plugin tests use a fake bridge with a synthetic hello response including shell fields. Assert M.server_info carries them.\n6. DOCS: [Mode A] Update the ServerInfo and BridgeDescriptor class annotations to document the new optional shell fields and their advisory nature.",
+                  "prd_selectors": [
+                    "h3.39",
+                    "h4.0",
+                    "h4.9",
+                    "h3.33"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P2.M1.T2",
+              "title": "shell.lua daemon manager + fish spike",
+              "status": "Planned",
+              "description": "Create the shell.lua daemon manager module: state, resolve_shell(prefer), pick_driver(basename), ensure(on_ready), request(line, cursor, after, cb) with gen-guard supersession, _feed(chunk) buffering/sentinel-slicing/decode/normalize, teardown(). Validate the framed round-trip with a standalone fish spike.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T2.S1",
+                  "title": "Fish spike — standalone validation of framed round-trip",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-prd-section-17.md §17.16 step 21, the spike proves the seam: a ~30-line script that spawns `fish -i`, sends `complete -C \"git ch\"` framed with __PIREQ__/__PIRESP_START__/__PIRESP_END__ sentinels, parses `word<TAB>desc`, and prints to :messages. CRITICAL: per repo AGENTS.md HARD RULE, this spike MUST be written to a file (e.g. /tmp/shell_spike.lua or tests/shell_fish_spike.lua), NEVER piped into nvim stdin. Run via `timeout 30 nvim --headless --clean -u NORC +\"luafile /tmp/shell_spike.lua\" +qa`. fish is at /usr/bin/fish (verified).\n2. INPUT: None — standalone spike script.\n3. LOGIC: Write a Lua script that: (a) uses vim.uv.spawn to launch `fish -i` with stdin/stdout pipes; (b) writes a startup fish function `__pi_handle` that reads a __PIREQ__ line, runs `complete -C`, and emits results between __PIRESP_START__/__PIRESP_END__ sentinels; (c) sends `__PIREQ__\\t{\"line\":\"git ch\",\"cursor\":6,\"after\":\"\"}\\n`; (d) reads stdout, buffers until __PIRESP_END__ appears, parses `word<TAB>desc` lines; (e) prints parsed items to :messages (vim.api.nvim_echo). Validate that `checkout`, `cherry`, `cherry-pick` appear with descriptions. Every vim.uv call must be pcall'd.\n4. OUTPUT: A validated spike script proving the framed fish round-trip works. Gate decision: proceed to full module if checkout/cherry appear.\n5. MOCKING: None — uses the real fish binary.\n6. DOCS: none — spike artifact, discarded or kept as a smoke test.",
+                  "prd_selectors": [
+                    "h3.45",
+                    "h3.34",
+                    "h4.3",
+                    "h4.5"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T2.S2",
+                  "title": "shell.lua module state + resolve_shell(prefer) + pick_driver(basename) + session_cwd()",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T1.S4"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md and research-prd-section-17.md §17.5.2, shell.lua owns module-level state { proc, stdin, stdout, rx_buf, gen, inflight, shell, driver, cwd, pending_cb }. It reads config + descriptor FRESH at call time (require(\"pi-bridge\").config.shell, require(\"pi-bridge\").bridge.server_info or M.get_shell_info()). The gen-guard mirrors completion.lua's two-layer supersession (state.gen monotonic counter).\n2. INPUT: M.get_shell_info() from P2.M1.T1.S4 (provides descriptor.shell/shellSource/shellPath). require(\"pi-bridge\").config.shell from P2.M3.T6.S1 (config block — but can default to { prefer=\"pi\" } if not yet configured).\n3. LOGIC: Create lua/pi-bridge/shell.lua with: (a) `local state = { proc=nil, stdin=nil, stdout=nil, rx_buf=\"\", gen=0, inflight=false, shell=nil, driver=nil, cwd=nil, pending_cb=nil, failed=false }`; (b) `M.resolve_shell(prefer)` implementing PRD §17.4 fallback chain: prefer==\"pi\" -> descriptor.shell or $SHELL or /bin/bash; prefer==\"shell\" -> $SHELL or /bin/bash; prefer==\"bash\" -> \"/bin/bash\"; prefer is a path -> that path. Returns (shell_path, source). Check config.shell.drivers for user-disabled drivers; (c) `pick_driver(resolved_shell)` -> basename via `resolved_shell:gsub(\".*/\",\"\")` -> pcall(require, \"pi-bridge.shell.\"..base) -> return drv if it has .start, else nil (degrade); (d) `M.session_cwd()` -> reads descriptor.cwd (from require(\"pi-bridge\").descriptor or bridge.server_info.cwd). Read config + descriptor FRESH at call time (not cached at module load).\n4. OUTPUT: shell.lua module with state + resolve_shell + pick_driver + session_cwd. No spawn yet.\n5. MOCKING: Tests stub vim.env.SHELL, inject a fake bridge with synthetic server_info. Test resolve_shell fallback chain and pick_driver selection.\n6. DOCS: [Mode A] Lua docstring header on shell.lua explaining: daemon lifecycle (persistent child of nvim), framed protocol (__PIREQ__/__PIRESP_START__/__PIRESP_END__), gen-guard supersession (mirrors completion.lua), and that it reads config+descriptor fresh at call time.",
+                  "prd_selectors": [
+                    "h3.34",
+                    "h4.4",
+                    "h3.33",
+                    "h4.0",
+                    "h4.1",
+                    "h3.40"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T2.S3",
+                  "title": "ensure(on_ready) — spawn via vim.uv.spawn + driver delegation",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.5.2 skeleton, ensure(on_ready) spawns the daemon if not already running. It calls resolve_shell + pick_driver, then delegates to driver.start() which spawns the actual shell process. The daemon is a child of nvim (vim.uv.spawn), NOT of pi. If spawn fails, state.driver=nil and cb(\"error\"). startup_timeout_ms (default 5000) guards cold-start.\n2. INPUT: resolve_shell/prefer and pick_driver from P2.M1.T2.S2. Driver modules (fish/zsh/bash) export start(opts, on_ready) — the fish driver from P2.M2.T4.S1.\n3. LOGIC: Implement M.ensure(on_ready): if state.proc then return on_ready(nil) (already running). Read config fresh: `local cfg = require(\"pi-bridge\").config.shell or {}`. Call resolve_shell(cfg.prefer or \"pi\"). Call pick_driver. If no driver -> on_ready(\"no driver for \"..shell). Call state.driver.start({ shell=resolved, cwd=M.session_cwd(), startup_timeout_ms=cfg.startup_timeout_ms or 5000 }, function(err, proc, stdin, stdout) — on success: store proc/stdin/stdout in state, start stdout read_start with _feed callback, call on_ready(nil). On error: state.driver=nil, on_ready(err). Every uv call pcall'd. If state.failed (daemon previously crashed) -> short-circuit on_ready(\"daemon disabled\").\n4. OUTPUT: M.ensure(on_ready) spawns the daemon on first call, caches it. Subsequent calls are instant.\n5. MOCKING: Tests use a fake driver module (exports start that calls on_ready with fake proc/pipes). Test: first call spawns, second call reuses, spawn error sets driver=nil.\n6. DOCS: none — internal lifecycle, documented in the module header docstring from P2.M1.T2.S2.",
+                  "prd_selectors": [
+                    "h3.34",
+                    "h4.4",
+                    "h3.41",
+                    "h3.42"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T2.S4",
+                  "title": "request(line, cursor, after, cb) — framed protocol + gen-guard supersession",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S2",
+                    "P2.M1.T2.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.5.1, the request payload is `__PIREQ__\\t{json}\\n` where json = { line, cursor (byte offset), after }. Per §17.5.2, supersession mirrors completion.lua: state.gen bumped per request, captured in the response callback. One in-flight request at a time (shell completion is fast; sentinel protocol is sequential). Per-request timeout (config.shell.timeout_ms, default 1500) via uv timer.\n2. INPUT: M.ensure from P2.M1.T2.S3. state.gen from P2.M1.T2.S2.\n3. LOGIC: Implement M.request(line, cursor, after, cb): call M.ensure(function(err) — if err return cb(err). Bump state.gen, capture local gen. Set state.inflight=true. Store state.pending_cb = function(items, prefix) with gen-guard: `if gen ~= state.gen then return end; state.inflight=false; cb(nil, items, prefix)`. Encode payload: `vim.json.encode({ line=line, cursor=cursor, after=after or \"\" })`. Write to stdin: `state.stdin:write(string.format(\"__PIREQ__\\t%s\\n\", payload))`. Arm a uv timer for cfg.timeout_ms (default 1500) that fires pending_cb(\"timeout\", {}, \"\") if not yet resolved (gen-guard drops it if superseded). pcall the write; on write failure call cb(\"write failed\").\n4. OUTPUT: M.request(line, cursor, after, cb) sends a framed request and calls cb(err, items, prefix) on response. Late responses for stale keystrokes are dropped by the gen-guard.\n5. MOCKING: Tests use a fake driver that captures the written payload and calls back with canned responses. Test: sequential requests return correct items; a late response for gen=1 is dropped when gen=2 is current.\n6. DOCS: none — internal protocol, documented in module header.",
+                  "prd_selectors": [
+                    "h3.34",
+                    "h4.4",
+                    "h4.3",
+                    "h3.36",
+                    "h3.41"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T2.S5",
+                  "title": "_feed(chunk) buffering + sentinel slicing + JSON decode + normalize to AutocompleteItem[]",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S4"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.5.1, the plugin buffers stdout, slices between `__PIRESP_START__\\n` and next `__PIRESP_END__\\n`, vim.json.decode's the payload. Anything outside sentinels (prompts, async segments, stray output) is discarded. Per §17.5.2, _feed appends chunk to rx_buf, scans for sentinel pairs, extracts JSON, decodes (pcall'd), normalizes to AutocompleteItem[] { value, label, description? }, calls state.pending_cb (gen-guarded). Leftover stays in rx_buf.\n2. INPUT: Raw stdout chunks from the daemon pipe (vim.uv read_start callback). The AutocompleteItem shape from completion.lua L246-252: { value: string, label: string, description?: string }.\n3. LOGIC: Implement M._feed(chunk): if not chunk then M._reset() return end (EOF -> teardown). Append chunk to state.rx_buf. While rx_buf contains both __PIRESP_START__ and __PIRESP_END__: extract the substring between them (after __PIRESP_START__\\n up to __PIRESP_END__\\n). pcall(vim.json.decode, payload). If decode fails: increment state.parse_failures; if >= N (config or 5): mark state.failed=true, M.teardown(), notify once. If decode succeeds: normalize items: for each item { value, description? } -> { value=value, label=value, description=description }. Derive prefix client-side: last whitespace-delimited token of line[1..cursor]. Call state.pending_cb(items, prefix) if set. Remove processed bytes from rx_buf. All decode/parse pcall'd.\n4. OUTPUT: M._feed(chunk) correctly parses daemon responses and calls the pending callback with normalized items.\n5. MOCKING: Tests feed canned response strings (with sentinels, JSON payloads, noise outside sentinels). Assert items are parsed correctly. Test: noise/prompt output between sentinels is discarded. Test: malformed JSON increments parse_failures.\n6. DOCS: none — internal parsing, documented in module header.",
+                  "prd_selectors": [
+                    "h3.34",
+                    "h4.3",
+                    "h4.4",
+                    "h3.44"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T2.S6",
+                  "title": "teardown() — uv.process_kill SIGKILL, close pipes, reset state",
+                  "status": "Planned",
+                  "story_points": 0.5,
+                  "dependencies": [
+                    "P2.M1.T2.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.5.2, teardown kills the proc (uv.process_kill SIGKILL), closes stdin/stdout pipes, resets state. It is called from VimLeavePre/ExitPre (P2.M3.T6.S3) and on N consecutive parse failures (§17.12). Must be idempotent (safe to call twice).\n2. INPUT: state.proc/stdin/stdout from P2.M1.T2.S3.\n3. LOGIC: Implement M.teardown(): if state.proc then pcall(uv.process_kill, state.proc, \"sigkill\") end. if state.stdin then pcall(state.stdin.close, state.stdin) end. if state.stdout then pcall(state.stdout.close, state.stdout); pcall(state.stdout.read_stop, state.stdout) end. Reset state: state.proc=nil, state.stdin=nil, state.stdout=nil, state.rx_buf=\"\", state.gen=0, state.inflight=false, state.driver=nil. If state.pending_cb then state.pending_cb(\"teardown\", {}, \"\") end. Idempotent — all nil-guarded.\n4. OUTPUT: M.teardown() cleanly kills the daemon and resets state. Safe to call from VimLeavePre.\n5. MOCKING: Tests spawn a real fish process, call teardown, assert no leaked uv handles (use vim.uv.loop():gc_collect() or handle count assertion).\n6. DOCS: none — internal lifecycle.",
+                  "prd_selectors": [
+                    "h3.34",
+                    "h4.4",
+                    "h3.41"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P2.M2",
+          "title": "Plugin integration: routing + fish driver + accept",
+          "status": "Planned",
+          "description": "Second vertical slice: ! lines now complete end-to-end through the menu (fish), and items can be accepted via local word-replacement.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P2.M2.T3",
+              "title": "completion.lua routing + shell.complete_current + notices",
+              "status": "Planned",
+              "description": "Add a 'shell' return value to completion_context() before the existing slash/path checks. Add shell branches to do_refresh and force_fetch. Implement shell.complete_current(buf, cb). Wire up the three notice types (mismatch, first-run hint, degrade).",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T3.S1",
+                  "title": "Add 'shell' return value to completion_context() before slash/path checks",
+                  "status": "Planned",
+                  "story_points": 0.5,
+                  "dependencies": [],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md, completion_context() is at lua/pi-bridge/completion.lua:375. It currently returns \"slash\" | \"path\" | nil. The function reads `local line = lines[cursorLine+1]` and `local before = line:sub(1, cursorCol)`. The existing slash/path checks start with token analysis. The new shell check must go BEFORE them.\n2. INPUT: The existing completion_context function at completion.lua:375-401.\n3. LOGIC: At the very TOP of completion_context (before the token/slash/path logic), add: `local line1 = (type(lines)==\"table\") and (lines[1] or \"\") or \"\"` then `if cursorLine == 0 and line1:sub(1,1) == \"!\" then return \"shell\" end`. This mirrors pi's `text.trimStart().startsWith(\"!\")` at interactive-mode.ts:2583. The `!` vs `!!` distinction is irrelevant to routing — both go to \"shell\"; shell.lua strips the bangs. Existing slash/path/nil returns remain UNCHANGED below this check (regression guard). Update the @return annotation to `\"slash\" | \"path\" | \"shell\" | nil`.\n4. OUTPUT: completion_context returns \"shell\" when line 1 starts with \"!\". Existing behavior for slash/path/nil unchanged.\n5. MOCKING: Tests call completion_context directly with synthetic lines/cursorLine/cursorCol. But NOTE: completion_context is a LOCAL function (not exported). Either export it for testing or test through the do_refresh/force_fetch path. Consider exporting as M._completion_context (test seam, like the underscore-prefixed menu internals).\n6. DOCS: [Mode A] Docstring comment on the shell branch explaining line-1-only scoping and why slash/path paths are untouched.",
+                  "prd_selectors": [
+                    "h3.36",
+                    "h3.30",
+                    "h3.38"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T3.S2",
+                  "title": "Add shell branch to do_refresh + force_fetch with gen-guard + 0ms debounce",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M2.T3.S1",
+                    "P2.M1.T2.S4"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md, do_refresh (completion.lua:406) reads bridge fresh at call time (L411), reads buffer+cursor, calls completion_context, converts coords, supersedes (cancel + gen++), issues bridge.request. The gen-guard at L454-468 captures gen in the cb and drops stale responses. force_fetch (L508) is the 0-debounce Tab sibling that duplicates the supersession block. compute_debounce (L344) returns 0ms for slash, config.debounce_ms for attachment.\n2. INPUT: completion_context returns \"shell\" from P2.M2.T3.S1. shell.request/complete_current from P2.M1.T2.S4/P2.M2.T3.S3.\n3. LOGIC: (a) In compute_debounce (L344): add `if ctx == \"shell\" then return 0 end` — shell completion is immediate (daemon warm after first use). (b) In do_refresh (L406): after the completion_context call, add a branch BEFORE the existing bridge path: `if ctx == \"shell\" then require(\"pi-bridge.shell\").complete_current(buf, function(err, items, prefix) if gen ~= state.gen then return end; if err then return end; state.last_result = {items=items or {}, prefix=prefix or \"\"}; if type(M.on_results)==\"function\" then pcall(M.on_results, buf, items or {}, prefix or \"\") end end); return end`. The gen++ and gen capture happen BEFORE this branch (same pattern as the bridge path). (c) In force_fetch (L508): same shell branch pattern — calls complete_current with 0 debounce (already immediate). (d) The existing slash/path/nil path remains UNCHANGED below the new branch.\n4. OUTPUT: Shell-context keystrokes route to shell.lua instead of bridge.getSuggestions. Same menu rendering via on_results.\n5. MOCKING: Tests use a fake shell module that responds synchronously. Assert that shell.complete_current is called (not bridge.request) when ctx==\"shell\". Assert existing slash/path behavior unchanged.\n6. DOCS: none — internal routing change. The shell branch docstring is in P2.M2.T3.S1.",
+                  "prd_selectors": [
+                    "h3.36",
+                    "h3.38",
+                    "h3.41"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T3.S3",
+                  "title": "shell.complete_current(buf, cb) — read buffer, strip bangs, byte offsets, call shell.request",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M2.T3.S1",
+                    "P2.M1.T2.S4"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.7, shell.complete_current(buf, cb) reads the buffer + cursor, strips the leading bangs (! or !!), computes line/cursor/after using BYTE offsets (NOT UTF-16 — no coords.lua conversion per §17.14). It then calls shell.request(line, cursor, after, cb). The cursor byte offset comes directly from nvim_win_get_cursor(0) which returns 0-based byte column.\n2. INPUT: shell.request from P2.M1.T2.S4. The buffer and cursor from nvim API.\n3. LOGIC: Implement M.complete_current(buf, cb) in shell.lua: (a) Read lines: `local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)`. (b) Read cursor: `local row, byte_col = unpack(vim.api.nvim_win_get_cursor(0))` — row is 1-based, byte_col is 0-based BYTE. (c) Get line 1: `local line1 = lines[1] or \"\"`. (d) Strip bangs: `local bangs = line1:sub(1,2) == \"!!\" and 2 or 1`; `local stripped = line1:sub(bangs + 1)`. (e) Compute cursor offset into stripped line: `local cursor = math.max(0, byte_col - bangs)` (byte offset, 0-based). (f) Compute after: `local after_text = stripped:sub(cursor + 1)` (text after cursor). (g) line for daemon = stripped:sub(1, cursor) (up to cursor). (h) Call `M.request(line_up_to_cursor, cursor, after_text, cb)`. All nvim API calls pcall'd; on error call cb(\"read error\").\n4. OUTPUT: M.complete_current(buf, cb) extracts the shell command from the buffer and calls M.request with byte-correct offsets.\n5. MOCKING: Tests create a scratch buffer with \"!git ch\", set cursor position, call complete_current, assert the request payload has line=\"git ch\" cursor=4 (after stripping \"!\").\n6. DOCS: none — internal integration function.",
+                  "prd_selectors": [
+                    "h3.36",
+                    "h3.43",
+                    "h3.34"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T3.S4",
+                  "title": "Notices — mismatch (§17.4.3), first-run hint (§17.9), degrade notify",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md, notify.lua provides M.once(category, level, msg) — a dedup'd, vim.schedule-wrapped one-time notify. Categories are string keys in a seen={} set. M.reset() clears the set. M.did_notify(category) checks if already fired. This is the exact mechanism to reuse for all three shell notices.\n2. INPUT: resolve_shell result from P2.M1.T2.S2 (provides shell + source). vim.env.SHELL for mismatch detection.\n3. LOGIC: Add three notice calls using notify.once with distinct categories: (a) MISMATCH (§17.4.3): when prefer==\"pi\" resolves to bash (tier-2) AND $SHELL is zsh/fish (tier-1) AND that shell exists on PATH (vim.fn.executable). Category \"shell_mismatch\". Message: \"pi runs commands in bash; using bash completion to match. For your native <SHELL> completions, set pi's shellPath to <SHELL>. :help pi-bridge-shell\". Fire in resolve_shell or ensure after resolution. (b) FIRST-RUN (§17.9): the first time a \"!\" line is detected in a session. Category \"shell_first_run\". Message: \"Shell completion active (<resolved shell>); :help pi-bridge-shell\". Fire in complete_current on first call. Suppressed if daemon failed (the degrade notice fires instead). (c) DEGRADE (§17.12/§17.6.4): when the daemon fails to spawn or the driver is nil. Category \"shell_degrade\". Message: \"Shell completion not available: <error>. !/!! commands will run normally.\" Fire in ensure on error.\n4. OUTPUT: Three dedup'd notices fire at appropriate times. Users learn about the mismatch, see the active shell, and are notified of degradation.\n5. MOCKING: Tests stub vim.notify and vim.fn.executable. Assert notify.once fires for the right categories. Assert dedup (second call with same category is silent).\n6. DOCS: none — UX notifications, documented in doc/pi-bridge-shell.txt (P2.M3.T6.S4).",
+                  "prd_selectors": [
+                    "h4.2",
+                    "h3.38",
+                    "h3.41",
+                    "h4.8"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T3.S5",
+                  "title": "Menu visual_cue for shell context (gutter $ prefix)",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M2.T3.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.9, when ctx==\"shell\" the menu shows a `$` gutter prefix on each item (or a distinct border color). Configurable via setup({ shell = { visual_cue = \"gutter\" | \"border\" | \"off\" } }). The menu module (menu.lua) renders items in a floating window with two-column layout (label + description). The on_results seam (completion.lua M.on_results) is the single result->menu channel.\n2. INPUT: config.shell.visual_cue (default \"gutter\") from P2.M3.T6.S1 config block. The ctx value from completion.lua.\n3. LOGIC: Two approaches (pick the simpler): (a) When on_results is called for shell context, prefix each item's label with \"$ \" before passing to menu. This requires completion.lua to mark the context — add a module-level `state.is_shell` flag set when ctx==\"shell\" in do_refresh/force_fetch, and in the on_results call, if state.is_shell and config.shell.visual_cue==\"gutter\", prefix labels. (b) OR add an optional 4th param to on_results(buf, items, prefix, opts) where opts={context=\"shell\"}. menu.on_results reads opts and applies the gutter. Approach (a) is simpler (no signature change). Implement approach (a): set `state.is_shell = (ctx == \"shell\")` in do_refresh and force_fetch; in the on_results cb, if state.is_shell, map items to add \"$ \" prefix to label. Respect visual_cue config: \"off\" -> no prefix; \"gutter\" -> \"$ \" prefix on label; \"border\" -> different border highlight (requires menu.lua change to accept a border override — more invasive, defer if time-constrained).\n4. OUTPUT: Shell-context menu items show a `$` gutter prefix (or off/border per config). Pi-mode items unaffected.\n5. MOCKING: Tests set state.is_shell=true, call on_results with items, assert menu.get_items() have \"$ \" prefix on labels.\n6. DOCS: none — visual rendering detail, documented in doc/pi-bridge-shell.txt (P2.M3.T6.S4).",
+                  "prd_selectors": [
+                    "h3.38",
+                    "h3.40"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P2.M2.T4",
+              "title": "shell/fish.lua driver + shell/accept.lua",
+              "status": "Planned",
+              "description": "Implement the fish driver (Tier 1, complete -C based) and the local acceptance module (word-replacement + per-shell quoting via nvim_buf_set_text).",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T4.S1",
+                  "title": "fish.lua driver startup script + start(opts, on_ready) + cd(path) exports",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.6.1, fish exposes `complete -C \"<line>\"` returning `word<TAB>description` lines using ALL loaded completions. The driver writes a startup script to a temp file (sourced via `fish -i`). `fish --noconfig` is WRONG — we WANT the user's config. The script binds a handler that reads __PIREQ__ lines, runs complete -C, and emits __PIRESP_START__/__PIRESP_END__ with JSON-escaped values (fish's `string escape --style=json`). The driver spawns via vim.uv.spawn with pipes.\n2. INPUT: opts table from shell.lua ensure(): { shell=\"/usr/bin/fish\", cwd=<pi cwd>, startup_timeout_ms=5000 }.\n3. LOGIC: Create lua/pi-bridge/shell/fish.lua. Export M.start(opts, on_ready): (a) Write a fish startup script to a temp file (vim.fn.tempname()..\".fish\") containing: a `function __pi_handle` that reads a line, strips `__PIREQ__\\t` prefix, parses JSON (or uses fish string ops to extract line/cursor), runs `complete -C \"$cmd\"`, iterates results emitting `{\"value\":...,\"description\":...}` JSON lines between sentinels, then `echo __PIRESP_END__`. A `function fish_prompt; end` to silence the prompt. A bind to trigger __pi_handle on each newline. (b) Spawn `fish -i` (NOT --noconfig) via vim.uv.spawn with the script sourced, stdin/stdout as pipes. (c) on_ready(err, proc, stdin, stdout) callback. (d) Export M.cd(path): write a `cd \"<path>\"` command to stdin to re-cd the daemon when pi's cwd changes. pcall all uv calls. startup_timeout via uv timer.\n4. OUTPUT: fish.lua driver that shell.lua's pick_driver loads via require(\"pi-bridge.shell.fish\"). Spawns a persistent fish subshell that responds to framed completion requests.\n5. MOCKING: Integration test spawns real fish (/usr/bin/fish available). Sends `git ch` request, asserts checkout/cherry in response. Test gated on fish executable.\n6. DOCS: [Mode A] Docstring on fish.lua explaining: Tier 1 status, why fish -i (not --noconfig — we want user config), the complete -C technique, and the sentinel framing.",
+                  "prd_selectors": [
+                    "h4.5",
+                    "h3.35",
+                    "h4.3",
+                    "h3.42"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T4.S2",
+                  "title": "fish.lua response parsing + AutocompleteItem normalization + prefix derivation",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M2.T4.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.6.1, fish complete -C output is `word<TAB>description` (or just `word` if no description). The Lua parsing in _feed (shell.lua P2.M1.T2.S5) handles the JSON payload between sentinels. But the fish DRIVER is responsible for emitting valid JSON. The prefix is derived client-side (last whitespace-delimited token of line[1..cursor]).\n2. INPUT: Raw complete -C output lines from the fish daemon (word<TAB>desc format).\n3. LOGIC: The fish startup script (from P2.M2.T4.S1) emits JSON objects. Ensure the script uses `string escape --style=json` for safe JSON encoding of values and descriptions. For description-less items, emit just {\"value\":...}. The _feed function in shell.lua (P2.M1.T2.S5) then vim.json.decode's the payload and normalizes to AutocompleteItem[] = { value=word, label=word, description=desc }. Add prefix derivation in shell.lua's _feed or complete_current: `local prefix = line:sub(1, cursor):match(\"([%S]+)$\") or \"\"`. This mirrors how completion.lua derives prefix.\n4. OUTPUT: Fish complete -C output is correctly parsed into AutocompleteItem[] with prefix. Items with descriptions show them; items without have description=nil.\n5. MOCKING: Tests use golden fixture strings (canned complete -C output) — no live fish needed for the parser. Test: normal word<TAB>desc, description-less word, empty result, multiline (N items), value with literal tab (escaped). Live fish integration test gated on fish executable.\n6. DOCS: none — parsing detail, documented in fish.lua header docstring from P2.M2.T4.S1.",
+                  "prd_selectors": [
+                    "h4.5",
+                    "h3.35",
+                    "h4.3"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T4.S3",
+                  "title": "accept.lua — current shell word computation + per-shell quoting table",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.8, shell candidates are plain words (NOT pi AutocompleteItems). Accept replaces the current shell word (not the whole buffer) using nvim_buf_set_text (range edit, not nvim_buf_set_lines). The current word = maximal substring of line[1..cursor] ending at cursor, delimited by unquoted whitespace. Per-shell quoting: fish wraps paths with spaces in double quotes; bash/zsh single-quote unless the candidate contains a single quote (then the '...\"'\"'...' idiom). Shell path uses BYTE offsets (no UTF-16 / coords.lua).\n2. INPUT: The AutocompleteItem selected by the user (from menu.get_selected()). The resolved shell (from shell.lua state.shell) to determine quoting rules. The buffer + cursor position.\n3. LOGIC: Create lua/pi-bridge/shell/accept.lua. Export M.accept(buf, item): (a) Read line 1 + cursor: `local row, col = unpack(vim.api.nvim_win_get_cursor(0))` — col is 0-based byte. (b) Compute current shell word: scan backward from col for unquoted whitespace. Quote-aware splitter: track open single/double quotes; break on whitespace outside quotes. word_start = byte offset where the word begins. (c) Quote the candidate value per shell: if shell basename is \"fish\": wrap in double quotes if it contains spaces. If bash/zsh: single-quote unless value contains a single quote (then use '...\"'\"'...' concatenation idiom). (d) Return { quoted_text=..., word_start_byte=..., cursor_byte=... } for P2.M2.T4.S4 to apply.\n4. OUTPUT: M.accept(buf, item) computes the quoted text and the byte range to replace.\n5. MOCKING: Tests create scratch buffers with various cursor positions. Table-test quoting: spaces, $, backtick, single quote, double quote, combined. Assert the quoted output and byte range.\n6. DOCS: [Mode A] Docstring on accept.lua explaining: local word-replacement (NOT pi's applyCompletion), per-shell quoting rules, and why nvim_buf_set_text (range edit, no TextChangedI re-entrancy).",
+                  "prd_selectors": [
+                    "h3.37",
+                    "h3.43"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T4.S4",
+                  "title": "accept.lua — nvim_buf_set_text range edit + cursor positioning + re-trigger logic",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M2.T4.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.8, step 3: replace bytes [word_start+1 .. cursor] (Lua 1-indexed) via nvim_buf_set_text(buf, row, start_col, row, end_col, {text}). This is a RANGE edit (not whole-buffer rewrite like pi-mode's nvim_buf_set_lines). nvim_buf_set_text does NOT fire TextChangedI for typed-input semantics, so no re-entrancy loop. Step 4: position cursor after inserted text, stay in Insert mode. Step 5: re-trigger fetch only if candidate ends in \"/\" (dir), else close menu.\n2. INPUT: The quoted text + byte range from P2.M2.T4.S3. The buffer + cursor position. menu.close() from menu.lua.\n3. LOGIC: Extend M.accept(buf, item) from P2.M2.T4.S3: (a) Apply the edit: `vim.api.nvim_buf_set_text(buf, row-1, word_start_byte, row-1, cursor_byte, { quoted_text })` (nvim API is 0-based row, 0-based col). pcall it; on failure insert raw value unquoted and notify once. (b) Position cursor: `vim.api.nvim_win_set_cursor(0, { row, word_start_byte + #quoted_text })` — immediately after inserted text. Stay in Insert mode (do not mode-switch). (c) Re-trigger: if quoted_text ends with \"/\" (directory), call completion.refresh(buf) to re-fetch (shell will complete inside the directory). Else call menu.close() to close the completion menu. (d) Return true on success.\n4. OUTPUT: M.accept(buf, item) replaces the current shell word with the quoted candidate, positions the cursor, and re-triggers or closes the menu.\n5. MOCKING: Tests create a scratch buffer with \"!git che\", position cursor after \"che\", call accept with {value=\"checkout\"}. Assert the buffer now reads \"!git checkout\" and cursor is positioned correctly. Test directory re-trigger (value ends with \"/\").\n6. DOCS: none — accept behavior documented in accept.lua header docstring from P2.M2.T4.S3.",
+                  "prd_selectors": [
+                    "h3.37",
+                    "h3.43",
+                    "h3.38"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P2.M3",
+          "title": "Remaining drivers + health + docs + tests",
+          "status": "Planned",
+          "description": "Implement zsh and bash drivers, wire up health check, configuration block, teardown integration, and the shell vimdoc. Finalize CI gating for shell-dependent tests.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P2.M3.T5",
+              "title": "shell/zsh.lua + shell/bash.lua + unknown-shell degrade",
+              "status": "Planned",
+              "description": "Implement the zsh capture-completion driver (Tier 1, most fragile), the bash best-effort driver (Tier 2), and verify the unknown-shell degrade path.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M3.T5.S1",
+                  "title": "zsh.lua capture-completion driver — zle widget, compinit, compadd redefinition",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": [
+                    "P2.M1.T2.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.6.2, zsh has no compgen. The canonical technique (fzf's zsh completion + Valodim/zsh-capture-completion): a persistent interactive `zsh -f -i` with `autoload -Uz compinit && compinit -u`, a bound zle widget __pi_capture that programmatically drives the completion system by setting BUFFER/CURSOR and redefining compadd to collect word<TAB>desc into stdout between sentinels. This is the MOST FRAGILE driver — the exact zle incantation varies subtly across zsh versions. A spike (folded into this task) MUST validate against the installed zsh (/usr/bin/zsh). :checkhealth reports the detected zsh version.\n2. INPUT: opts table from shell.lua ensure(): { shell=\"/usr/bin/zsh\", cwd=<pi cwd>, startup_timeout_ms=5000 }.\n3. LOGIC: Create lua/pi-bridge/shell/zsh.lua. Export M.start(opts, on_ready): (a) Write a zsh startup script to temp file containing: `autoload -Uz compinit && compinit -u`; define `__pi_capture()` widget that redefines `compadd` locally to `printf '%s\\t%s\\n' \"$w\" \"$desc\"` for each word, then calls `zle complete-word` (or the _main_complete entrypoint) with BUFFER/CURSOR set from the request; emit __PIRESP_START__ before and __PIRESP_END__ after; `zle -N __pi_capture`. A read loop that parses __PIREQ__ lines and triggers the widget. (b) Spawn `zsh -f -i` via vim.uv.spawn with pipes. (c) SPIKE: before finalizing, write a standalone test that spawns zsh, sources the script, sends `git ch`, and validates checkout/cherry appear. Adjust the widget incantation until it works with the installed zsh version. (d) Export M.cd(path): write `cd \"<path>\"` to stdin. pcall all uv calls.\n4. OUTPUT: zsh.lua driver that shell.lua's pick_driver loads via require(\"pi-bridge.shell.zsh\"). Captures completions via the zle widget.\n5. MOCKING: Integration test spawns real zsh (/usr/bin/zsh available). Sends `git ch`, asserts checkout/cherry appear. Test gated on zsh executable. The spike validates the exact invocation.\n6. DOCS: [Mode A] Docstring on zsh.lua explaining: Tier 1 status, the capture-completion technique (redefined compadd), fragility note (zle varies across versions), and the compinit requirement.",
+                  "prd_selectors": [
+                    "h4.6",
+                    "h3.35",
+                    "h3.44",
+                    "h3.41"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M3.T5.S2",
+                  "title": "bash.lua best-effort driver — COMP_* vars, compgen/compspec, bash-completion sourcing",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.6.3, compgen returns BARE WORDS, NO DESCRIPTIONS (documented limitation). A bare bash -c does NOT source the user's completion library. The driver sources bash-completion best-effort and invokes the registered -F completion function for the command word if present, else compgen -f -d (files+dirs). COMP_LINE/COMP_POINT/COMP_WORDS/COMP_CWORD are set per request. Opt-out via drivers.bash = false.\n2. INPUT: opts table from shell.lua ensure(): { shell=\"/usr/bin/bash\", cwd=<pi cwd>, startup_timeout_ms=5000 }.\n3. LOGIC: Create lua/pi-bridge/shell/bash.lua. Export M.start(opts, on_ready): (a) Write a bash rcfile to temp containing: best-effort sourcing of /usr/local/etc/bash_completion and /etc/bash_completion; a `__pi_complete()` function that sets COMP_LINE/COMP_POINT/COMP_WORDS/COMP_CWORD from the request, checks for a registered `-F` completion fn via `complete -p \"$cmd\"`, invokes it if present (fills COMPREPLY), else `compgen -f -d -- \"$cur\"`; emits each COMPREPLY entry as {\"value\":...} JSON between sentinels. A read loop for __PIREQ__ lines. (b) Spawn `bash --rcfile <this> -i` via vim.uv.spawn with pipes. (c) Export M.cd(path). pcall all uv calls. (d) JSON encoding: use printf piped through a safe encoder, or emit raw words and let Lua-side _feed wrap them.\n4. OUTPUT: bash.lua driver loaded via require(\"pi-bridge.shell.bash\"). Returns bare words (no descriptions). Files/dirs always work.\n5. MOCKING: Integration test spawns real bash (/usr/bin/bash available). Tests: `!ls /tm` -> /tmp/ entries; git compspec iff bash-completion present (skip otherwise). Test gated on bash executable.\n6. DOCS: [Mode A] Docstring on bash.lua explaining: Tier 2 status, bare-words limitation (no descriptions), bash-completion dependency, and the opt-out via drivers.bash=false.",
+                  "prd_selectors": [
+                    "h4.7",
+                    "h3.35",
+                    "h3.44",
+                    "h3.41"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M3.T5.S3",
+                  "title": "Unknown-shell degrade path — nil driver test + verify short-circuit",
+                  "status": "Planned",
+                  "story_points": 0.5,
+                  "dependencies": [
+                    "P2.M1.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per research-prd-section-17.md §17.6.4, basename not in {fish,zsh,bash} -> nil driver -> shell.request short-circuits to cb(\"no driver\") -> empty items -> menu closes + one dedup'd vim.notify. This path is ALREADY implemented in shell.lua's pick_driver (returns nil for unknown basenames) and ensure (returns on_ready(\"no driver\")). This subtask verifies the path works end-to-end and adds the test.\n2. INPUT: pick_driver from P2.M1.T2.S2 (returns nil for unknown basename). shell.request from P2.M1.T2.S4 (calls ensure -> on_ready(\"no driver\") -> cb(\"no driver\")).\n3. LOGIC: VERIFY the degrade path: set resolve_shell to return a shell like \"/usr/bin/nu\" (not in {fish,zsh,bash}). Call shell.request(\"git ch\", 6, \"\", cb). Assert cb receives (\"no driver\", {}, \"\"). Assert menu closes (on_results called with empty items). Assert notify.once fires for category \"shell_degrade\". If any gap found (e.g., ensure doesn't short-circuit on no driver), fix it in shell.lua. Add test file tests/shell/shell_daemon_spec.lua (or extend it) with the degrade case.\n4. OUTPUT: Verified degrade path: unknown shell -> no completion -> one notify -> menu closes. No hang, no throw.\n5. MOCKING: Tests stub resolve_shell to return an unknown shell. Assert the cb receives the error and items are empty.\n6. DOCS: none — degrade behavior documented in doc/pi-bridge-shell.txt (P2.M3.T6.S4) and the shell.lua header.",
+                  "prd_selectors": [
+                    "h4.8",
+                    "h3.41",
+                    "h3.36"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P2.M3.T6",
+              "title": ":checkhealth shell section + doc/pi-bridge-shell.txt + config",
+              "status": "Planned",
+              "description": "Add the shell config block to init.lua defaults, a shell section to :checkhealth, wire VimLeavePre teardown, and write the pi-bridge-shell vimdoc. Set up CI gating for shell-dependent tests.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M3.T6.S1",
+                  "title": "init.lua shell = {} config block + warm_on_enter logic",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md, M.defaults is at lua/pi-bridge/init.lua:31-40 with fields menu/debounce_ms/rpc_timeout_ms/autosave_on_exit/engine. M.setup() at L67 does vim.tbl_deep_extend(\"force\", M.defaults, opts). M.activate() at L134 is the VimEnter gate that reads PI_NVIM_BRIDGE, connects bridge, sets filetype. The shell config block must be added to M.defaults.\n2. INPUT: shell.lua's config expectations from P2.M1.T2.S2 (reads cfg.prefer, cfg.drivers, cfg.timeout_ms, cfg.startup_timeout_ms, cfg.warm_on_enter, cfg.visual_cue, cfg.debounce_ms).\n3. LOGIC: (a) Add `shell = { enabled=true, prefer=\"pi\", drivers={fish=true,zsh=true,bash=true}, warm_on_enter=false, timeout_ms=1500, startup_timeout_ms=5000, visual_cue=\"gutter\", debounce_ms=0 }` to M.defaults (init.lua L31-40). Add the @field annotations for the pi-bridge.Config class. (b) warm_on_enter logic: in M.activate() (after bridge handshake success), if config.shell and config.shell.enabled and config.shell.warm_on_enter, call `require(\"pi-bridge.shell\").ensure(function() end)` to pre-spawn the daemon. pcall it (never block activate on a daemon spawn). (c) If config.shell.enabled == false, shell.lua's resolve_shell/request should short-circuit (return nil/empty). Verify this is handled in shell.lua (add a guard if needed).\n4. OUTPUT: setup({ shell = { ... } }) works. warm_on_enter pre-spawns the daemon at VimEnter.\n5. MOCKING: Tests call setup with various shell config overrides. Assert M.config.shell has the merged values. Test warm_on_enter triggers ensure.\n6. DOCS: [Mode A] JSDoc/Lua annotation on the shell config block documenting each field, its default, and its effect. Reference PRD §17.11.",
+                  "prd_selectors": [
+                    "h3.40",
+                    "h3.33",
+                    "h2.10",
+                    "h3.29"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M3.T6.S2",
+                  "title": "health.lua shell section — resolved shell, source, driver, daemon health, last error",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M1.T2.S6",
+                    "P2.M3.T5.S1",
+                    "P2.M3.T5.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md, health.lua M.check() has 4 sections via vim.health.start: (1) version, (2) bridge environment, (3) bridge connection, (4) external tools (fd). Every probe is pcall-wrapped. DORMANT != ERROR (no env var -> info \"dormant\"). M.check MUST be a table field (loader calls require(\"pi-bridge.health\").check()).\n2. INPUT: shell.lua state (shell, driver, failed, last_error) from P2.M1.T2.S2/S6. Available drivers from P2.M3.T5.S1/S2. bridge.lua M.server_info shell fields from P2.M1.T1.S4.\n3. LOGIC: Add a 5th section to health.lua: vim.health.start(\"pi-bridge (shell)\"). Report: (a) resolved shell + source (from bridge.server_info.shell/shellSource or descriptor); (b) driver detected (fish/zsh/bash/none); (c) daemon health: state.proc ~= nil -> \"healthy\", state.failed -> \"unhealthy (last error: <state.last_error>)\", nil -> \"not started\"; (d) live-spawn each AVAILABLE shell's driver for a 1-shot smoke (fish/zsh/bash only if executable); report OK/WARN/SKIP per shell. Every probe pcall-wrapped. If shell.enabled == false -> info \"shell completion disabled\". Do NOT hang on a slow daemon spawn (timeout the smoke).\n4. OUTPUT: :checkhealth pi-bridge now shows a shell section with resolved shell, driver, health status, and per-shell smoke results.\n5. MOCKING: Tests stub shell.lua state and vim.fn.executable. Assert the health report includes the shell section with correct status lines.\n6. DOCS: none — health check detail, documented in doc/pi-bridge-shell.txt (P2.M3.T6.S4).",
+                  "prd_selectors": [
+                    "h3.44",
+                    "h3.35"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M3.T6.S3",
+                  "title": "ftplugin/pi-prompt.lua VimLeavePre/ExitPre teardown also calls shell.teardown()",
+                  "status": "Planned",
+                  "story_points": 0.5,
+                  "dependencies": [
+                    "P2.M1.T2.S6"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-plugin-side.md, ftplugin/pi-prompt.lua registers VimLeavePre/ExitPre autocmds that call `dispatch(\"pi-bridge.bridge\", \"on_exit\", buf)`. bridge.on_exit (bridge.lua L832) does autosave + bye RPC + M.close(). The shell daemon is a child of nvim (not pi) and MUST be torn down on editor exit alongside the bridge client.\n2. INPUT: shell.teardown() from P2.M1.T2.S6.\n3. LOGIC: In the VimLeavePre/ExitPre autocmd callback in ftplugin/pi-prompt.lua, add `pcall(require(\"pi-bridge.shell\").teardown)` alongside the existing `dispatch(\"pi-bridge.bridge\", \"on_exit\", buf)`. This ensures the daemon process is killed (SIGKILL via uv.process_kill) when the editor exits. teardown() is idempotent (safe if already called or never spawned). The pcall ensures a shell.lua error never blocks the bridge teardown.\n4. OUTPUT: Shell daemon is killed on VimLeavePre/ExitPre. No leaked child processes after editor exit.\n5. MOCKING: Tests verify that VimLeavePre triggers both bridge.on_exit and shell.teardown. Assert no leaked uv handles.\n6. DOCS: none — lifecycle wiring.",
+                  "prd_selectors": [
+                    "h3.32",
+                    "h3.34"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M3.T6.S4",
+                  "title": "doc/pi-bridge-shell.txt vimdoc — overview, prefer contract, config, drivers, trust model, degrade",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P2.M3.T6.S1",
+                    "P2.M3.T6.S2",
+                    "P2.M3.T6.S3",
+                    "P2.M3.T5.S1",
+                    "P2.M3.T5.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: doc/ currently has pi-bridge.txt (19KB) and tags. The existing vimdoc uses standard Neovim help format (*tags*, |links|, >code blocks<). A new file doc/pi-bridge-shell.txt must be added with a pi-bridge-shell tag in doc/tags.\n2. INPUT: All implemented features from P2.M1.T1-P2.M3.T6 (descriptor fields, daemon, drivers, config, health, notices).\n3. LOGIC: Create doc/pi-bridge-shell.txt with sections: (a) Overview — what shell completion does (completes !/!! commands using the user's real shell); (b) The prefer contract — default \"pi\" (matches pi's execution shell), alternatives ($SHELL, bash, /abs/path), the mismatch footgun and one-time notice; (c) Configuration — the `shell = {}` option table with all fields and defaults (reference §17.11); (d) Per-shell drivers — fish (Tier 1, complete -C, rich descriptions), zsh (Tier 1, capture-completion, descriptions), bash (Tier 2, compgen, bare words, no descriptions), unknown (degrade, no completion); (e) Trust model — daemon sources user rc files (same trust as pi's ! execution), child of nvim not pi, local pipes only, no bridge socket touch; (f) Degradation — spawn failure, timeout, parse failures, EOF, and the degrade notices; (g) :checkhealth pi-bridge shell section; (h) Key bindings (unchanged from pi-mode). Add `pi-bridge-shell` tag to doc/tags.\n4. OUTPUT: :help pi-bridge-shell shows comprehensive documentation for the shell completion feature.\n5. MOCKING: None — documentation file.\n6. DOCS: This IS the documentation deliverable (Mode A for the new vimdoc).",
+                  "prd_selectors": [
+                    "h3.30",
+                    "h3.31",
+                    "h3.33",
+                    "h3.40",
+                    "h3.35",
+                    "h3.42",
+                    "h3.41",
+                    "h3.38"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P2.M4",
+          "title": "Changeset-level documentation sync (Mode B)",
+          "status": "Planned",
+          "description": "Cross-cutting documentation that only makes sense once the whole changeset is in place. Updates README.md (omp + shell feature), doc/pi-bridge.txt (cross-links + behavior table), and extension/README.md (descriptor fields + env var). Depends on all implementing subtasks.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P2.M4.T7",
+              "title": "Sync changeset-level documentation",
+              "status": "Planned",
+              "description": "Final documentation sweep: update README.md with the omp install path (if not already done by P1.M1.T1.S2) and the shell-completion feature blurb + config pointer + architecture note. Cross-link doc/pi-bridge.txt to pi-bridge-shell.txt. Note the new descriptor fields in extension/README.md.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M4.T7.S1",
+                  "title": "README.md — shell-completion feature blurb + config pointer + architecture diagram update",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [
+                    "P1.M1.T1.S2",
+                    "P2.M1.T1.S4",
+                    "P2.M1.T2.S5",
+                    "P2.M2.T3.S3",
+                    "P2.M2.T4.S2",
+                    "P2.M3.T5.S2",
+                    "P2.M3.T6.S4"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: README.md (14KB) documents the bridge and plugin features, install instructions, prerequisites, and architecture. P1.M1.T1.S2 already added the omp install path. The README's features list currently mentions /commands, skill: templates, @file references, path suggestions, argument completions — but NOT shell completion for !/!!. The architecture diagram's nvim box does not mention shell.lua.\n2. INPUT: All implemented features from P1.M1.T1 through P2.M3.T6. The omp install path from P1.M1.T1.S2 (already in README).\n3. LOGIC: Update README.md: (a) Features list — add a bullet for shell completion: \"!/!! bash-mode commands complete against your real shell (fish/zsh/bash)\"; (b) Add a brief shell completion section with the `shell = {}` config pointer and a note on how it works (daemon drives the user's real shell; prefer:\"pi\" default matches pi's execution shell; :help pi-bridge-shell for details); (c) Architecture diagram — update the nvim box to mention shell.lua (the daemon manager that spawns a shell subprocess); (d) Prerequisites — mention that fish/zsh/bash are optional (shell completion degrades gracefully if absent); (e) Ensure the omp install path from P1.M1.T1.S2 is present and consistent.\n4. OUTPUT: README.md reflects both the omp host and the shell completion feature.\n5. MOCKING: None — documentation.\n6. DOCS: This IS the Mode B changeset-level documentation sweep. No separate docs subtask needed.",
+                  "prd_selectors": [
+                    "h3.30",
+                    "h3.38",
+                    "h3.40",
+                    "h2.10",
+                    "h3.26"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M4.T7.S2",
+                  "title": "doc/pi-bridge.txt — cross-link to pi-bridge-shell.txt + !/!! completion behavior",
+                  "status": "Planned",
+                  "story_points": 0.5,
+                  "dependencies": [
+                    "P2.M3.T6.S4"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: doc/pi-bridge.txt (19KB) is the main plugin vimdoc. It documents configuration, features, keymaps, behavior. It does not mention shell completion or cross-link to pi-bridge-shell.txt (which didn't exist before this delta).\n2. INPUT: doc/pi-bridge-shell.txt from P2.M3.T6.S4 (the new shell vimdoc).\n3. LOGIC: Update doc/pi-bridge.txt: (a) In the configuration section, add a pointer: \"For shell completion of !/!! commands, see |pi-bridge-shell|.\"; (b) In the features/behavior section, add the !/!! completion behavior to the keymaps/behavior table: \"!/!! prefix — shell command completion (see |pi-bridge-shell|)\"; (c) Ensure the pi-bridge-shell tag is in doc/tags (added by P2.M3.T6.S4).\n4. OUTPUT: doc/pi-bridge.txt cross-links to pi-bridge-shell.txt. Users can navigate from the main help to the shell completion help.\n5. MOCKING: None — documentation.\n6. DOCS: This IS the Mode B cross-link update.",
+                  "prd_selectors": [
+                    "h3.36",
+                    "h3.38",
+                    "h3.40"
+                  ]
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M4.T7.S3",
+                  "title": "extension/README.md — new optional descriptor fields + PI_NVIM_SHELL env var",
+                  "status": "Planned",
+                  "story_points": 0.5,
+                  "dependencies": [
+                    "P2.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The extension README focuses on the pi extension (TypeScript) side. It documents the descriptor, env vars, and the extension's responsibilities. It does not mention the shell descriptor fields or the PI_NVIM_SHELL env var (both new in this delta).\n2. INPUT: resolveShell() and the PI_NVIM_SHELL env var from P2.M1.T1.S2. The descriptor shell fields from P2.M1.T1.S1.\n3. LOGIC: Check if extension/README.md exists as a separate file. If it does (some repos have a separate extension README), update it to: (a) note the three new optional descriptor fields (shell/shellSource/shellPath) and their advisory nature; (b) document the PI_NVIM_SHELL env var as an optional mirror of pi's shellPath setting (user sets it to make prefer:\"pi\" resolve correctly). If there is no separate extension/README.md (the main README.md covers both components), add a brief note in the main README.md's extension section instead.\n4. OUTPUT: Extension-side documentation reflects the new shell descriptor fields and PI_NVIM_SHELL env var.\n5. MOCKING: None — documentation.\n6. DOCS: This IS the Mode B extension docs update.",
+                  "prd_selectors": [
+                    "h3.39",
+                    "h4.10",
+                    "h3.40"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
