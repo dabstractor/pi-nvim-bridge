@@ -159,7 +159,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S1",
                   "title": "Fish spike — standalone validation of framed round-trip",
-                  "status": "Researching",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Per architecture/research-prd-section-17.md §17.16 step 21, the spike proves the seam: a ~30-line script that spawns `fish -i`, sends `complete -C \"git ch\"` framed with __PIREQ__/__PIRESP_START__/__PIRESP_END__ sentinels, parses `word<TAB>desc`, and prints to :messages. CRITICAL: per repo AGENTS.md HARD RULE, this spike MUST be written to a file (e.g. /tmp/shell_spike.lua or tests/shell_fish_spike.lua), NEVER piped into nvim stdin. Run via `timeout 30 nvim --headless --clean -u NORC +\"luafile /tmp/shell_spike.lua\" +qa`. fish is at /usr/bin/fish (verified).\n2. INPUT: None — standalone spike script.\n3. LOGIC: Write a Lua script that: (a) uses vim.uv.spawn to launch `fish -i` with stdin/stdout pipes; (b) writes a startup fish function `__pi_handle` that reads a __PIREQ__ line, runs `complete -C`, and emits results between __PIRESP_START__/__PIRESP_END__ sentinels; (c) sends `__PIREQ__\\t{\"line\":\"git ch\",\"cursor\":6,\"after\":\"\"}\\n`; (d) reads stdout, buffers until __PIRESP_END__ appears, parses `word<TAB>desc` lines; (e) prints parsed items to :messages (vim.api.nvim_echo). Validate that `checkout`, `cherry`, `cherry-pick` appear with descriptions. Every vim.uv call must be pcall'd.\n4. OUTPUT: A validated spike script proving the framed fish round-trip works. Gate decision: proceed to full module if checkout/cherry appear.\n5. MOCKING: None — uses the real fish binary.\n6. DOCS: none — spike artifact, discarded or kept as a smoke test.",
@@ -174,7 +174,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S2",
                   "title": "shell.lua module state + resolve_shell(prefer) + pick_driver(basename) + session_cwd()",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S4"
