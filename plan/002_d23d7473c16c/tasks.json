@@ -76,7 +76,7 @@
               "type": "Task",
               "id": "P2.M1.T1",
               "title": "Bridge descriptor shell/shellSource/shellPath",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Add three optional fields (shell, shellSource, shellPath) to BridgeDescriptor, HelloResult, and PingResult in protocol.ts. Implement resolveShell() in the extension replicating getShellConfig's resolution. Populate the fields in startBridge and mirror in hello/ping handlers. Extract the fields in bridge.lua M.server_info.",
               "subtasks": [
                 {
@@ -133,7 +133,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T1.S4",
                   "title": "Extract shell fields in bridge.lua M.server_info + descriptor type",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S1"

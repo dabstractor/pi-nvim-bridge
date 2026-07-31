@@ -94,7 +94,9 @@ end
 --- Bridge descriptor parsed from the env var by |activate()|. `nil` until activation
 --- succeeds. Downstream modules read it: bridge.lua (S24) uses `.path` + `.token` to
 --- connect; completion (S30+) uses `.cwd`. Mirrors the extension's BridgeDescriptor
---- (extension/protocol.ts); all fields are present & non-null when transport=="unix".
+--- (extension/protocol.ts); all fields are present & non-null when transport=="unix",
+--- EXCEPT the §17.10 `shell`/`shellSource`/`shellPath` fields which are OPTIONAL + advisory
+--- (absent on older clients ⇒ `shell.lua` falls back to `$SHELL`).
 ---@class pi-bridge.BridgeDescriptor
 ---@field transport "unix" Transport type (v1 literal "unix"; PRD §5.1 names a future "tcp").
 ---@field path string Unix domain socket path (${tmpdir}/pi-nvim-bridge-<uuid>.sock).
@@ -103,6 +105,9 @@ end
 ---@field cwd string pi session working directory (ctx.cwd).
 ---@field fdAvailable boolean Whether the `fd` binary resolved (controls @file fuzzy search).
 ---@field serverVersion string Bridge server version string (PRD §6.4 hardcodes "0.1.0").
+---@field shell string? §17.10 — the resolved execution-shell binary (advisory; mirrors extension/protocol.ts; absent on older clients).
+---@field shellSource ("pi"|"$SHELL"|"default")? §17.10 — how `shell` was derived.
+---@field shellPath string? §17.10 — the raw `shellPath` setting, if the user set one.
 
 --- The parsed bridge descriptor once |activate()| succeeds; `nil` in every dormant session
 --- and before the first successful activation. Read by downstream modules (see class doc).

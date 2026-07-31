@@ -184,6 +184,9 @@ M.version = "0.1.0"
 ---@field serverVersion string Bridge server version (default `""` if absent/malformed).
 ---@field cwd string Session cwd (falls back to `descriptor.cwd`).
 ---@field fdAvailable boolean True ONLY if `result.fdAvailable == true`.
+---@field shell string? §17.10 — the resolved execution-shell binary (advisory; absent on older clients ⇒ `shell.lua` falls back to `$SHELL`). Defensive extract: `result.shell or descriptor.shell`.
+---@field shellSource ("pi"|"$SHELL"|"default")? §17.10 — how `shell` was derived. Absent when `shell` is absent.
+---@field shellPath string? §17.10 — the raw `shellPath` setting, if the user set one. Absent otherwise.
 ---@type pi-bridge.ServerInfo|nil
 M.server_info = nil
 
@@ -306,6 +309,19 @@ end
 ---
 --- NEVER includes the token in any error string (PRD §12).
 ---@param msg table?  The decoded `id=="h1"` JSON-RPC response (nil on timeout/close).
+---§17.10 (S4): first string of (a, b), else `nil` — the defensive extractor for the advisory
+--- shell fields. Mirrors the existing cwd/serverVersion type-check discipline, but returns
+--- `nil` (NOT `""`) because the shell fields are OPTIONAL: an unresolved field must be ABSENT
+--- so `shell.lua`'s fallback chain (`descriptor.shell → $SHELL → /bin/bash`, PRD §17.4) engages
+--- (a `""` would be a bogus shell path that short-circuits the fallback). Never throws.
+---@param a any Candidate value (e.g. `r.shell` — the live hello result).
+---@param b any Fallback value (e.g. `desc.shell` — the descriptor / env-var blob).
+---@return string|nil
+local function pick_str(a, b)
+  if type(a) == "string" then return a end
+  if type(b) == "string" then return b end
+end
+
 ---@param err string? A failure reason for the `msg==nil` path (timeout / close reason).
 resolve_handshake = function(msg, err)
   if not handshake_state or not handshake_state.pending then return end -- EXACTLY-ONCE guard
@@ -328,6 +344,12 @@ resolve_handshake = function(msg, err)
       serverVersion = (type(r.serverVersion) == "string") and r.serverVersion or "",
       cwd           = (type(r.cwd) == "string") and r.cwd or (desc.cwd or ""),
       fdAvailable   = (r.fdAvailable == true),
+      -- §17.10 (S4): advisory shell fields — OPTIONAL (nil, NOT "", when unresolved, so
+      -- shell.lua's fallback chain `descriptor.shell → $SHELL → /bin/bash` engages). Defensive:
+      -- prefer the live hello result, fall back to the descriptor (PRD §17.10.1).
+      shell       = pick_str(r.shell, desc.shell),
+      shellSource = pick_str(r.shellSource, desc.shellSource),
+      shellPath   = pick_str(r.shellPath, desc.shellPath),
     }
     M.server_info = info
     require("pi-bridge").bridge = M -- publish (pure Lua table write; luv-safe; was nil)
@@ -844,6 +866,32 @@ end
 ---@return boolean
 function M.is_connected()
   return state.connected and not state.closed
+end
+
+--- §17.10 (S4): read-only accessor for the advisory shell fields, consumed by `shell.lua`
+--- (the §17 completion-daemon manager resolves ONE shell per session at first `!` activation,
+--- then caches it). Returns a FRESH table `{shell, shellSource, shellPath}` (any value may be
+--- `nil` when unresolved — `shell.lua` then runs its fallback chain `descriptor.shell → $SHELL
+--- → /bin/bash`, PRD §17.4). Source priority: `M.server_info` (the live `hello`/`ping` RPC
+--- result, post-handshake) wins; else `require("pi-bridge").descriptor` (the `PI_NVIM_BRIDGE`
+--- env-var blob, available from `activate()` — covers the pre-handshake window where `shell.lua`
+--- may resolve the shell before the async handshake completes). Returns `nil` ONLY when NEITHER
+--- is populated. Note: at extraction time `server_info.shell` is ALREADY the merged
+--- `pick_str(result.shell, descriptor.shell)` value (see `resolve_handshake`), so no per-field
+--- re-fallback is needed here. NEVER throws (pure defensive table reads); the returned table is
+--- a fresh copy (mutating it cannot touch module state).
+---@return {shell:string?, shellSource:string?, shellPath:string?}|nil
+function M.get_shell_info()
+  local src = M.server_info
+  if src == nil then
+    src = require("pi-bridge").descriptor  -- env-var blob; set by activate() before handshake resolves
+  end
+  if type(src) ~= "table" then return nil end
+  return {
+    shell       = (type(src.shell) == "string") and src.shell or nil,
+    shellSource = (type(src.shellSource) == "string") and src.shellSource or nil,
+    shellPath   = (type(src.shellPath) == "string") and src.shellPath or nil,
+  }
 end
 
 return M

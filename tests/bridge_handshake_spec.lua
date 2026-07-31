@@ -22,8 +22,10 @@ local DESC_CWD = "/tmp/proj"
 local TOKEN = "deadbeefdeadbeefdeadbeefdeadbeef"
 
 -- Build a valid descriptor (path is filled per-server; token is fixed).
-local function descriptor(path)
-  return {
+-- §17.10 (S4): optional `shell_fields` table threads shell/shellSource/shellPath onto the
+-- descriptor (absent by default → backward-compatible with the existing 1-arg calls).
+local function descriptor(path, shell_fields)
+  local d = {
     transport = "unix",
     path = path,
     token = TOKEN,
@@ -32,6 +34,12 @@ local function descriptor(path)
     fdAvailable = true,
     serverVersion = "0.1.0",
   }
+  if type(shell_fields) == "table" then
+    d.shell = shell_fields.shell
+    d.shellSource = shell_fields.shellSource
+    d.shellPath = shell_fields.shellPath
+  end
+  return d
 end
 
 --- Reset module state between cases so handshake_state / server_info / pi.bridge do not
@@ -55,14 +63,19 @@ local function with_hello_server(opts, spec)
     srv_rx = jreader.new(function(req)
       if opts.mode == "success" then
         if req.method == "hello" then
+          local result = {
+            ok = true,
+            serverVersion = "0.1.0",
+            cwd = opts.cwd or DESC_CWD,
+            fdAvailable = (opts.fdAvailable == nil) and true or opts.fdAvailable,
+          }
+          -- §17.10 (S4): include shell fields ONLY when opts provides them (mirrors the
+          -- extension's conditional spread — absent when unresolved).
+          if opts.shell ~= nil then result.shell = opts.shell end
+          if opts.shellSource ~= nil then result.shellSource = opts.shellSource end
+          if opts.shellPath ~= nil then result.shellPath = opts.shellPath end
           srv_conn:write(vim.json.encode({
-            jsonrpc = "2.0", id = "h1",
-            result = {
-              ok = true,
-              serverVersion = "0.1.0",
-              cwd = opts.cwd or DESC_CWD,
-              fdAvailable = (opts.fdAvailable == nil) and true or opts.fdAvailable,
-            },
+            jsonrpc = "2.0", id = "h1", result = result,
           }) .. "\n")
         end
       elseif opts.mode == "bad_token" then
@@ -156,6 +169,65 @@ describe("pi-bridge.bridge handshake", function()
       os.remove(p2)
       stop()
     end))
+
+  -- (a-shell) SUCCESS with shell fields in the hello result → server_info carries them (§17.10/S4)
+  it("carries §17.10 shell fields in server_info when the hello result advertises them",
+    with_hello_server({ mode = "success", shell = "/bin/zsh", shellSource = "pi", shellPath = "/bin/zsh" },
+    function(path, _opts, stop)
+      local err, info
+      bridge.handshake(descriptor(path), function(e, i) err, info = e, i end)
+      vim.wait(300, function() return err ~= nil or info ~= nil end, 5)
+      assert.is_nil(err, "expected success, got err=" .. tostring(err))
+      assert.are.equals("/bin/zsh", bridge.server_info.shell)
+      assert.are.equals("pi",       bridge.server_info.shellSource)
+      assert.are.equals("/bin/zsh", bridge.server_info.shellPath)
+      stop()
+    end))
+
+  -- (a-shell-fb) result OMITS shell but descriptor HAS them → server_info falls back to descriptor
+  it("falls back to descriptor.shell when the hello result omits §17.10 shell fields",
+    with_hello_server({ mode = "success" }, function(path, _opts, stop)
+      local err, info
+      bridge.handshake(descriptor(path, { shell = "/bin/fish", shellSource = "$SHELL" }),
+        function(e, i) err, info = e, i end)
+      vim.wait(300, function() return err ~= nil or info ~= nil end, 5)
+      assert.is_nil(err)
+      assert.are.equals("/bin/fish", bridge.server_info.shell)        -- from descriptor (result omitted)
+      assert.are.equals("$SHELL",    bridge.server_info.shellSource)  -- from descriptor
+      assert.is_nil(bridge.server_info.shellPath)                     -- descriptor omitted it → nil (optional)
+      stop()
+    end))
+
+  -- (get_shell_info) accessor: server_info preferred, else descriptor, else nil; fresh table
+  it("get_shell_info() returns server_info shell, else descriptor, else nil (§17.10/S4)", function()
+    reset_module()
+    local saved_desc = pi.descriptor
+    -- (i) neither populated → nil
+    pi.descriptor = nil
+    assert.is_nil(bridge.get_shell_info())
+    -- (ii) descriptor only (the pre-handshake window) → its values
+    pi.descriptor = { shell = "/bin/zsh", shellSource = "pi", shellPath = "/bin/zsh", cwd = "/x" }
+    local si = bridge.get_shell_info()
+    assert.are.equals("/bin/zsh", si.shell)
+    assert.are.equals("pi",       si.shellSource)
+    assert.are.equals("/bin/zsh", si.shellPath)
+    -- (iii) server_info wins over descriptor
+    bridge.server_info = {
+      serverVersion = "0.1.0", cwd = "/y", fdAvailable = true,
+      shell = "/bin/bash", shellSource = "default",  -- shellPath intentionally absent
+    }
+    si = bridge.get_shell_info()
+    assert.are.equals("/bin/bash", si.shell)
+    assert.are.equals("default",   si.shellSource)
+    assert.is_nil(si.shellPath)
+    -- (iv) fresh table — mutating the return does NOT touch module state
+    si.shell = "MUTATED"
+    assert.are.equals("/bin/bash", bridge.server_info.shell)
+    -- restore (hygiene — reset_module nils server_info via close(); restore descriptor)
+    bridge.server_info = nil
+    pi.descriptor = saved_desc
+    reset_module()
+  end)
 
   -- (b) BAD TOKEN — error -32600 then close; pi.bridge stays nil; on_result(err)
   it("reports an error and leaves pi.bridge nil on a -32600 bad-token response",
