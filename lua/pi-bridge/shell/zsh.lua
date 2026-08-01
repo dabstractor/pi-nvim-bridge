@@ -64,9 +64,14 @@
 --        (documented v1 limitation). The `__PICD__` write is HARMLESS (a no-op write);
 --        a future control-char widget can make cd real. The daemon is persistent for the
 --        session; NOTHING re-spawns.
---      - A command line containing a literal `"` breaks the OUTER's crude `.line`
---        extraction → cmd resolves empty → an empty/all-commands result (graceful
---        degrade, not a crash). A true JSON parser in zsh is infeasible; v1 accepts this.
+--      - GRACEFUL DEGRADE (Issue 6): a command line containing a literal `"` (or an
+--        empty line) breaks the OUTER's crude `.line` extraction (`git \"feature` → cmd
+--        `git \\`, a DANGLING backslash). The `(__PIREQ__*)` branch now GUARDS `cmd`
+--        BEFORE the pty completion: an empty `cmd` (→ all-commands FLOOD) or one ending
+--        in an ODD run of backslashes (the dangling-`\\` case) emits a clean EMPTY
+--        `{"items":[],"prefix":""}` instead. An EVEN run (`echo \\`) is a valid escaped
+--        backslash, kept. A true JSON-string parse is infeasible in zsh; the guard
+--        converts the edge into a graceful no-results.
 --
 --  * NEVER-THROWS / FAST-CONTEXT-SAFE: every uv call is pcall'd; on_exit / timer /
 --    stderr-read callbacks do NO `vim.api.*` (libuv FAST context — E5560); only luv calls
@@ -197,27 +202,38 @@ while IFS= read -r req; do
         (__PIREQ__*)
             local payload="${req#__PIREQ__	}"
             local cmd="${${payload#*\"line\":\"}%%\"*}"
+            # === GRACEFUL-DEGRADE GUARD (Issue 6 / PRD §17.6.x) ===
+            # The crude `.line` extraction cannot parse a JSON-escaped `\"`, so a line
+            # containing a literal `\"` leaves a DANGLING backslash at the end of `cmd`
+            # (e.g. `git \"feature` → `git \\`). And an EMPTY line → Tab on an empty ZLE
+            # line floods EVERY command. Skip the pty completion on a malformed `cmd`
+            # (empty OR odd-count trailing backslash; an EVEN run like `echo \\` is a
+            # valid escaped backslash, kept) so `_items` stays `""` → a clean empty result.
+            local _tail="${cmd##*[^\\]}"
             echo __PIRESP_START__
-            zpty -w z $'\003'$'\025'"$cmd"$'\t'
-            local _items="" _first=1 _cap=0 _drained=0 _tries=0
-            while (( _tries++ < 1000 )); do
-                if zpty -r -t z _l; then
-                    _l="${_l//$'\r'/}"; _l="${_l//$'\n'/}"
-                    [[ "$_l" == *"$_SCLOSE"* ]] && { _cap=0; _drained=1; _tries=$((1000 - 20)); continue; }
-                    if [[ "$_l" == *"$_SOPEN"* ]]; then _cap=1; continue; fi
-                    ((_cap)) || continue
-                    local _w="${_l%%$'\t'*}" _d=""
-                    [[ "$_l" == *$'\t'* ]] && _d="${_l#*$'\t'}"
-                    [[ -z "$_w" ]] && continue
-                    local _it="{\"value\":$(__pi_json_str "$_w")"
-                    [[ -n "$_d" ]] && _it="${_it},\"description\":$(__pi_json_str "$_d")"
-                    _it="${_it}}"
-                    if ((_first)); then _items="$_it"; _first=0; else _items="${_items},${_it}"; fi
-                else
-                    ((_drained)) && break
-                    sleep 0.01
-                fi
-            done
+            local _items=""
+            if [[ -n "$cmd" ]] && (( ${#_tail} % 2 == 0 )); then
+                local _first=1 _cap=0 _drained=0 _tries=0
+                zpty -w z $'\003'$'\025'"$cmd"$'\t'
+                while (( _tries++ < 1000 )); do
+                    if zpty -r -t z _l; then
+                        _l="${_l//$'\r'/}"; _l="${_l//$'\n'/}"
+                        [[ "$_l" == *"$_SCLOSE"* ]] && { _cap=0; _drained=1; _tries=$((1000 - 20)); continue; }
+                        if [[ "$_l" == *"$_SOPEN"* ]]; then _cap=1; continue; fi
+                        ((_cap)) || continue
+                        local _w="${_l%%$'\t'*}" _d=""
+                        [[ "$_l" == *$'\t'* ]] && _d="${_l#*$'\t'}"
+                        [[ -z "$_w" ]] && continue
+                        local _it="{\"value\":$(__pi_json_str "$_w")"
+                        [[ -n "$_d" ]] && _it="${_it},\"description\":$(__pi_json_str "$_d")"
+                        _it="${_it}}"
+                        if ((_first)); then _items="$_it"; _first=0; else _items="${_items},${_it}"; fi
+                    else
+                        ((_drained)) && break
+                        sleep 0.01
+                    fi
+                done
+            fi
             printf '{"items":[%s],"prefix":""}\n' "$_items"
             echo __PIRESP_END__
             ;;

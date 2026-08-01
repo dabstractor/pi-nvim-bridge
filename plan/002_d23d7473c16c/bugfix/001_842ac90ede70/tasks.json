@@ -144,7 +144,7 @@
               "type": "Task",
               "id": "P1.M2.T6",
               "title": "Graceful-degrade quoted-command flood — literal `\"` returns all commands (Issue 6)",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Each driver's crude .line extraction regex/param-sub stops at the first `\"`, resolving cmd to empty when the command contains a literal double-quote. An empty cmd makes the completion engine return ALL commands (fish: complete -C \"\"; bash: compgen -abck; zsh: empty zpty line) — flooding the floating menu with 158+ items. Fix: emit an empty items array when the extracted cmd is empty, rather than passing \"\" to the completion engine.",
               "subtasks": [
                 {
@@ -165,7 +165,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T6.S2",
                   "title": "Add empty-cmd graceful-degrade guard in zsh.lua and bash.lua scripts",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/completion_drivers.md §\"Issue 6\". zsh.lua's OUTER_SCRIPT (embedded Lua string literal) has a `(__PIREQ__*)` case (zsh.lua:192-196) that extracts cmd via `local cmd=\"${${payload#*\\\"line\\\":\\\"}%%\\\"*}\"` then sends `$'\\003'\\'\\025'\"$cmd\"$'\\t'` to zpty (zsh.lua:196). Empty cmd → zpty sends empty line → zsh fires full command completion → flood. bash.lua's DAEMON_SCRIPT has a `(__PIREQ__*)` case (bash.lua:193-201) that extracts line via `local line=\"${payload#*\\\"line\\\":\\\"}\"; line=\"${line%%\\\"*}\"` then calls `__pi_complete \"$line\" \"$cursor\"` (bash.lua:200). For empty line, __pi_complete (bash.lua:145-179) sets COMP_WORDS=(\"\"), COMP_CWORD=0, cur=\"\" → `compgen -abck -A function -- \"\"` returns ALL commands → flood.\n2. INPUT: The zsh OUTER_SCRIPT Lua string literal (zsh.lua:192-196, the (__PIREQ__*) case). The bash DAEMON_SCRIPT Lua string literal (bash.lua:193-201, the (__PIREQ__*) case). The cmd/line variables extracted at zsh.lua:194 / bash.lua:194.\n3. LOGIC: For ZSH: in the `(__PIREQ__*)` case, AFTER extracting cmd (zsh.lua:194) and BEFORE the `echo __PIRESP_START__` + zpty write (zsh.lua:195-196), insert: `if [[ -z \"$cmd\" ]]; then echo __PIRESP_START__; echo '{\"items\":[]}'; echo __PIRESP_END__; return 0; fi`. Uses zsh syntax ([[ ]]/echo/return). For BASH: in the `(__PIREQ__*)` case, AFTER extracting line (bash.lua:194) and BEFORE `echo __PIRESP_START__` + __pi_complete (bash.lua:199-200), insert: `if [[ -z \"$line\" ]]; then echo __PIRESP_START__; echo '{\"items\":[]}'; echo __PIRESP_END__; return; fi`. Uses bash syntax. Be careful with Lua string escaping for the embedded shell scripts (backslashes, quotes).\n4. OUTPUT: Same as T6.S1 but for zsh and bash drivers. A line containing `\"` → empty cmd → daemon returns {\"items\":[]} → clean empty menu. Add tests in tests/shell_zsh_driver_spec.lua/_smoke.lua and tests/shell_bash_driver_spec.lua/_smoke.lua: feed a __PIREQ__ with a quote-containing line, assert 0 items.\n5. DOCS: [Mode A] Update the zsh.lua (62-64) and bash.lua (71-73) header 'KNOWN LIMITATION' notes to reflect that empty/quote-containing .line now degrades to empty results (not a flood).",

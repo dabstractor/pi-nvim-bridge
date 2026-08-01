@@ -156,6 +156,65 @@ describe("pi-bridge.shell.bash driver (P2.M3.T5.S2)", function()
 		-- when the shell is absent). The executable check is a defensive guard only.
 		local have_bash = vim.fn.executable("bash") == 1
 
+		-- Build a request frame byte-for-byte like shell.lua M.request (avoids hand-escaping
+		-- the embedded quote in a `git "feature` line). SAME encoding M.request step (6) uses.
+		local function make_frame(line, cursor, after)
+			local l_str = vim.json.encode(line)
+			local a_str = vim.json.encode(after or "")
+			local payload = string.format('{"line":%s,"cursor":%d,"after":%s}', l_str, cursor, a_str)
+			return string.format('__PIREQ__\t%s\n', payload)
+		end
+
+		-- shared spawn/teardown helper (each `it` spawns its OWN daemon + tears it down —
+		-- no state shared across `it`s). Mirrors the fish S1 spec's idiom.
+		local function spawn_daemon(on_ready_cb)
+			local ready = false
+			local start_err = "UNSET"
+			local proc, stdin, stdout
+			bash.start({
+				shell = "bash",
+				cwd = vim.fn.getcwd(),
+				startup_timeout_ms = 5000,
+			}, function(err, p, si, so)
+				start_err = err
+				if not err then
+					proc, stdin, stdout = p, si, so
+				end
+				ready = true
+				if not err and on_ready_cb then
+					on_ready_cb(proc, stdin, stdout)
+				end
+			end)
+			vim.wait(8000, function()
+				return ready
+			end, 20)
+			return start_err, proc, stdin, stdout
+		end
+
+		local function teardown_daemon(proc, stdin, stdout)
+			pcall(function()
+				if proc and not proc:is_closing() then
+					uv.process_kill(proc, "sigkill")
+				end
+			end)
+			pcall(function()
+				if proc and not proc:is_closing() then
+					proc:close()
+				end
+			end)
+			pcall(function()
+				if stdin and not stdin:is_closing() then
+					stdin:close()
+				end
+			end)
+			pcall(function()
+				if stdout and not stdout:is_closing() then
+					stdout:read_stop()
+					stdout:close()
+				end
+			end)
+		end
+
 		it("start → on_ready(nil, proc, stdin, stdout) + 'ls /tm' → /tmp in items", function()
 			if not have_bash then
 				pending(
@@ -421,6 +480,135 @@ describe("pi-bridge.shell.bash driver (P2.M3.T5.S2)", function()
 					stdout:close()
 				end
 			end)
+		end)
+
+		it("empty line → empty items (no all-commands flood)", function()
+			if not have_bash then
+				pending("bash not on PATH — LIVE case skipped (defensive)", function() end)
+				return
+			end
+			local start_err, proc, stdin, stdout = spawn_daemon()
+			assert.is_nil(start_err, "LIVE start on_ready err=" .. tostring(start_err))
+			assert.is_truthy(proc, "LIVE proc handle missing")
+
+			local rx_buf = ""
+			local decoded = nil
+			pcall(function()
+				stdout:read_start(function(rerr, data)
+					if rerr or not data then
+						return
+					end
+					rx_buf = rx_buf .. data
+					local s = rx_buf:find("__PIRESP_START__\n", 1, true)
+					local e = s and rx_buf:find("__PIRESP_END__\n", s + 1, true)
+					if s and e then
+						local payload = rx_buf:sub(s + #"__PIRESP_START__\n", e - 1)
+						local ok, d = pcall(vim.json.decode, payload)
+						if ok and type(d) == "table" then
+							decoded = d
+						end
+					end
+				end)
+			end)
+			pcall(function()
+				stdin:write(make_frame("", 0, ""))
+			end)
+			vim.wait(5000, function()
+				return decoded ~= nil
+			end, 20)
+
+			assert.is_truthy(decoded, "LIVE empty-line response never decoded")
+			if decoded then
+				local items = (type(decoded.items) == "table") and decoded.items or {}
+				assert.are.equals(0, #items,
+					"empty line should yield 0 items, got " .. tostring(#items) .. " (FLOOD not suppressed)")
+			end
+
+			teardown_daemon(proc, stdin, stdout)
+		end)
+
+		it("quote-line → empty items AND daemon stays responsive on the NEXT request (no flood)", function()
+			if not have_bash then
+				pending("bash not on PATH — LIVE case skipped (defensive)", function() end)
+				return
+			end
+			local start_err, proc, stdin, stdout = spawn_daemon()
+			assert.is_nil(start_err, "LIVE start on_ready err=" .. tostring(start_err))
+			assert.is_truthy(proc, "LIVE proc handle missing")
+
+			-- rx_buf persists across the two frames (the responsiveness check decodes BOTH on
+			-- the SAME stdout read). resolvers fire in send order.
+			local rx_buf = ""
+			local r_quote, r_followup = nil, nil
+			pcall(function()
+				stdout:read_start(function(rerr, data)
+					if rerr or not data then
+						return
+					end
+					rx_buf = rx_buf .. data
+					-- drain every complete START..END pair in the buffer (a chunk may carry both).
+					while true do
+						local s = rx_buf:find("__PIRESP_START__\n", 1, true)
+						if not s then
+							break
+						end
+						local ps = s + #"__PIRESP_START__\n"
+						local e = rx_buf:find("__PIRESP_END__\n", ps, true)
+						if not e then
+							break
+						end
+						local payload = rx_buf:sub(ps, e - 1)
+						rx_buf = rx_buf:sub(e + #"__PIRESP_END__\n")
+						local ok, d = pcall(vim.json.decode, payload)
+						if ok and type(d) == "table" then
+							local items = (type(d.items) == "table") and d.items or {}
+							if r_quote == nil then
+								r_quote = items
+							else
+								r_followup = items
+							end
+						end
+					end
+				end)
+			end)
+
+			-- (1) the quote-frame: `git "feature` extracts to a TRAILING-BACKSLASH line → guard
+			--     must emit empty BEFORE compgen/complete -F (no flood).
+			pcall(function()
+				stdin:write(make_frame('git "feature', 11, ""))
+			end)
+			vim.wait(5000, function()
+				return r_quote ~= nil
+			end, 20)
+
+			-- (2) the FOLLOW-UP on the SAME daemon: `ls /tm` → /tmp. If the quote had wedged the
+			--     daemon, this follow-up would hang → timeout → r_followup stays nil.
+			pcall(function()
+				stdin:write(make_frame("ls /tm", 6, ""))
+			end)
+			vim.wait(5000, function()
+				return r_followup ~= nil
+			end, 20)
+
+			assert.is_truthy(r_quote, "quote-frame never resolved — daemon died (guard did not fire)")
+			if r_quote then
+				assert.are.equals(0, #r_quote,
+					"quote-line should yield 0 items, got " .. tostring(#r_quote) .. " (flood not suppressed)")
+			end
+			assert.is_truthy(r_followup,
+				"follow-up `ls /tm` never resolved — daemon did NOT stay responsive after the quote-frame")
+			if r_followup then
+				local found_tmp = false
+				for _, it in ipairs(r_followup) do
+					if it.value == "/tmp" then
+						found_tmp = true
+					end
+				end
+				assert.is_true(found_tmp,
+					"follow-up `ls /tm` missing /tmp (daemon degraded after the quote-frame)")
+			end
+
+			teardown_daemon(proc, stdin, stdout)
 		end)
 	end)
 end)

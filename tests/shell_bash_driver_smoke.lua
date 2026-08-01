@@ -194,6 +194,46 @@ if results.req3 then
 	)
 end
 
+-- (2.5) GRACEFUL-DEGRADE GUARD (Issue 6): empty line + quote-line must yield EMPTY
+--       items, AND the daemon must SURVIVE them (a follow-up `ls /tm` → /tmp proves no
+--       wedge). Frames are built via vim.json.encode (byte-identical to shell.lua
+--       M.request). `git "feature` extracts to a TRAILING-BACKSLASH line → guard emits empty.
+local r_empty, r_quote, r_survive = nil, nil, nil
+request("", 0, "", function(items)
+	r_empty = items
+	-- `git "feature` extracts to a TRAILING-BACKSLASH line → guard emits empty (no flood).
+	request('git "feature', 11, "", function(items2)
+		r_quote = items2
+		-- SURVIVAL: same daemon, follow-up `ls /tm` → /tmp (proves the daemon stayed
+		-- responsive; a wedged daemon would hang → timeout → r_survive stays nil).
+		request("ls /tm", 6, "", function(items3)
+			r_survive = items3
+		end)
+	end)
+end)
+vim.wait(10000, function()
+	return r_survive ~= nil
+end, 20)
+
+check(r_empty ~= nil, "empty-line request never resolved")
+if r_empty then
+	check(#r_empty == 0, "empty line should yield 0 items, got " .. #r_empty .. " (FLOOD not suppressed)")
+end
+check(r_quote ~= nil, "quote-line request never resolved — daemon died (guard did not fire)")
+if r_quote then
+	check(#r_quote == 0, "quote-line should yield 0 items, got " .. #r_quote .. " (flood not suppressed)")
+end
+check(r_survive ~= nil, "survival follow-up `ls /tm` never resolved — daemon died on a malformed input")
+if r_survive then
+	local found_s = false
+	for _, it in ipairs(r_survive) do
+		if it.value == "/tmp" then
+			found_s = true
+		end
+	end
+	check(found_s, "survival follow-up missing /tmp (daemon did NOT survive)")
+end
+
 -- (3) REAL cd (research §6 — unlike zsh v1's advisory no-op): send "ls " to capture the
 --     spawn cwd's entries, then __PICD__\t/tmp, then "ls " again → assert the entries
 --     CHANGED (the cwd actually moved). /tmp has MANY entries (the research's chosen target).
@@ -308,4 +348,4 @@ if fails > 0 then
 	io.stderr:write(fails .. " check(s) failed — bash driver smoke GATE FAILED\n")
 	vim.cmd("cquit 1")
 end
-io.stdout:write("SMOKE_PASS: bash driver spawned, 3 sequential requests decoded, REAL cd proven\n")
+io.stdout:write("SMOKE_PASS: bash driver spawned, sequential + graceful-degrade + REAL cd requests decoded\n")

@@ -68,10 +68,14 @@
 --      - a cword==0 → `compgen -abck -A function` branch (command-name completion —
 --        research §4); the PRD sketch had none (would fall through to `compgen -f -d`
 --        files for a command name — wrong).
---    KNOWN LIMITATION: a command line containing a literal `"` breaks the crude `.line`
---      extraction → line resolves empty → `compgen -abck` returns all commands (graceful
---      degrade, not a crash; research §9). A true JSON-string parse is infeasible in pure
---      bash without `jq`/`python3`; v1 accepts this edge (fish/zsh share it).
+--    GRACEFUL DEGRADE (Issue 6): a command line containing a literal `"` (or an empty
+--      line) breaks the crude `.line` extraction (`git \"feature` → `line` `git \\`, a
+--      DANGLING backslash — NOT empty). `__pi_handle`'s `(__PIREQ__*)` branch now GUARDS
+--      `line` BEFORE the completion subshell: an empty `line` (→ `compgen -abck -- ""`
+--      FLOOD) or one ending in an ODD run of backslashes (the dangling-`\\` case) emits a
+--      clean EMPTY `{"items":[],"prefix":""}` instead. An EVEN run (`echo \\`) is a valid
+--      escaped backslash, kept. A true JSON-string parse is infeasible in pure bash
+--      without `jq`/`python3`; the guard converts the edge into a graceful no-results.
 --
 --  * REAL cd (NOT advisory like zsh v1): bash's daemon is a plain script loop; nothing
 --    constrains `builtin cd`. The `__PICD__\t<path>\n` frame does a REAL `builtin cd` and
@@ -194,18 +198,32 @@ __pi_handle() {
             local line="${payload#*\"line\":\"}"; line="${line%%\"*}"   # crude .line (research §9)
             local cursor="${payload#*\"cursor\":}"; cursor="${cursor%%[!0-9]*}"
             cursor="${cursor:-0}"
+            # === GRACEFUL-DEGRADE GUARD (Issue 6 / PRD §17.6.x) ===
+            # The crude `.line` extraction cannot parse a JSON-escaped `\"`, so a line
+            # containing a literal `\"` leaves a DANGLING backslash at the end of `line`
+            # (e.g. `git \"feature` → `line` `git \\`, a DANGLING backslash — NOT empty).
+            # __pi_handle's `(__PIREQ__*)` branch now GUARDS `line` BEFORE the completion
+            # subshell: an empty `line` (→ `compgen -abck -- ""` FLOOD) or one ending
+            # in an ODD run of backslashes (the dangling-`\\` case) emits a clean EMPTY
+            # `{"items":[],"prefix":""}` instead. An EVEN run (`echo \\`) is a valid
+            # escaped backslash, kept.
+            local _tail="${line##*[^\\]}"
             echo __PIRESP_START__
-            (
-                # run completion dispatch in a subshell so a buggy compspec fn can't kill us (research §10)
-                __pi_complete "$line" "$cursor"
-                local _items="" _first=1 w
-                for w in "${COMPREPLY[@]}"; do
-                    [ -z "$w" ] && continue
-                    local _it="{\"value\":$(__pi_json_str "$w")}"     # bash: {value} ONLY (no description, §8)
-                    if ((_first)); then _items="$_it"; _first=0; else _items="${_items},${_it}"; fi
-                done
-                printf '{"items":[%s],"prefix":""}\n' "$_items"
-            ) 2>/dev/null
+            if [[ -z "$line" ]] || (( ${#_tail} % 2 )); then
+                printf '{"items":[],"prefix":""}\n'
+            else
+                (
+                    # run completion dispatch in a subshell so a buggy compspec fn can't kill us (research §10)
+                    __pi_complete "$line" "$cursor"
+                    local _items="" _first=1 w
+                    for w in "${COMPREPLY[@]}"; do
+                        [ -z "$w" ] && continue
+                        local _it="{\"value\":$(__pi_json_str "$w")}"     # bash: {value} ONLY (no description, §8)
+                        if ((_first)); then _items="$_it"; _first=0; else _items="${_items},${_it}"; fi
+                    done
+                    printf '{"items":[%s],"prefix":""}\n' "$_items"
+                ) 2>/dev/null
+            fi
             echo __PIRESP_END__                  # ALWAYS emit END (so shell.lua _feed never hangs; §10)
             ;;
     esac
