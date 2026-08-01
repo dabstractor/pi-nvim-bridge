@@ -311,7 +311,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T3.S3",
                   "title": "shell.complete_current(buf, cb) — read buffer, strip bangs, byte offsets, call shell.request",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M2.T3.S1",

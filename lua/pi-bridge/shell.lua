@@ -805,6 +805,98 @@ function M.teardown()
 end
 
 -- ===========================================================================
+-- §17.7 buffer→daemon adapter (complete_current + the client-side prefix helper)
+-- ===========================================================================
+--- §17.6.1 client-side prefix: the trailing non-whitespace run of `line` (the current shell
+--- word being completed). PURE (no nvim, no state) → directly unit-testable (the
+--- coords.lua / completion.is_attachment_context style). Used by complete_current to OVERRIDE
+--- the daemon's advisory prefix (research §6 — the daemon's decoded.prefix is ignored in v1;
+--- shell/accept.lua recomputes word boundaries independently, so a deterministic client
+--- prefix is correct + sufficient). Returns "" for an empty/whitespace-only line, "" on a
+--- non-string (never throws). Byte-safe: `[%S]+$` operates on bytes (ASCII \S class), so
+--- a multibyte trailing word (e.g. `"日cmd"`) is returned whole (UTF-8 continuation bytes
+--- are NOT ASCII whitespace — they match `%S`).
+---@param line string? The command text up to the cursor (after bang strip).
+---@return string prefix The trailing word ("" if none).
+function M.shell_word_prefix(line)
+	if type(line) ~= "string" then return "" end
+	return line:match("[%S]+$") or ""
+end
+
+--- §17.7 shell.complete_current(buf, cb) — the buffer→daemon bridge. Reads pi-prompt line
+--- 1 + the nvim cursor, strips the `!`/`!!` bangs (§17.7), computes the BYTE-domain
+--- line/cursor/after triple (§17.14 — NO coords.nvim_to_pi_coords / coords.byte_to_utf16 /
+--- vim.str_utfindex; the shell path is byte-domain, unlike §8's UTF-16 bridge path),
+--- short-circuits an empty command (§17 edge case — do NOT cold-start the daemon for a
+--- bare `!`), derives prefix client-side (§17.6.1), and delegates to M.request(line,
+--- cursor, after, wrapper_cb). The wrapper_cb runs in LIBUV FAST CONTEXT (M.request's
+--- pending_cb, fired by S5 `_feed`'s read_start cb OR the per-request timer — shell.lua:642/650)
+--- → PURE string math (shell_word_prefix) + forward to `cb` ONLY (NO vim.api.* — E5560; the
+--- consumer `do_shell_fetch` already vim.schedule's the menu hop, so do NOT duplicate).
+---
+--- The client-side prefix OVERRIDES the daemon's `prefix` field (advisory/ignored in v1).
+--- complete_current does NOT add its own gen guard (completion.lua's state.gen
+--- `do_shell_fetch` + shell.lua's state.gen `M.request` already bookend it — just forward).
+---
+--- Called by completion.lua's do_shell_fetch (the SOLE consumer; forward-guarded there).
+--- Runs on the nvim MAIN LOOP at call time (do_refresh/force_fetch/on_tab are main-loop
+--- callers) → the buffer/cursor READ is api-safe (NO vim.schedule needed for the READ).
+--- NEVER throws (per-keystroke + autocmd contract): pcall every nvim.api/M.request;
+--- type-guard buf/cb; `nvim_buf_is_valid` guard; bad args → cb(err) or a guarded no-op.
+---@param buf integer The pi-prompt buffer handle (current — guarded by the caller).
+---@param cb  pi-bridge.shell.RequestCb Resolved EXACTLY ONCE: cb(nil, items, prefix) on
+---           success; cb(err) on a read/ensure/write/encode failure.
+function M.complete_current(buf, cb)
+	if type(cb) ~= "function" then cb = function() end end -- never-throws on a bad arg
+	-- (1) GUARD buf. A wiped/non-buffer → cb(err) (silent degrade; the consumer's err path).
+	if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then
+		return cb("invalid buf")
+	end
+	-- (2) READ line 1 (only line 1 — completion_context already gates cursorLine==0). pcall
+	--     (a wiped buf mid-call → cb). nvim_buf_get_lines(buf, 0, 1, false) returns {line1}
+	--     (a UTF-8 Lua string — byte-correct for the sub() math below).
+	local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, 1, false)
+	if not ok or type(lines) ~= "table" or type(lines[1]) ~= "string" then
+		return cb("read failed")
+	end
+	local line1 = lines[1]
+	-- (3) READ cursor (current window — buf is current per the caller's currency guard). pcall.
+	local cur
+	ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
+	if not ok or type(cur) ~= "table" or type(cur[2]) ~= "number" then
+		return cb("read failed")
+	end
+	local byte_col = cur[2] -- 0-based BYTE offset (coords.lua header; §17.14)
+	-- (4) BANG STRIP (§17.7): "!!" → 2, else "!" → 1, else 0 (defensive; completion_context
+	--     already gated line1[1]=="!", but be robust). Check "!!" FIRST — it also starts with
+	--     "!", so the wrong order strips only 1.
+	local bangs = 0
+	if line1:sub(1, 2) == "!!" then bangs = 2
+	elseif line1:sub(1, 1) == "!" then bangs = 1 end
+	-- (5) COMPUTE the BYTE-domain triple (§17.14 — NO coords/UTF-16). Clamp cin ≥ 0 (a cursor
+	--     ON the bangs → 0; a NEGATIVE cin would make sub(1,-1) = the WHOLE string — WRONG).
+	--     `line` is "up to the cursor" (§17.5.1) ⇒ cursor == #line by construction.
+	local cmd   = line1:sub(bangs + 1)           -- full command after bangs
+	local cin   = math.max(0, byte_col - bangs)  -- cursor offset into cmd (0-based byte)
+	local line  = cmd:sub(1, cin)                -- up to cursor (cin bytes; sub(1,0)="")
+	local after = cmd:sub(cin + 1)               -- after cursor
+	-- (6) EMPTY-COMMAND GUARD (§17 edge case): a bare `!` / `!   ` does NOT spawn the daemon
+	--     (no completion until a word exists). `!git ` (trailing space) is NOT empty → query.
+	--     Match wholly-empty/whitespace. Resolves cb DIRECTLY (M.request/ensure NOT called).
+	if cmd == "" or cmd:match("^%s*$") then
+		return cb(nil, {}, "")
+	end
+	-- (7) DELEGATE to M.request. The wrapper_cb runs in LIBUV FAST CONTEXT (M.request's
+	--     pending_cb ← _feed/timer) → PURE string math + forward ONLY. Derive prefix CLIENT-
+	--     SIDE (§17.6.1 / research §6: OVERRIDE the daemon's advisory prefix). err → cb(err)
+	--     (NO prefix derivation / cb(nil,…) on the err path).
+	M.request(line, cin, after, function(rerr, ritems, _rprefix)
+		if rerr then return cb(rerr) end
+		cb(nil, ritems or {}, M.shell_word_prefix(line)) -- OVERRIDE prefix (line captured)
+	end)
+end
+
+-- ===========================================================================
 -- TEST SEAMS (NOT public API — internal, _test_ prefixed; used by tests/shell_request_*)
 -- ===========================================================================
 -- `state.pending_cb` is module-local, so tests cannot reach it directly. The S4 test
