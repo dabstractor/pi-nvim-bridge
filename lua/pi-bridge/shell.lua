@@ -370,4 +370,214 @@ function M._reset()
 	state.rx_buf = ""
 end
 
+-- ===========================================================================
+-- §17.5.1 framing protocol + §17.5.2 supersession layer (request)
+-- ===========================================================================
+
+-- The single per-request timeout timer slot (module-local). `nil` when disarmed. At
+-- most ONE alive at a time: request() cancels the prior at its start; every terminal path
+-- (pending_cb / write-fail / S6 teardown) closes it. Deliberately NOT a `state` field:
+-- S2's PRP declared the state literal without it, and editing it would conflict with S3
+-- (editing this file in parallel) + S2's reset() wouldn't clear it. S6's teardown() (same
+-- file) calls cancel_req_timer() before uv.process_kill + pipe:close.
+local req_timer
+
+--- Stop + close the per-request timer (the leak-safe finalize; mirrors completion.lua
+--- `cancel_timer` L350-360 + bridge.lua `resolve_request` timer cleanup L399-403). A
+--- one-shot `uv_timer_t` (start(ms, 0, cb)) only auto-STOPs after firing — `:close()` is
+--- REQUIRED to free the handle, or it leaks across editor open/close cycles (libuv owns
+--- the C struct; not GC'd until closed). NEVER stop-only. `pcall`'d + `is_closing()`-guarded
+--- so it is safe to call from INSIDE the timer's own callback + idempotent on an
+--- already-closed handle. Runs in libuv fast context (plain luv calls — no vim.api).
+--- Called at request START (supersede the prior timer), inside pending_cb (response/
+--- timeout arrived), in the write-fail paths, and (future) by S6's teardown().
+local function cancel_req_timer()
+	pcall(function()
+		if req_timer and not req_timer:is_closing() then
+			req_timer:stop()
+			req_timer:close()
+		end
+	end)
+	req_timer = nil
+end
+
+--- The §17.5.1 framing-protocol + §17.5.2 supersession layer of the completion daemon.
+--- Sends a framed `__PIREQ__\t{json}\n` request to the daemon's stdin and resolves
+--- `cb(err, items, prefix)` on the response (via S5's `_feed` → `state.pending_cb`) OR
+--- the per-request timeout.
+---
+--- Flow:
+---   1. call `M.ensure` FIRST (spawn-if-needed, S3). If the daemon is down
+---      (`state.failed`) ensure reports `err` → short-circuit with `cb(err)` BEFORE any
+---      state mutation (no gen bump / timer / write).
+---   2. on ready: SUPERSEDE — `cancel_req_timer()` (drop the prior request's timer; the
+---      gen-guard drops its stale fire, but the un-closed HANDLE leaks). Bump `state.gen`
+---      + capture `local gen`; set `inflight=true`.
+---   3. install the ONE-SHOT gen-guarded `state.pending_cb`: `if gen ~= state.gen then
+---      return end` (supersession, mirrors completion.lua do_refresh) → `cancel_req_timer()`
+---      + `state.pending_cb = nil` (null-slot-FIRST exactly-once, mirrors bridge.lua
+---      resolve_request) + `inflight=false` + `cb(nil, items, prefix)`.
+---   4. `pcall(vim.json.encode, {line, cursor, after})` — on failure `cb("encode failed")`.
+---   5. arm a one-shot `uv.new_timer()` for `config.shell.timeout_ms` (default 1500); on
+---      fire call `state.pending_cb({}, "")` (soft-degrade empty result → `cb(nil, {}, "")`;
+---      §17.12 "or close").
+---   6. `state.stdin:write("__PIREQ__\t{json}\n", cb)` — the write cb routes EPIPE →
+---      `cb("write failed")` (bridge.lua M.send GOTCHA 3: a callback-less write SILENTLY
+---      swallows broken-pipe errors). pcall the write (a sync throw, e.g. nil stdin →
+---      `cb("write failed")`).
+---
+--- NEVER throws (guard cb type; pcall encode/new_timer/write; M.ensure is never-throws
+--- per S3). Returns NOTHING (cb-only). The `cb` is invoked from libuv FAST context
+--- (pending_cb runs in the read_start cb via S5 `_feed`, OR in the timer cb) → the
+--- consumer (P2.M2.T3.complete_current) must `vim.schedule` any editor-touching work
+--- (`:help E5560`); S4's own chain does NO `vim.api.*` (only state writes + luv calls +
+--- `vim.json.encode`).
+---
+--- FORWARD CONTRACTS (do NOT implement here):
+---   * S5's `_feed(chunk)` MUST invoke `if state.pending_cb then state.pending_cb(items,
+---     prefix) end` (the `if` guard is what makes pending_cb ONE-SHOT — a late duplicate
+---     response after the slot was nil'd is a no-op).
+---   * The user `cb` runs in libuv FAST context → the consumer (P2.M2.T3.complete_current)
+---     must `vim.schedule` its editor work (`M.on_results` → the menu hop is NOT fast-safe;
+---     `state.last_result = {}` is). FLAG FOR P2.M2.T3.S2.
+---   * S6's `teardown()` calls `cancel_req_timer()` BEFORE `uv.process_kill` + `pipe:close`×3
+---     THEN `reset()`.
+---
+---@param line   string  The command text up to the cursor (UTF-8; §17.5.1 — no UTF-16 conversion).
+---@param cursor integer The 0-based BYTE offset into `line`.
+---@param after  string? The text after the cursor (drivers that need the full line reconstruct it; default "").
+---@param cb     pi-bridge.shell.RequestCb Resolved EXACTLY ONCE: cb(nil, items, prefix) on
+---              success/timeout(empty); cb(err) on ensure-fail / write-fail / encode-fail.
+function M.request(line, cursor, after, cb)
+	if type(cb) ~= "function" then cb = function() end end -- never-throws on a bad arg
+	-- (1) spawn-if-needed (S3). The ensure-failed path short-circuits BEFORE any state mutation
+	--     (no gen bump / timer / write) so a never-sent request cannot corrupt supersession.
+	M.ensure(function(err)
+		if err then return cb(err) end -- daemon down (state.failed) → cb(err)
+		-- (2) read config FRESH (lazy require — async handshake + test mocks; defensive:
+		--     config.shell may be nil until P2.M3.T6.S1). ⚠ NOT `pi.config.shell or {}`
+		--     (throws if config nil) — use the AND-chain.
+		local pi = require("pi-bridge")
+		local cfg = (pi.config and pi.config.shell) or {}
+		local timeout_ms = cfg.timeout_ms or 1500 -- §17.11 per-request budget (NOT startup_timeout_ms=5000)
+		-- (3) SUPERSEDE: cancel the prior request's timer at START, BEFORE bumping gen. The
+		--     gen-guard drops the prior timer's stale FIRE, but the un-closed uv_timer_t HANDLE
+		--     leaks (one-shot only auto-STOPs; :close() required — bridge.lua GOTCHA 5).
+		cancel_req_timer()
+		-- (4) bump + capture the gen-guard (mirrors completion.lua do_refresh). One request
+		--     in-flight at a time (§17.5.2: "shell completion is fast + the sentinel protocol
+		--     is sequential").
+		state.gen = state.gen + 1
+		local gen = state.gen
+		state.inflight = true
+		-- (5) the ONE-SHOT gen-guarded response cb. Invoked by S5's _feed (response) AND the
+		--     timer cb (timeout). S5 MUST guard `if state.pending_cb then state.pending_cb(...)
+		--     end` (the `if` is what makes this ONE-SHOT — a late duplicate after the slot was
+		--     nil'd is a no-op).
+		state.pending_cb = function(items, prefix)
+			if gen ~= state.gen then return end -- STALE (superseded by a newer request) → drop
+			cancel_req_timer()                  -- response (or timeout) arrived → stop+close the timer
+			state.pending_cb = nil              -- NULL THE SLOT FIRST (exactly-once; mirrors resolve_request)
+			state.inflight = false
+			cb(nil, items, prefix)              -- success-shape (err path is ensure/write/encode-fail)
+		end
+		-- (6) encode the payload (pcall — vim.json.encode throws on a non-encodable value,
+		--     e.g. a function/userdata). On failure tear down + cb("encode failed")
+		--     (mirrors the write-fail discipline). The payload is {line,cursor,after} in
+		--     that EXACT key order (§17.5.1 framing) — vim.json.encode sorts keys
+		--     alphabetically, so build the ordered JSON string field-by-field, encoding each
+		--     VALUE (handles quote/backslash/control escaping) + the integer cursor directly.
+		local l_ok, l_str = pcall(vim.json.encode, line)
+		local a_ok, a_str = pcall(vim.json.encode, after or "")
+		local c_ok = type(cursor) == "number" and cursor == math.floor(cursor)
+		local payload
+		if l_ok and a_ok and c_ok then
+			payload = string.format("{\"line\":%s,\"cursor\":%d,\"after\":%s}", l_str, cursor, a_str)
+		end
+		if not payload then
+			cancel_req_timer(); state.pending_cb = nil; state.inflight = false
+			return cb("encode failed")
+		end
+		-- (7) arm the one-shot per-request timeout (luv timer, NEVER vim.defer_fn — bridge.lua
+		--     GOTCHA 5 + the fish spike both use uv.new_timer). The cb calls pending_cb({},"")
+		--     → cb(nil, {}, "") (soft-degrade empty; §17.12 "or close"). The gen-guard +
+		--     null-slot make a superseded / double fire a no-op. Runs in fast context (a table
+		--     read + a call). pcall'd (uv.new_timer is a genuine luv call).
+		local tok = pcall(function()
+			req_timer = uv.new_timer()
+			req_timer:start(timeout_ms, 0, function()
+				dbg("[shell.request] timeout (gen=" .. tostring(gen) .. ")") -- trace marker only (GOTCHA #5)
+				if state.pending_cb then state.pending_cb({}, "") end
+			end)
+		end)
+		if not tok then -- uv.new_timer / :start THREW (defensive — a malformed luv)
+			cancel_req_timer(); state.pending_cb = nil; state.inflight = false
+			return cb("timer failed")
+		end
+		-- (8) write the frame WITH a cb (bridge.lua M.send GOTCHA 3: a callback-less write
+		--     SILENTLY swallows EPIPE → completion hangs until the timeout). pcall the write
+		--     (a sync throw, e.g. nil stdin → cb("write failed")). The write cb: werr nil →
+		--     await response; werr truthy → cb("write failed").
+		local frame = string.format("__PIREQ__\t%s\n", payload)
+		local wok = pcall(function()
+			state.stdin:write(frame, function(write_err)
+				if not write_err then return end -- write OK → await the response (S5 _feed → pending_cb)
+				if gen ~= state.gen then return end -- superseded → drop
+				cancel_req_timer(); state.pending_cb = nil; state.inflight = false
+				cb("write failed") -- async write failure (EPIPE / broken pipe)
+			end)
+		end)
+		if not wok then -- stdin:write THREW (e.g. stdin nil/closed — defensive)
+			cancel_req_timer(); state.pending_cb = nil; state.inflight = false
+			cb("write failed")
+		end
+	end)
+end
+
+-- ===========================================================================
+-- TEST SEAMS (NOT public API — internal, _test_ prefixed; used by tests/shell_request_*)
+-- ===========================================================================
+-- `state.pending_cb` is module-local, so tests cannot reach it directly. The S4 test
+-- matrix (research §5c) MUST invoke `state.pending_cb(items, prefix)` to deliver the
+-- response (S5's `_feed` will be the prod invocation point once landed; until then these
+-- seams let S4's request layer be exercised end-to-end). Mirrors the pattern other test
+-- suites use to observe module-local state. These do NOT touch state beyond what
+-- request()/reset() already do + are no-ops when pending_cb is nil (one-shot safe).
+
+--- Deliver a response as if S5's `_feed` had parsed it: invokes `state.pending_cb(items,
+--- prefix)` if set (the `if` guard mirrors S5's forward contract — a nil slot is a no-op,
+--- so this is safe to call before request sets it or after a response resolved it).
+---@param items  table?  The AutocompleteItem[] (or {} for timeout soft-degrade).
+---@param prefix string? The completion prefix.
+function M._test_invoke_pending(items, prefix)
+	if state.pending_cb then state.pending_cb(items or {}, prefix or "") end
+end
+
+--- TEST seam: read `state.inflight` (assert it flips true at request start, false at finalize).
+---@return boolean
+function M._test_inflight()
+	return state.inflight
+end
+
+--- TEST seam: is `state.pending_cb` nil? (assert the one-shot slot was nulled post-finalize).
+---@return boolean
+function M._test_pending_is_nil()
+	return state.pending_cb == nil
+end
+
+--- TEST seam: read `state.gen` (assert supersession bumps it + ensure-fail does NOT).
+---@return integer
+function M._test_gen()
+	return state.gen
+end
+
+--- TEST seam: return the current `state.pending_cb` closure (read-only). Used by the
+--- late-response-drop test to SAVE req1's closure into a local, then supersede with
+--- req2, then invoke the STALE closure to prove the gen-guard drops it (mirrors how the
+--- PRP's research §5c LATE-RESPONSE-DROPPED case captures req1's pending_cb).
+---@return function?
+function M._test_get_pending()
+	return state.pending_cb
+end
+
 return M

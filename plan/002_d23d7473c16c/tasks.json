@@ -210,7 +210,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S4",
                   "title": "request(line, cursor, after, cb) — framed protocol + gen-guard supersession",
-                  "status": "Researching",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S2",
@@ -229,7 +229,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S5",
                   "title": "_feed(chunk) buffering + sentinel slicing + JSON decode + normalize to AutocompleteItem[]",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S4"
