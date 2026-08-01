@@ -88,6 +88,24 @@ local function inject_fake_driver(fake_stdin, driver_opts)
 	return drv
 end
 
+-- --- inject a FAKE driver that ALSO exposes a `cd(path)` (mirrors a REAL driver: writes
+-- the __PICD__\t<path>\n frame to the fake stdin + records cd_calls). Lets complete_current's
+-- re-cd block fire against the injected driver so tests assert cd-was-called AND the FIFO
+-- write order (__PICD__ before __PIREQ__).
+local function inject_fake_driver_with_cd(fake_stdin)
+	local drv = { cd_calls = {}, captured = {} }
+	drv.start = function(opts, cb)
+		drv.captured.opts = opts
+		cb(nil, { is_closing = function() return false end }, fake_stdin, make_fake_stdout())
+	end
+	drv.cd = function(path)
+		drv.cd_calls[#drv.cd_calls + 1] = path
+		fake_stdin:write(string.format("__PICD__\t%s\n", path), function() end)
+	end
+	package.loaded["pi-bridge.shell.fish"] = drv
+	return drv
+end
+
 -- --- count OPEN (not closing) uv_timer_t handles (the no-leak assertion).
 local function count_open_timers()
 	local n = 0
@@ -388,5 +406,137 @@ describe("pi-bridge.shell complete_current (P2.M2.T3.S3)", function()
 		-- M.request surface intact (regression)
 		assert.are.equals("function", type(shell.request))
 		assert.are.equals("function", type(shell.ensure))
+	end)
+
+	-- =======================================================
+	-- CWD RE-TRACKING (Issue 4 / PRD §17.5.2): complete_current re-cd's the daemon when
+	-- pi's session cwd changed since spawn, submitting __PICD__ BEFORE __PIREQ__ (FIFO).
+	-- =======================================================
+
+	-- (13a) re-cd FIRES + FIFO order: spawn at /old, move to /new → __PICD__/new before __PIREQ__.
+	it("cwd change after spawn → __PICD__\t<new> written BEFORE __PIREQ__ (FIFO); state.cwd tracks", function()
+		local stdin = make_fake_stdin()
+		local drv = inject_fake_driver_with_cd(stdin)
+		pi.bridge = fake_bridge("/usr/bin/fish")
+		pi.bridge.server_info.cwd = "/old"
+		shell.ensure(function() end) -- spawns with cwd="/old" → state.cwd=="/old"
+		assert.are.equals("/old", shell._test_cwd(), "spawn seeds state.cwd from session_cwd")
+		-- mutate pi's session cwd (Issue 4: server_info.cwd changes mid-session)
+		pi.bridge.server_info.cwd = "/new"
+		local buf = buf_with("!git ch", 7)
+		local got = {}
+		shell.complete_current(buf, function(err, items, prefix)
+			got = { err = err, items = items, prefix = prefix }
+		end)
+		-- cd was called exactly once with the new cwd
+		assert.are.same({ "/new" }, drv.cd_calls, "driver.cd called once with the new cwd")
+		-- FIFO: __PICD__ is written BEFORE __PIREQ__ to the SAME stdin pipe
+		assert.are.equals("__PICD__\t/new\n", stdin.written[1], "__PICD__ frame is the FIRST write")
+		assert.is_truthy(stdin.written[2]:find("__PIREQ__\t", 1, true),
+			"__PIREQ__ frame is the SECOND write (FIFO after __PICD__)")
+		-- state.cwd updated to the new cwd (assertable via _test_cwd)
+		assert.are.equals("/new", shell._test_cwd(), "state.cwd updated to the new cwd")
+		-- the response still forwards prefix/items correctly
+		shell._test_invoke_pending({ { value = "checkout" } }, "DAEMON_ADVISORY")
+		assert.is_nil(got.err)
+		assert.are.equals("ch", got.prefix)
+		assert.are.equals("checkout", got.items[1].value)
+		assert.are.equals(0, count_open_timers())
+	end)
+
+	-- (13b) NO re-cd when cwd UNCHANGED: /old at spawn + /old at request → no __PICD__ frame.
+	it("cwd unchanged → no __PICD__ frame; __PIREQ__ is the first write; state.cwd unchanged", function()
+		local stdin = make_fake_stdin()
+		local drv = inject_fake_driver_with_cd(stdin)
+		pi.bridge = fake_bridge("/usr/bin/fish")
+		pi.bridge.server_info.cwd = "/old"
+		shell.ensure(function() end)
+		local buf = buf_with("!git ch", 7)
+		local got = {}
+		shell.complete_current(buf, function(err, items, prefix)
+			got = { err = err, items = items, prefix = prefix }
+		end)
+		assert.are.same({}, drv.cd_calls, "cwd unchanged → driver.cd NOT called")
+		assert.is_truthy(stdin.written[1]:find("__PIREQ__\t", 1, true),
+			"__PIREQ__ is the first (and only) write — no __PICD__ before it")
+		for i = 1, #stdin.written do
+			assert.is_falsy(stdin.written[i]:find("__PICD__", 1, true), "no __PICD__ frame written")
+		end
+		assert.are.equals("/old", shell._test_cwd(), "state.cwd unchanged at /old")
+		shell._test_invoke_pending({ { value = "checkout" } }, "x")
+		assert.are.equals("ch", got.prefix)
+	end)
+
+	-- (13c) NO re-cd when daemon NOT spawned: ensure seeds state.cwd from spawn, not re-cd.
+	it("daemon unspawned → complete_current spawns (cwd fresh); no re-cd; state.cwd seeded by spawn", function()
+		local stdin = make_fake_stdin()
+		local drv = inject_fake_driver_with_cd(stdin)
+		pi.bridge = fake_bridge("/usr/bin/fish")
+		pi.bridge.server_info.cwd = "/new" -- set BEFORE first ensure/spawn
+		-- do NOT ensure() first — complete_current → M.request → M.ensure spawns with /new
+		local buf = buf_with("!git ch", 7)
+		local got = {}
+		shell.complete_current(buf, function(err, items, prefix)
+			got = { err = err, items = items, prefix = prefix }
+		end)
+		assert.are.same({}, drv.cd_calls,
+			"daemon unspawned → re-cd skipped (ensure spawns WITH session_cwd → state.cwd fresh)")
+		for i = 1, #stdin.written do
+			assert.is_falsy(stdin.written[i]:find("__PICD__", 1, true), "no __PICD__ frame written")
+		end
+		assert.are.equals("/new", shell._test_cwd(), "state.cwd seeded by spawn (NOT by re-cd)")
+		shell._test_invoke_pending({ { value = "checkout" } }, "x")
+		assert.are.equals("ch", got.prefix)
+	end)
+
+	-- (13d) NIL session_cwd → no re-cd, no throw.
+	it("nil session_cwd → no re-cd, no throw; state.cwd nil; __PIREQ__ first write", function()
+		local stdin = make_fake_stdin()
+		local drv = inject_fake_driver_with_cd(stdin)
+		pi.bridge = fake_bridge("/usr/bin/fish") -- server_info={} → session_cwd() nil
+		shell.ensure(function() end) -- spawns with cwd=nil → state.cwd==nil
+		assert.is_nil(shell._test_cwd())
+		local buf = buf_with("!git", 4)
+		local got = {}
+		assert.has_no.errors(function()
+			shell.complete_current(buf, function(err, items, prefix)
+				got = { err = err, items = items, prefix = prefix }
+			end)
+		end)
+		assert.are.same({}, drv.cd_calls, "nil session_cwd → driver.cd NOT called")
+		for i = 1, #stdin.written do
+			assert.is_falsy(stdin.written[i]:find("__PICD__", 1, true), "no __PICD__ frame written")
+		end
+		assert.is_nil(shell._test_cwd(), "state.cwd stays nil")
+		shell._test_invoke_pending({ { value = "git" } }, "x")
+		assert.is_nil(got.err)
+	end)
+
+	-- (13e) driver WITHOUT cd → no throw (the type()=="function" guard skips).
+	it("driver without cd → cwd change does NOT throw (type guard skips re-cd)", function()
+		local stdin = make_fake_stdin()
+		-- inject a driver with NO cd field (mirrors a custom/3rd-party driver)
+		inject_fake_driver(stdin)
+		pi.bridge = fake_bridge("/usr/bin/fish")
+		pi.bridge.server_info.cwd = "/old"
+		shell.ensure(function() end)
+		-- mutate the cwd + drive complete_current — the type guard must skip the re-cd cleanly
+		pi.bridge.server_info.cwd = "/new"
+		local buf = buf_with("!git", 4)
+		local got = {}
+		assert.has_no.errors(function()
+			shell.complete_current(buf, function(err, items, prefix)
+				got = { err = err, items = items, prefix = prefix }
+			end)
+		end)
+		-- no __PICD__ written (the driver has no cd at all)
+		for i = 1, #stdin.written do
+			assert.is_falsy(stdin.written[i]:find("__PICD__", 1, true), "driver w/o cd → no __PICD__ frame")
+		end
+		assert.is_truthy(stdin.written[1]:find("__PIREQ__\t", 1, true), "__PIREQ__ is the first write")
+		-- state.cwd was NOT updated (the cd never ran): still "/old" from spawn
+		assert.are.equals("/old", shell._test_cwd(), "state.cwd unchanged (cd skipped — no cd method)")
+		shell._test_invoke_pending({ { value = "git" } }, "x")
+		assert.is_nil(got.err)
 	end)
 end)

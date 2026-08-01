@@ -55,10 +55,15 @@
 --        either; completing a zsh-only alias would suggest a command that FAILS). System
 --        completion DEFINITIONS (_git etc.) ARE autoloadable → git/ls/etc. work. A future
 --        config.shell.zsh.source_rc flag may unlock rc sourcing (risk: rc side-effects).
---      - cd(path) is ADVISORY (a documented no-op for v1): the INNER's Enter is bound to
---        a noop widget (NEVER execute — Valodim's safety), so a true inner `cd` needs a
---        dedicated control-char widget. v1 bakes the spawn cwd into the inner (opts.cwd)
---        and treats M.cd as best-effort. A future control-char widget can make cd real.
+--      - cd(path) is SENT over the framed channel on a mid-session cwd change by
+--        `shell.complete_current` (Issue 4 / §17.5.2), BUT the zsh OUTER EATS `__PICD__`
+--        (the case branch is `(__PICD*) ;;` — a literal no-op; the INNER's Enter is
+--        bound to a noop widget — NEVER execute, Valodim's safety). So a true inner `cd`
+--        needs a dedicated control-char widget. v1 bakes the spawn cwd into the inner
+--        (opts.cwd); path completions stay relative to the spawn cwd for the session
+--        (documented v1 limitation). The `__PICD__` write is HARMLESS (a no-op write);
+--        a future control-char widget can make cd real. The daemon is persistent for the
+--        session; NOTHING re-spawns.
 --      - A command line containing a literal `"` breaks the OUTER's crude `.line`
 --        extraction → cmd resolves empty → an empty/all-commands result (graceful
 --        degrade, not a crash). A true JSON parser in zsh is infeasible; v1 accepts this.
@@ -484,12 +489,17 @@ end
 -- ===========================================================================
 
 --- Re-`cd` the daemon to `path` by writing a `__PICD__\t<path>\n` frame to its stdin.
---- For zsh v1 this is **ADVISORY / a documented no-op**: the OUTER recognizes `__PICD__`
---- but the INNER's Enter is bound to a noop widget (NEVER execute — Valodim's safety),
---- so a true inner `cd` needs a dedicated control-char widget (a documented future
+--- For zsh v1 this is a SENT-but-EATEN no-op (Issue 4 / §17.5.2): `shell.complete_current`
+--- calls this whenever pi's session cwd changed since spawn, BUT the zsh OUTER recognizes
+--- `__PICD__` only to DISCARD it (the case branch is `(__PICD*) ;;` — a literal no-op);
+--- the INNER's Enter is bound to a noop widget (NEVER execute — Valodim's safety), so a
+--- true inner `cd` needs a dedicated control-char widget (a documented future
 --- enhancement). v1 bakes the spawn cwd into the inner (via `opts.cwd`); path completions
---- are relative to that; a mid-session cwd change re-spawns. The method EXISTS (the
---- contract requires it) + never throws, but does not change the inner's cwd.
+--- stay relative to that for the session (a documented v1 limitation). The daemon is
+--- persistent for the session; NOTHING re-spawns on a cwd change. The write is HARMLESS
+--- (a no-op write) + honors the driver contract; a future control-char widget can make
+--- `cd` real. The method EXISTS (the contract requires it) + never throws, but does not
+--- change the inner's cwd.
 --- Best-effort + silent: a dead/closing pipe is a noop (NOT an error). pcall'd +
 --- is_closing-guarded so a throwing/closed stdin can't escape. Writes via `last_stdin`
 --- (cached by start(); ONE daemon per session — shell.lua singleton state).

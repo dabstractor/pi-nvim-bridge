@@ -104,7 +104,7 @@ end
 ---@field inflight     boolean    True iff a framed request is awaiting __PIRESP_END__ (S4).
 ---@field shell        string?    The resolved shell path (set by S3 ensure via resolve_shell).
 ---@field driver       table?     The resolved driver module (set by S3 ensure via pick_driver; has .start).
----@field cwd          string?    The session cwd at spawn (set by S3 ensure via session_cwd).
+---@field cwd          string?    The session cwd, seeded at spawn (S3 ensure via session_cwd) + re-synced by complete_current on a mid-session cwd change (Issue 4 / §17.5.2).
 ---@field pending_cb   fun(items:table?, prefix:string?)? The gen-guarded response cb (set by S4 request()).
 ---@field failed       boolean    True after a permanent spawn failure (S3/§17.12) — ensure() won't retry; health (§17.15) reports it.
 ---@field parse_failures integer Consecutive decode-failure count (§17.12; set by S5 _feed). Reset to 0 on a successful decode + by M.reset(). At threshold (default 5) → state.failed=true.
@@ -262,10 +262,11 @@ end
 --- The session cwd for the daemon (PRD §17.5.2 "cwd tracking"). FRESH read:
 --- `bridge.server_info.cwd` (live, post-handshake) → `pi.descriptor.cwd` (the
 --- PI_NVIM_BRIDGE env-var blob, available from activate()) → nil. Drivers use this as
---- the spawn cwd (S3 ensure passes it to driver.start); a driver may re-`cd` over the
---- framed channel if it changed since spawn. `nil` is acceptable (a driver may default
---- to the daemon's own cwd). NEVER throws (defensive reads). LAZY require (async
---- handshake + test mocks).
+--- the spawn cwd (S3 ensure passes it to driver.start); AND `complete_current` re-reads
+--- this per request and, if it changed since spawn, calls `state.driver.cd(new)` before
+--- the next request (Issue 4 / §17.5.2) so path/relative completions track pi's cwd.
+--- `nil` is acceptable (a driver may default to the daemon's own cwd). NEVER throws
+--- (defensive reads). LAZY require (async handshake + test mocks).
 ---@return string|nil
 function M.session_cwd()
 	local pi = require("pi-bridge")
@@ -1063,6 +1064,26 @@ function M.complete_current(buf, cb)
 	if cmd == "" or cmd:match("^%s*$") then
 		return cb(nil, {}, "")
 	end
+	-- (6.5) CWD RE-TRACKING (Issue 4 / PRD §17.5.2 "cwd tracking"): if the daemon is
+	--   ALREADY spawned AND pi's session cwd changed since spawn, re-`cd` the daemon so
+	--   this request's path/relative completions track the new cwd. Submitted SYNCHRONOUSLY
+	--   before M.request so the __PICD__ frame is queued on the SAME uv_pipe_t
+	--   (state.driver's last_stdin == state.stdin) BEFORE the __PIREQ__ frame — libuv
+	--   FIFO write order on a single uv_stream_t guarantees the daemon's while-read loop
+	--   sees __PICD__ first (builtin cd) then __PIREQ__ (completion in the new cwd).
+	--   Daemon-not-spawned is left to M.ensure (it spawns WITH session_cwd() as opts.cwd
+	--   → state.cwd fresh → no re-cd on first spawn). Guard state.driver.cd is a function
+	--   (pick_driver only requires .start; a custom driver may lack cd). NEVER throws
+	--   (pcall the cd). state.cwd updated optimistically (the write is queued; a failed
+	--   write silently keeps the old cwd — a one-request stale degrade that self-heals
+	--   next keystroke since session_cwd() is then unchanged).
+	if state.proc and state.driver and type(state.driver.cd) == "function" then
+		local cur_cwd = M.session_cwd()
+		if type(cur_cwd) == "string" and cur_cwd ~= state.cwd then
+			pcall(state.driver.cd, cur_cwd)
+			state.cwd = cur_cwd
+		end
+	end
 	-- (7) DELEGATE to M.request. The wrapper_cb runs in LIBUV FAST CONTEXT (M.request's
 	--     pending_cb ← _feed/timer) → PURE string math + forward ONLY. Derive prefix CLIENT-
 	--     SIDE (§17.6.1 / research §6: OVERRIDE the daemon's advisory prefix). err → cb(err)
@@ -1117,6 +1138,13 @@ end
 ---@return function?
 function M._test_get_pending()
 	return state.pending_cb
+end
+
+--- TEST seam: read `state.cwd` (the spawn/tracked cwd; assert complete_current re-cd
+--- updates it on a mid-session cwd change — Issue 4 / §17.5.2). Mirrors _test_gen.
+---@return string?
+function M._test_cwd()
+	return state.cwd
 end
 
 return M

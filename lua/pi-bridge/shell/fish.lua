@@ -418,6 +418,13 @@ end
 
 --- Re-`cd` the daemon to `path` by writing a `__PICD__\t<path>\n` frame to its stdin.
 --- The daemon script recognizes `__PICD__` + `builtin cd`s (no response — cd is advisory).
+---
+--- WIRED (Issue 4 / §17.5.2): `shell.complete_current` calls this whenever pi's session
+--- cwd (`M.session_cwd()`) changed since spawn — the daemon honors `__PICD__` with a
+--- real `builtin cd`, so fish path/relative completions track the new cwd on the very
+--- next keystroke (submitted synchronously BEFORE the `__PIREQ__` frame so libuv FIFO
+--- write order guarantees the daemon `cd`s before it completes).
+---
 --- Best-effort + silent: a dead/closing pipe is a noop (NOT an error — cd is advisory; the
 --- next request's completions simply use the prior cwd). pcall'd + is_closing-guarded so a
 --- throwing/closed stdin can't escape. Writes via `last_stdin` (cached by start(); there is

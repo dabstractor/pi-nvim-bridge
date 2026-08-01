@@ -36,7 +36,9 @@ local function make_fake_stdin()
 end
 
 -- --- a FAKE driver whose start(opts, cb) hands the fake stdin/stdout to the REAL M.ensure
--- (so state.stdin becomes the fake — reusing S3's ensure as a bonus).
+-- (so state.stdin becomes the fake — reusing S3's ensure as a bonus). WITH a `cd(path)`
+-- that writes __PICD__\t<path>\n to the fake stdin (mirrors a real driver → assert re-cd
+-- + FIFO write order, Issue 4 / §17.5.2).
 local function inject_fake_driver(stdin)
 	package.loaded["pi-bridge.shell.fish"] = {
 		start = function(opts, cb)
@@ -44,6 +46,9 @@ local function inject_fake_driver(stdin)
 				{ is_closing = function() return false end }, -- fake proc
 				stdin,
 				{ read_start = function() end, is_closing = function() return false end, close = function() end })
+		end,
+		cd = function(path)
+			stdin:write(string.format("__PICD__\t%s\n", path), function() end)
 		end,
 	}
 end
@@ -92,6 +97,30 @@ shell.complete_current(buf, function(err, items, prefix) got2 = { err = err, ite
 check(got2 and got2.err == nil and (got2.items or {})[1] == nil, "bare ! → cb(nil, {}, '') immediate")
 check(got2 and got2.prefix == "", "bare ! → prefix '' ")
 check(#stdin.written == 0, "bare ! → daemon NOT spawned (0 frames written)")
+
+-- === (C) cwd re-track (Issue 4 / §17.5.2): spawn at /old, move to /new, complete → ===
+--          __PICD__\t/new\n written BEFORE __PIREQ__ (FIFO); state.cwd tracks the new ===
+shell.reset()
+pi.bridge = { get_shell_info = function() return { shell = "/usr/bin/fish" } end, server_info = { cwd = "/old" } }
+stdin = make_fake_stdin()
+inject_fake_driver(stdin)
+shell.ensure(function() end) -- spawns with cwd="/old" → state.cwd=="/old"
+check(shell._test_cwd() == "/old", "spawn seeds state.cwd from session_cwd (/old)")
+-- mutate pi's session cwd mid-session (Issue 4)
+pi.bridge.server_info.cwd = "/new"
+local buf_c, win_c = buf_with("!git ch", 7)
+local got_c
+shell.complete_current(buf_c, function(err, items, prefix) got_c = { err = err, items = items, prefix = prefix } end)
+check(stdin.written[1] == "__PICD__\t/new\n",
+	"re-cd fires: __PICD__\t<new>\n is the FIRST write")
+check(stdin.written[2] ~= nil and stdin.written[2]:find("__PIREQ__\t", 1, true) ~= nil,
+	"__PIREQ__ frame is the SECOND write (FIFO after __PICD__)")
+check(shell._test_cwd() == "/new", "state.cwd updated to the new cwd (/new)")
+-- deliver the response (as S5's _feed will in prod) → wrapper_cb → user cb
+shell._test_invoke_pending({ { value = "checkout" } }, "IGNORED_DAEMON_PREFIX")
+check(got_c and got_c.err == nil, "re-cd path resolves cb with nil err")
+check(got_c and got_c.prefix == "ch", "re-cd path: prefix is CLIENT-derived ('ch')")
+check(got_c and got_c.items and got_c.items[1].value == "checkout", "re-cd path: items forwarded")
 
 -- === teardown ===
 package.loaded["pi-bridge.shell.fish"] = nil

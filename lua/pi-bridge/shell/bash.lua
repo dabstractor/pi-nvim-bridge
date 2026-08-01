@@ -467,6 +467,13 @@ end
 --- For bash this is **REAL** (research §6 — unlike zsh v1's advisory no-op): the daemon's
 --- `__PICD__` branch does `builtin cd "$path"` and subsequent path completions are relative
 --- to the new cwd. A genuine quality advantage over the zsh driver for v1 (real cwd tracking).
+---
+--- WIRED (Issue 4 / §17.5.2): `shell.complete_current` calls this whenever pi's session
+--- cwd (`M.session_cwd()`) changed since spawn — bash honors `__PICD__` with a real
+--- `builtin cd`, so completions track the new cwd on the very next keystroke (submitted
+--- synchronously BEFORE the `__PIREQ__` frame so libuv FIFO write order guarantees the
+--- daemon `cd`s before it completes).
+---
 --- Best-effort + silent: a dead/closing pipe is a noop (NOT an error — cd is best-effort;
 --- the next request's completions use the prior cwd). pcall'd + is_closing-guarded so a
 --- throwing/closed stdin can't escape. Writes via `last_stdin` (cached by start(); there is
