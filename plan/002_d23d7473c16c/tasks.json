@@ -369,7 +369,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T4.S1",
                   "title": "fish.lua driver startup script + start(opts, on_ready) + cd(path) exports",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S3"
