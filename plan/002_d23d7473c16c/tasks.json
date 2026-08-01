@@ -442,7 +442,7 @@
               "type": "Task",
               "id": "P2.M3.T5",
               "title": "shell/zsh.lua + shell/bash.lua + unknown-shell degrade",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the zsh capture-completion driver (Tier 1, most fragile), the bash best-effort driver (Tier 2), and verify the unknown-shell degrade path.",
               "subtasks": [
                 {
@@ -483,7 +483,7 @@
                   "type": "Subtask",
                   "id": "P2.M3.T5.S3",
                   "title": "Unknown-shell degrade path — nil driver test + verify short-circuit",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M1.T2.S2"
