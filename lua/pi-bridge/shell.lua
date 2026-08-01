@@ -274,6 +274,20 @@ end
 -- State seam (forward-contract teardown)
 -- ===========================================================================
 
+--- The resolved execution shell for the session (for `pi-bridge.shell.accept`'s
+--- quoting). Returns the cached `state.shell` (set on first ensure()/spawn; guaranteed
+--- set whenever a shell MENU exists, since the menu is populated only via
+--- do_shell_fetch → complete_current → request → ensure) or nil (the daemon was never
+--- spawned — `quote` then degrades to the POSIX single-quote default, harmless).
+--- NEVER throws (a plain table-field read). This is the PUBLIC read seam for the one
+--- field `accept.apply` needs — the full `state` table is NOT exposed (minimal surface).
+---@return string|nil state.shell The resolved shell PATH (e.g. "/bin/zsh"), or nil.
+function M.get_shell()
+	return state.shell
+end
+
+-- ===========================================================================
+
 --- Restore `state` to its initial literal (mirrors completion.lua's M.reset). The
 --- forward-contract TEARDOWN seam: S6's `teardown()` prepends
 --- `uv.process_kill(proc, "sigkill")` + `:close()` on each pipe, THEN calls reset().

@@ -88,8 +88,88 @@ do
 	check(w == "" and s == 0, "current_shell_word(nil,3) → ('',0)")
 end
 
+-- ============================================================================
+-- S4 buffer-mutation section (M.apply — PRD §17.8 step 3-5).
+-- headless nvim under -u NORC HAS vim.api (coords_smoke/menu_smoke create buffers under NORC).
+-- M.apply lazy-requires shell.get_shell / menu.close / completion.refresh INSIDE the fn →
+-- stub them via package.loaded so no daemon/bridge is needed (the pure quote/word fns +
+-- nvim_buf_set_text are the whole path). virtualedit=onemore is REQUIRED for cursor-at-EOL.
+-- ============================================================================
+
+-- (14) surface: M.apply + shell.get_shell are functions.
+check(type(accept.apply) == "function", "M.apply is not a function")
+check(type(require("pi-bridge.shell").get_shell) == "function", "shell.get_shell is not a function")
+
+-- stub the 3 lazy-required modules (save originals so the pure smoke's module load is intact).
+local saved_shell_mod = package.loaded["pi-bridge.shell"]
+local saved_menu_mod = package.loaded["pi-bridge.menu"]
+local saved_completion_mod = package.loaded["pi-bridge.completion"]
+package.loaded["pi-bridge.shell"] = {
+	get_shell = function()
+		return "bash"
+	end,
+	reset = function() end,
+}
+package.loaded["pi-bridge.menu"] = { close = function() end }
+local smoke_refreshed = false
+package.loaded["pi-bridge.completion"] = {
+	refresh = function()
+		smoke_refreshed = true
+	end,
+}
+
+-- a buffer with line 1 + a cursor (byte col); virtualedit=onemore for EOL placement.
+local function apply_buf_with(line_text, byte_col)
+	local buf = vim.api.nvim_create_buf(false, true)
+	local win = vim.api.nvim_get_current_win()
+	vim.api.nvim_win_set_buf(win, buf)
+	vim.wo[win].virtualedit = "onemore"
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { line_text })
+	vim.api.nvim_win_set_cursor(win, { 1, byte_col })
+	return buf
+end
+
+-- (15) plain word: "!git ch" cursor end accept "checkout" → "!git checkout" + cursor after.
+do
+	local buf = apply_buf_with("!git ch", 7)
+	local r = accept.apply(buf, { value = "checkout" })
+	local got = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+	local col = vim.api.nvim_win_get_cursor(0)[2]
+	check(r == true, "apply returned true (plain word)")
+	check(got == "!git checkout", "plain word buffer = " .. tostring(got))
+	check(col == 13, "plain word cursor col = " .. tostring(col) .. " (expected 13)")
+	pcall(vim.api.nvim_buf_delete, buf, { force = true })
+end
+
+-- (16) bash quote (space): "!cd my" accept "my file.txt" → "!cd 'my file.txt'".
+do
+	local buf = apply_buf_with("!cd my", 6)
+	local r = accept.apply(buf, { value = "my file.txt" })
+	local got = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+	check(r == true, "apply returned true (bash quote)")
+	check(got == "!cd 'my file.txt'", "bash quote buffer = " .. tostring(got))
+	pcall(vim.api.nvim_buf_delete, buf, { force = true })
+end
+
+-- (17) directory re-trigger: "!cd /tm" accept "/tmp/" → "!cd /tmp/" + completion.refresh called.
+smoke_refreshed = false
+do
+	local buf = apply_buf_with("!cd /tm", 7)
+	local r = accept.apply(buf, { value = "/tmp/" })
+	local got = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+	check(r == true, "apply returned true (dir)")
+	check(got == "!cd /tmp/", "dir buffer = " .. tostring(got))
+	check(smoke_refreshed == true, "completion.refresh called for the directory value")
+	pcall(vim.api.nvim_buf_delete, buf, { force = true })
+end
+
+-- restore the stubbed modules (so any later require sees the real ones).
+package.loaded["pi-bridge.shell"] = saved_shell_mod
+package.loaded["pi-bridge.menu"] = saved_menu_mod
+package.loaded["pi-bridge.completion"] = saved_completion_mod
+
 if fails > 0 then
 	io.stderr:write(fails .. " check(s) failed — accept smoke GATE FAILED\n")
 	vim.cmd("cquit 1")
 end
-io.stdout:write("SMOKE_PASS: shell.accept current_shell_word + quote (pure, offline) OK\n")
+io.stdout:write("SMOKE_PASS: shell.accept current_shell_word + quote + M.apply (pure+buffer) OK\n")

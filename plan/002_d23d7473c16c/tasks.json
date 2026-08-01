@@ -266,7 +266,7 @@
           "type": "Milestone",
           "id": "P2.M2",
           "title": "Plugin integration: routing + fish driver + accept",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Second vertical slice: ! lines now complete end-to-end through the menu (fish), and items can be accepted via local word-replacement.",
           "tasks": [
             {
@@ -362,7 +362,7 @@
               "type": "Task",
               "id": "P2.M2.T4",
               "title": "shell/fish.lua driver + shell/accept.lua",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Implement the fish driver (Tier 1, complete -C based) and the local acceptance module (word-replacement + per-shell quoting via nvim_buf_set_text).",
               "subtasks": [
                 {
@@ -415,7 +415,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T4.S4",
                   "title": "accept.lua — nvim_buf_set_text range edit + cursor positioning + re-trigger logic",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M2.T4.S3"

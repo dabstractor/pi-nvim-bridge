@@ -214,4 +214,107 @@ function M.quote(word, shell)
 	return word -- no special char → unchanged
 end
 
+-- ===========================================================================
+-- M.apply — PRD §17.8 steps 3-5 (the IMPURE buffer-mutation consumer of S3's fns)
+-- ===========================================================================
+
+--- Apply a shell-completion candidate to the buffer via a WORD-RANGE edit (PRD §17.8
+--- steps 3-5 — the shell counterpart to completion.M.accept's pi-bridge
+--- `applyCompletion` path). Shell candidates are PLAIN WORDS, not pi
+--- AutocompleteItems; pi's `applyCompletion` (which returns the WHOLE new lines[] +
+--- computes pi-specific insertion) DOES NOT APPLY. So the shell path uses its OWN
+--- accept: a local word-replacement via `nvim_buf_set_text` (a range edit on the
+--- current shell token) + cursor positioning + a directory re-trigger.
+---
+--- Steps (VERIFIED against `:help api.txt` + autocmd.txt, Neovim ≥ 0.11):
+---   1. validate buf (number + valid + current) + item (table with string `.value`).
+---   2. read line 1 + cursor (BYTE-domain, PRD §17.14 — NO coords/UTF-16).
+---   3. strip the `!`/`!!` bangs (the SAME math `shell.complete_current` uses).
+---   4. `M.current_shell_word(cmd, cmd_cursor)` → `(word, start_byte)` (cmd-relative).
+---   5. `M.quote(item.value, get_shell())` → the per-shell splice-safe form.
+---   6. `nvim_buf_set_text(buf, 0, bangs+start_byte, 0, bangs+cmd_cursor, { quoted })`
+---      — the word-range edit on row 0 (the start_byte/cmd_cursor are RELATIVE to the
+---      bang-stripped command → ADD `bangs` for the BUFFER byte offset).
+---   7. `nvim_win_set_cursor(0, { 1, bangs+start_byte+#quoted })` — cursor right after
+---      the inserted text (row 1 = 1-BASED, the row asymmetry vs set_text's 0-based;
+---      col is 0-based byte; `#quoted` is a Lua byte length → correct).
+---   8. `menu.close()` (clear state + hide popup).
+---   9. iff `item.value` ends with `/` → `completion.refresh(buf)` (re-queries the
+---      daemon for the directory's contents; the 0 ms shell debounce re-opens the
+---      menu iff non-empty). This re-trigger MUST be explicit: `nvim_buf_set_text`
+---      does NOT fire TextChangedI (only bumps b:changedtick) — the autocmd will NOT
+---      fire from the API edit.
+---
+--- LAZY REQUIRES are INSIDE the fn (NOT module top) so the module still loads under
+--- `-u NORC` (the pure plenary-free smoke runs) + is test-mock-friendly (the
+--- shell/menu/completion stubs swap in after require). `vim.api.*` referenced INSIDE
+--- the fn is fine (it exists under NORC headless; just not called by the pure smoke).
+---
+--- NEVER THROWS (per-keystroke + accept contract): EVERY nvim call is `pcall`'d; a
+--- wiped buf / non-current buf / bad arg → return `false` (no throw — the routing
+--- returns it so `<Tab>`/`<CR>` fall through to indent/newline). Returns `true` iff
+--- the edit was applied.
+---
+---@param buf integer  The pi-prompt buffer handle (MUST be valid + the current buf).
+---@param item table    The selected candidate; MUST have a string `.value`.
+---@return boolean applied true iff the edit was applied; false on any guard/never-throws failure.
+function M.apply(buf, item)
+	-- (1) validate (never-throws; return false on miss)
+	if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then
+		return false
+	end
+	if buf ~= vim.api.nvim_get_current_buf() then
+		return false
+	end -- one buf/session; cursor is current win's
+	if type(item) ~= "table" or type(item.value) ~= "string" then
+		return false
+	end
+	-- (2) read line 1 + cursor (pcall every nvim call; wiped buf mid-call → false)
+	local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, 1, false)
+	if not ok or type(lines) ~= "table" or type(lines[1]) ~= "string" then
+		return false
+	end
+	local line1 = lines[1]
+	local cok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
+	if not cok or type(cur) ~= "table" or type(cur[2]) ~= "number" then
+		return false
+	end
+	local byte_col = cur[2] -- 0-based BYTE offset (PRD §17.14)
+	-- (3) bang strip (complete_current L987-990 — check "!!" FIRST; it also starts with "!")
+	local bangs = 0
+	if line1:sub(1, 2) == "!!" then
+		bangs = 2
+	elseif line1:sub(1, 1) == "!" then
+		bangs = 1
+	end
+	local cmd = line1:sub(bangs + 1) -- command after bangs
+	local cmd_cursor = math.max(0, byte_col - bangs) -- cursor offset into cmd (0-based byte)
+	-- (4) S3 word range (cmd-relative; byte-domain by construction — UTF-8 safe)
+	local _word, start_byte = M.current_shell_word(cmd, cmd_cursor)
+	-- (5) S3 quote (shell via lazy get_shell; nil → POSIX default, harmless)
+	local shell = require("pi-bridge.shell").get_shell()
+	local quoted = M.quote(item.value, shell)
+	-- (6) range edit (row 0; ADD BANGS to the cmd-relative offsets; set_text ≠ TextChangedI).
+	--     start_byte/cmd_cursor are RELATIVE to the bang-stripped command → the BUFFER byte
+	--     offset is `bangs + offset` (the #1 off-by-N trap). end_col is end-EXCLUSIVE.
+	local buf_start = bangs + start_byte
+	local buf_end = bangs + cmd_cursor
+	local tok = pcall(vim.api.nvim_buf_set_text, buf, 0, buf_start, 0, buf_end, { quoted })
+	if not tok then
+		return false
+	end
+	-- (7) cursor after inserted text (row 1 = 1-BASED; col 0-based byte; Insert-safe +
+	--     synchronous — mode() stays "i"; committed before the next Lua line; no re-trigger race).
+	pcall(vim.api.nvim_win_set_cursor, 0, { 1, buf_start + #quoted })
+	-- (8) close menu (idempotent; clears candidate list + hides popup; pcall'd).
+	pcall(require("pi-bridge.menu").close)
+	-- (9) directory re-trigger (EXPLICIT — set_text did NOT fire TextChangedI; refresh
+	--     re-derives ctx=="shell" → do_shell_fetch → re-queries the daemon → re-opens iff
+	--     the dir is non-empty; the 0 ms shell debounce makes it near-immediate).
+	if item.value:sub(-1) == "/" then
+		pcall(require("pi-bridge.completion").refresh, buf)
+	end
+	return true
+end
+
 return M

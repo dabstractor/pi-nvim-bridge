@@ -765,13 +765,9 @@ end
 ---@return boolean issued true iff the applyCompletion RPC was accepted by the bridge.
 function M.accept(item, prefix_override)
   if type(item) ~= "table" then return false end                    -- defensive (on_enter pre-checks; direct callers may not)
-  -- READ bridge/menu/coords FRESH (handshake resolves async + test mocks swap in after require).
-  local bridge = require("pi-bridge").bridge
-  if not bridge
-     or type(bridge.is_connected) ~= "function"
-     or not bridge.is_connected() then
-    return false                                                    -- silent degrade (S39 notifies once)
-  end
+  -- RESOLVE buf BEFORE the bridge check: a `!`/`!!` line MUST route to the shell path even
+  -- when the bridge is disconnected (shell completion is bridge-independent, §17.3/§17.13).
+  -- menu.get_buf() may be nil/stale (S33 auto-apply path) → fall back to the current buf.
   local menu = require("pi-bridge.menu")
   local buf  = menu.get_buf()
   -- S33 auto-apply path: the menu is NOT shown (closed) OR its buf is stale/wiped, so
@@ -784,6 +780,23 @@ function M.accept(item, prefix_override)
   if buf ~= vim.api.nvim_get_current_buf() then return false end    -- one buf/session; cursor is the current win's
   local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, -1, false)
   if not ok or type(lines) ~= "table" then return false end
+  -- SHELL ROUTE (§17.8): a `!`/`!!` line accepts via the LOCAL word-replacement path, NOT the
+  -- pi bridge (pi's applyCompletion does not apply to shell words — shell candidates are
+  -- plain words, not pi AutocompleteItems). Re-derive context from line 1 (the source of
+  -- truth; NOT menu.state.context, which is the visual-cue's source only + may be stale).
+  -- prefix_override is IGNORED on the shell path (shell accept recomputes the word from the
+  -- buffer). Runs BEFORE the bridge guard so a `!` line routes even with no bridge.
+  if type(lines[1]) == "string" and lines[1]:sub(1, 1) == "!" then
+    return require("pi-bridge.shell.accept").apply(buf, item) == true
+  end
+  -- READ bridge FRESH (handshake resolves async + test mocks swap in after require). The pi
+  -- path reuses the already-read `lines` (no double-read).
+  local bridge = require("pi-bridge").bridge
+  if not bridge
+     or type(bridge.is_connected) ~= "function"
+     or not bridge.is_connected() then
+    return false                                                    -- silent degrade (S39 notifies once)
+  end
   local cur
   ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
   if not ok or type(cur) ~= "table" then return false end
