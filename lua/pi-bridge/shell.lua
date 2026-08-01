@@ -83,6 +83,15 @@ local function dbg(msg)
 	end)
 end
 
+--- The basename of a shell path ("/bin/zsh" → "zsh"). Module-local so the §17 notice messages +
+--- the existing pick_driver inline idiom share ONE definition. nil/non-string → "?"
+--- (a defensive sentinel so a toast never reads "active (`nil`)"). NEVER throws.
+local function basename(p)
+	if type(p) ~= "string" or p == "" then return "?" end
+	local b = p:gsub(".*/", "")
+	return b == "" and "?" or b
+end
+
 --- Singleton shell-daemon state. One daemon per session (PRD §17.5). Cleared by
 --- `M.reset()`. Mirrors `completion.lua`'s two-layer `state` + `reset()` ownership shape
 --- (PRD §17.5.2 says shell.lua "MIRRORS completion.lua's two-layer design").
@@ -179,6 +188,35 @@ function M.resolve_shell(prefer)
 	return "/bin/bash", "default"                  -- unknown/non-string prefer → safe default
 end
 
+--- §17.4.3 mismatch condition (PURE — no nvim, no vim.fn, no state, no notify; directly
+--- unit-testable, the completion.M.is_attachment_context / M.shell_word_prefix style).
+--- Returns the richer shell's basename ("zsh"|"fish") when the mismatch condition's
+--- RESOLUTION parts hold: resolved basename == "bash" (tier-2) AND env_shell basename ∈
+--- {"zsh","fish"} (tier-1). The PATH check (`vim.fn.executable`) is INTENTIONALLY at the
+--- CALL SITE (ensure step 4) so this helper stays deterministic + vim.fn-free for unit
+--- tests.
+---
+--- SELF-GATING: under prefer:"pi" it is true ONLY when descriptor.shell is bash AND
+--- $SHELL is zsh/fish; under prefer:"shell" (resolved==$SHELL) it is structurally false;
+--- under prefer:"pi" with a descriptor that omits shell (resolve falls through to
+--- $SHELL) resolved==$SHELL → false. NO explicit prefer check is needed (do NOT
+--- double-gate — it risks drifting from resolve_shell).
+---
+--- NEVER throws: non-string/empty resolved → nil; non-string/empty env_shell → nil;
+--- basename via the shared helper. Returns nil (not false) so the call site reads
+--- `if M.mismatch_target(...) then`.
+---@param resolved_shell string The resolved execution shell path (state.shell / M.resolve_shell result).
+---@param env_shell string? The raw $SHELL env var (vim.env.SHELL; nil → no mismatch possible).
+---@return string|nil richer_basename "zsh"|"fish" if the mismatch's resolution parts hold, else nil.
+function M.mismatch_target(resolved_shell, env_shell)
+	if type(resolved_shell) ~= "string" or resolved_shell == "" then return nil end
+	if basename(resolved_shell) ~= "bash" then return nil end   -- only bash (tier-2) can be "poorer"
+	if type(env_shell) ~= "string" or env_shell == "" then return nil end
+	local ebase = basename(env_shell)
+	if ebase ~= "zsh" and ebase ~= "fish" then return nil end   -- tier-1 richer shells only
+	return ebase
+end
+
 -- ===========================================================================
 -- §17.4.2 driver selection
 -- ===========================================================================
@@ -195,8 +233,8 @@ end
 ---@return table|nil drv The driver module (has `.start`), or nil to degrade.
 function M.pick_driver(resolved_shell)
 	if type(resolved_shell) ~= "string" or resolved_shell == "" then return nil end
-	local base = resolved_shell:gsub(".*/", "")    -- basename ("/bin/zsh"→"zsh"); gsub returns 2, assignment→1
-	if base == "" then return nil end
+	local base = basename(resolved_shell)                 -- "/bin/zsh"→"zsh" (shared helper)
+	if base == "?" or base == "" then return nil end
 	-- user-disabled driver? (§17.4.2: setup({ shell = { drivers = { bash = false } } }))
 	local pi = require("pi-bridge")
 	local drv_cfg = (pi.config and pi.config.shell and pi.config.shell.drivers) or nil
@@ -304,11 +342,34 @@ function M.ensure(on_ready)
 	--     ensure (health §17.15 reports it).
 	local resolved = M.resolve_shell(cfg.prefer or "pi")
 	state.shell = resolved
+	-- §17.4.3 one-time mismatch notice: prefer:"pi" resolved bash while $SHELL is a richer
+	-- zsh/fish on PATH. PURE condition (M.mismatch_target) + the PATH check
+	-- (vim.fn.executable, pcall'd). notify.once dedups to once-per-session. Fires here ONLY
+	-- on the first spawn (steps 4-8 run once per session — subsequent ensures hit the proc cache).
+	pcall(function()
+		local richer = M.mismatch_target(resolved, vim.env.SHELL)
+		if richer then
+			local ok, ex = pcall(vim.fn.executable, richer)
+			if ok and ex == 1 then
+				require("pi-bridge.notify").once("shell-mismatch", vim.log.levels.WARN,
+					"pi-bridge: pi runs commands in bash; using bash completion to match. For your native "
+					.. richer .. " completions, set pi's shellPath to " .. (vim.env.SHELL or richer)
+					.. " (then completion and execution both use it). :help pi-bridge-shell")
+			end
+		end
+	end)
 	-- (5) Pick the driver (§17.4.2). No driver → permanent degrade (§17.6.4): set failed so
 	--     the next ensure short-circuits (do NOT retry resolve→pick per keystroke).
 	state.driver = M.pick_driver(resolved)
 	if not state.driver then
 		state.failed = true
+		-- §17.12 degrade notify (no driver: unknown shell OR user-disabled driver). notify.once
+		-- dedups with any earlier degrade → ONE toast/session. The message names the resolved shell.
+		pcall(function()
+			require("pi-bridge.notify").once("shell-degrade", vim.log.levels.WARN,
+				"pi-bridge: shell completion unavailable for `" .. basename(resolved)
+				.. "`; :help pi-bridge-shell")
+		end)
 		return on_ready("no driver for " .. tostring(resolved))
 	end
 	-- (6) Build the driver opts (the spawn delegation contract; startup_timeout_ms passed
@@ -328,6 +389,13 @@ function M.ensure(on_ready)
 		if err then
 			state.driver = nil
 			state.failed = true
+			-- §17.12 degrade notify (spawn err: binary missing / rc error / startup timeout).
+			-- notify.once dedups with any earlier degrade → ONE toast/session.
+			pcall(function()
+				require("pi-bridge.notify").once("shell-degrade", vim.log.levels.WARN,
+					"pi-bridge: shell completion unavailable for `" .. basename(state.shell)
+					.. "`; :help pi-bridge-shell")
+			end)
 			return on_ready(err)
 		end
 		-- (8b) SUCCESS: cache the handles + cwd; wire stdout:read_start to the _feed/_reset
@@ -340,12 +408,26 @@ function M.ensure(on_ready)
 				if chunk then M._feed(chunk) else M._reset() end -- data → S5 stub; EOF → S6 stub
 			end)
 		end)
+		-- §17.9 first-run hint (INFO): fires ONCE on the first successful daemon spawn.
+		-- Suppressed on a failed spawn STRUCTURALLY (steps 5/8a/8c return before reaching
+		-- here → the hint CANNOT fire). notify.once dedups to once-per-session.
+		pcall(function()
+			require("pi-bridge.notify").once("shell-active", vim.log.levels.INFO,
+				"pi-bridge: shell completion active (`" .. basename(state.shell)
+				.. "`); :help pi-bridge-shell")
+		end)
 		on_ready(nil)
 	end)
 	-- (8c) driver.start ITSELF threw (not just called cb with err): treat as spawn error (D4).
 	if not ok then
 		state.driver = nil
 		state.failed = true
+		-- §17.12 degrade notify (driver.start threw). notify.once dedups with any earlier degrade.
+		pcall(function()
+			require("pi-bridge.notify").once("shell-degrade", vim.log.levels.WARN,
+				"pi-bridge: shell completion unavailable for `" .. basename(state.shell)
+				.. "`; :help pi-bridge-shell")
+		end)
 		on_ready(tostring(spawn_err))
 	end
 end
@@ -487,6 +569,13 @@ function M._feed(chunk)
 				-- daemon — §17.12 "no auto-respawn in v1").
 				pcall(function() if type(M.teardown) == "function" then M.teardown() end end)
 				state.failed = true
+				-- §17.12 degrade notify (N consecutive parse failures). notify.once dedups with
+				-- any earlier degrade → ONE toast/session. Fast-context-safe.
+				pcall(function()
+					require("pi-bridge.notify").once("shell-degrade", vim.log.levels.WARN,
+						"pi-bridge: shell completion unavailable for `" .. basename(state.shell)
+						.. "`; :help pi-bridge-shell")
+				end)
 			end
 		else
 			-- (6b) SUCCESS: reset the consecutive counter (§17.12 "consecutive"). Extract
@@ -532,6 +621,13 @@ end
 function M._reset()
 	close_handles()               -- S6: close the real handles (the EOF pipe leak S3 deferred here)
 	state.failed = true           -- S3 (unchanged): a crash is NOT a clean exit
+	-- §17.12 degrade notify (mid-session EOF crash). notify.once dedups with any earlier
+	-- degrade → ONE toast/session. Fast-context-safe (notify.once schedules the notify).
+	pcall(function()
+		require("pi-bridge.notify").once("shell-degrade", vim.log.levels.WARN,
+			"pi-bridge: shell completion unavailable for `" .. basename(state.shell)
+			.. "`; :help pi-bridge-shell")
+	end)
 	state.proc   = nil
 	state.stdin  = nil
 	state.stdout = nil

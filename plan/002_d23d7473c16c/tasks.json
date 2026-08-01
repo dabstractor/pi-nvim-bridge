@@ -328,7 +328,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T3.S4",
                   "title": "Notices — mismatch (§17.4.3), first-run hint (§17.9), degrade notify",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S2"
