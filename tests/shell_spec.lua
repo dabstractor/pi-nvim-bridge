@@ -58,6 +58,27 @@ describe("pi-bridge.shell resolve_shell (P2.M1.T2.S2)", function()
 		assert.are.equals("pi", src)
 	end)
 
+	it("prefer=='pi' propagates descriptor.shellSource ('$SHELL') when advertised (Issue 5)", function()
+		-- a default zsh user (no PI_NVIM_SHELL) gets shellSource="$SHELL" from the bridge
+		pi.bridge = {
+			get_shell_info = function()
+				return { shell = "/bin/zsh", shellSource = "$SHELL" }
+			end,
+			server_info = {},
+		}
+		local s, src = shell.resolve_shell("pi")
+		assert.are.equals("/bin/zsh", s)
+		assert.are.equals("$SHELL", src) -- NOT hard-coded "pi" anymore
+	end)
+
+	it("prefer=='pi' propagates pi.descriptor.shellSource when bridge==nil (pre-handshake, Issue 5)", function()
+		pi.bridge = nil
+		pi.descriptor = { shell = "/bin/zsh", shellSource = "default" }
+		local s, src = shell.resolve_shell("pi")
+		assert.are.equals("/bin/zsh", s)
+		assert.are.equals("default", src)
+	end)
+
 	it("prefer=='pi' falls back to $SHELL when descriptor has no shell", function()
 		pi.bridge = fake_bridge(nil)
 		vim.env.SHELL = "/bin/zsh"

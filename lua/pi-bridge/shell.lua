@@ -134,19 +134,24 @@ local state = {
 --- then falls back to `pi.descriptor.shell` directly (covers the bridge==nil
 --- pre-handshake window). LAZY require (async handshake + test mocks; mirrors
 --- completion.lua). NEVER throws (defensive type-checks). Treats `""` as unresolved.
----@return string|nil
+--- Returns BOTH the shell path AND its advertised `shellSource` (Issue 5): the
+--- get_shell_info branch yields `si.shellSource`; the pi.descriptor branch yields
+--- `desc.shellSource`. `shellSource` may be nil for descriptors from older bridge
+--- versions that carry a shell but no source — callers fall back to "pi" there.
+---@return string|nil shell_path
+---@return string|nil shell_source descriptor.shellSource ("pi"|"$SHELL"|"default"), or nil
 local function descriptor_shell()
 	local pi = require("pi-bridge")
 	local br = pi.bridge
 	if br and type(br.get_shell_info) == "function" then
 		local si = br.get_shell_info()
 		if type(si) == "table" and type(si.shell) == "string" and si.shell ~= "" then
-			return si.shell
+			return si.shell, si.shellSource
 		end
 	end
 	local desc = pi.descriptor
 	if type(desc) == "table" and type(desc.shell) == "string" and desc.shell ~= "" then
-		return desc.shell
+		return desc.shell, desc.shellSource
 	end
 	return nil
 end
@@ -162,6 +167,12 @@ end
 --- local "config" label for explicit-path prefer (used by the §17.4.3 notice / health
 --- check / dbg). NEVER throws (defensive type-checks; nil/""/non-string prefer → the
 --- safe "/bin/bash","default" default). Does NOT mutate state.
+--- ISSUE 5: the prefer=="pi" branch PROPAGATES the descriptor's real `shellSource`
+--- (via descriptor_shell's 2nd return) instead of hard-coding "pi". The `or "pi"`
+--- fallback covers descriptors that carry a shell but no `shellSource` (older
+--- bridges) — so the prior `source=="pi"` invariant still holds for them. This makes
+--- the `source aligns with descriptor.shellSource's union` claim above ACCURATE
+--- (it was violated when the value was hard-coded).
 ---@param prefer string? "pi" (default) | "shell" | "bash" | "/abs/path"
 ---@return string shell_path
 ---@return string source
@@ -173,8 +184,8 @@ function M.resolve_shell(prefer)
 		return prefer, "config"
 	end
 	if prefer == "pi" then
-		local ds = descriptor_shell()
-		if ds then return ds, "pi" end             -- descriptor.shell (always consistent w/ execution)
+		local ds, dsrc = descriptor_shell()
+		if ds then return ds, dsrc or "pi" end      -- descriptor.shell + real shellSource (Issue 5); `or "pi"` back-compat
 		-- descriptor omitted shell → fall through to $SHELL → /bin/bash
 	end
 	if prefer == "pi" or prefer == "shell" then
