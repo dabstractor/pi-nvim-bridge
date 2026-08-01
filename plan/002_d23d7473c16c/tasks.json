@@ -62,7 +62,7 @@
       "type": "Phase",
       "id": "P2",
       "title": "Shell Completion for !/!! Bash Mode",
-      "status": "Planned",
+      "status": "Complete",
       "description": "Additive subsystem per PRD §17. Reuses the existing menu, activation gate, debounce/supersession, and VimLeavePre teardown. Adds one Lua module tree (lua/pi-bridge/shell*) plus a single enriched descriptor field-set on Component A. Component A changes by exactly one descriptor field-set (all optional, back-compat). The daemon is a child of the nvim process (vim.uv.spawn), not of pi, and never touches the bridge socket.",
       "milestones": [
         {
@@ -586,14 +586,14 @@
           "type": "Milestone",
           "id": "P2.M4",
           "title": "Changeset-level documentation sync (Mode B)",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Cross-cutting documentation that only makes sense once the whole changeset is in place. Updates README.md (omp + shell feature), doc/pi-bridge.txt (cross-links + behavior table), and extension/README.md (descriptor fields + env var). Depends on all implementing subtasks.",
           "tasks": [
             {
               "type": "Task",
               "id": "P2.M4.T7",
               "title": "Sync changeset-level documentation",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Final documentation sweep: update README.md with the omp install path (if not already done by P1.M1.T1.S2) and the shell-completion feature blurb + config pointer + architecture note. Cross-link doc/pi-bridge.txt to pi-bridge-shell.txt. Note the new descriptor fields in extension/README.md.",
               "subtasks": [
                 {
@@ -640,7 +640,7 @@
                   "type": "Subtask",
                   "id": "P2.M4.T7.S3",
                   "title": "extension/README.md — new optional descriptor fields + PI_NVIM_SHELL env var",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M1.T1.S2"
