@@ -337,6 +337,19 @@ end
 ---@param cursorCol  integer The 0-based BYTE col (`nvim_win_get_cursor`[2]).
 ---@return integer ms The debounce window (0 or the configured attachment window).
 local function compute_debounce(lines, cursorLine, cursorCol)
+  -- §17.11: shell context (line 1 begins with "!") uses config.shell.debounce_ms (default 0 —
+  -- immediate; the daemon is warm after first use + the per-shell engine is fast). Checked BEFORE
+  -- the attachment check (a "!git ch" line is non-attachment → would otherwise fall to the 0-ms
+  -- default, which happens to match, but honoring the config knob is the explicit §17.11 contract).
+  -- Read DEFENSIVELY (the shell={} config block is P2.M3.T6.S1, not done yet — a nil config must NOT throw).
+  local line1 = (type(lines) == "table") and (lines[1] or "") or ""
+  if cursorLine == 0 and line1:sub(1, 1) == "!" then
+    local pi = require("pi-bridge")
+    local cfg = (pi.config and pi.config.shell) or {}
+    local ms = cfg.debounce_ms
+    if type(ms) ~= "number" or ms < 0 then ms = 0 end
+    return math.max(0, math.floor(ms))
+  end
   local line = (type(lines) == "table") and (lines[cursorLine + 1] or "") or "" -- pi 0-based → Lua 1-based
   local byte_end = cursorCol                              -- 0-based BYTE col; ASCII @/#/"/space checks → byte slice is correct
   local before = line:sub(1, byte_end)
@@ -356,6 +369,73 @@ local function cancel_timer()
     if state.debounce_timer and not state.debounce_timer:is_closing() then
       state.debounce_timer:stop()
       state.debounce_timer:close()
+    end
+  end)
+end
+
+-- ===========================================================================
+-- do_shell_fetch(buf) — the SHARED shell-completion fetch helper (P2.M2.T3.S2 / §17.7).
+-- Mirrors the codebase's helper-extraction pattern (cancel_timer, _route_or_accept,
+-- hide_and_cancel): both do_refresh (debounced) + on_tab (immediate Tab-force, §17.9)
+-- route a `ctx == "shell"` line here instead of copy-pasting the shell-fetch logic.
+--
+-- Invariants (the 4 things that make shell↔bridge supersession correct):
+--   * bumps the SHARED state.gen (the SAME counter the bridge path bumps — the
+--     shell↔bridge supersession boundary); captures `gen` in the cb closure. Do NOT
+--     introduce a separate shell-gen counter (a slash↔shell switch would NOT supersede).
+--     (shell.lua has its OWN state.gen for the daemon's in-flight request; completion
+--     NEVER touches that one.)
+--   * layer-1 supersession: cancels a pending BRIDGE inflight (the slash→shell switch;
+--     frees the round-trip). shell.lua has NO cancel wire method (it's a local
+--     subprocess; it supersedes internally via its own gen + overwriting pending_cb) —
+--     do NOT call bridge.cancel for a shell request, and do NOT invent a shell cancel.
+--   * FORWARD CONTRACT: shell.complete_current(buf, cb) is S3 (P2.M2.T3.S3), not yet
+--     defined → `type(...) == "function"` guard makes this a SILENT NO-OP until S3
+--     lands (mirrors S1's inert intermediate-state posture; S2 cannot break the live
+--     plugin). cb signature: cb(err, items, prefix) where items is AutocompleteItem[]
+--     (already normalized by shell.lua _feed) + prefix is a string (may be "").
+--   * FAST-CONTEXT SAFETY: the shell daemon's cb runs in LIBUV FAST context
+--     (shell.lua:642/650 forward contract), NOT the nvim main loop (UNLIKE the bridge
+--     cb, which bridge.lua schedule_wrap's). So the cb does the gen-guard + the
+--     state.last_result write DIRECTLY (fast-safe: Lua table read/write, single-
+--     threaded) but `vim.schedule`s the M.on_results menu hop (NOT fast-safe — :help
+--     E5560; it drives the floating window). Forgetting the schedule throws E5560 or
+--     corrupts the UI mid-redraw — the #1 trap in S2 (the shell cb is NOT a copy of
+--     the bridge cb). Contrast: the bridge cb needs NO extra schedule.
+-- Shell completion is BRIDGE-INDEPENDENT (the daemon is a child of nvim — §17.3/§17.13);
+-- a `!` line with no bridge still routes here. Shell uses BYTE offsets (§17.14) — NO
+-- coords.nvim_to_pi_coords call; do_shell_fetch(buf) takes just the buf.
+-- Reads bridge/shell FRESH (lazy require; handshake async + test mocks). Never throws
+-- (pcall every external call; per-keystroke + autocmd contract).
+-- ===========================================================================
+local function do_shell_fetch(buf)
+  local bridge = require("pi-bridge").bridge -- READ FRESH (only for canceling a pending BRIDGE request)
+  -- SUPERSEDE layer 1: cancel any in-flight BRIDGE request (the slash→shell switch).
+  if state.inflight_id and bridge and type(bridge.cancel) == "function" then
+    pcall(bridge.cancel, state.inflight_id)
+  end
+  state.inflight_id = nil
+  -- SUPERSEDE layer 2: gen-guard (SHARED with the bridge path — the shell↔bridge boundary).
+  state.gen = state.gen + 1
+  local gen = state.gen
+  -- FORWARD CONTRACT (S3): shell.complete_current(buf, cb). Not yet defined → silent no-op
+  -- (S2→S3 intermediate state; mirrors S1's posture).
+  local shell = require("pi-bridge.shell")
+  if type(shell.complete_current) ~= "function" then
+    dbg("[do_shell_fetch] shell.complete_current NOT defined (S3) — silent degrade")
+    return
+  end
+  pcall(shell.complete_current, buf, function(err, items, prefix)
+    -- ⚠ LIBUV FAST CONTEXT (shell.lua:642/650). gen-guard + state.last_result write are
+    -- fast-safe (Lua table r/w); M.on_results drives the menu → vim.schedule it (E5560).
+    if gen ~= state.gen then return end -- STALE (superseded) — drop, touch nothing
+    state.inflight_id = nil
+    if err then dbg("[do_shell_fetch.cb] ERR=" .. tostring(err)); return end -- silent degrade (S4 notifies)
+    local its = items  or {}
+    local pfx = prefix or ""
+    state.last_result = { items = its, prefix = pfx } -- fast-safe (Lua table write)
+    if type(M.on_results) == "function" then
+      vim.schedule(function() pcall(M.on_results, buf, its, pfx) end) -- fast → nvim main loop (menu hop)
     end
   end)
 end
@@ -419,16 +499,9 @@ do_refresh = function(buf)
   -- read is wrong; silent no-op, not a fetch on stale state).
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
   if buf ~= vim.api.nvim_get_current_buf() then return end
-  -- READ BRIDGE FRESH (handshake resolves async + test mocks swap in after require).
-  local pi_mod = require("pi-bridge")
-  local bridge = pi_mod.bridge
-  if not bridge
-     or type(bridge.is_connected) ~= "function"
-     or not bridge.is_connected() then
-    dbg("[do_refresh] NOT CONNECTED — bail")
-    return -- silent degrade (S39's job to notify once); never throw
-  end
-  -- READ buffer lines + cursor (api-safe — research §5; NO vim.schedule needed).
+  -- READ buffer lines + cursor FIRST (§17.7: the SHELL branch does NOT need the bridge —
+  -- the daemon is a child of nvim, §17.3/§17.13; only the slash/path branch does, so the
+  -- bridge-connected bail moved BELOW the ctx computation).
   local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, -1, false)
   if not ok or type(lines) ~= "table" then return end
   local cur
@@ -445,10 +518,28 @@ do_refresh = function(buf)
   -- multibyte text before the trigger does not skew the slice. The Tab path (force_fetch)
   -- is EXPLICIT and bypasses this gate.
   local ctx = completion_context(lines, row - 1, byte_col)
+  -- ── SHELL CONTEXT (§17.7): route to the shell-completion daemon, NOT the bridge ──
+  -- A `!`/`!!` line 1 routes to shell.complete_current (S3; forward-guarded → silent
+  -- no-op until S3 lands). Shell completion is BRIDGE-INDEPENDENT → checked BEFORE the
+  -- bridge-connected bail (a `!` line with no bridge still routes here).
+  if ctx == "shell" then
+    do_shell_fetch(buf)
+    return
+  end
   if not ctx then
     dbg(string.format("[do_refresh] ctx=nil (plain) line1=%q col=%s — close, no request", tostring((lines or {})[1] or ""), tostring(byte_col)))
     if type(M.on_results) == "function" then pcall(M.on_results, buf, {}, "") end
     return
+  end
+  -- READ BRIDGE FRESH (only the slash/path path needs it; handshake resolves async +
+  -- test mocks swap in after require).
+  local pi_mod = require("pi-bridge")
+  local bridge = pi_mod.bridge
+  if not bridge
+     or type(bridge.is_connected) ~= "function"
+     or not bridge.is_connected() then
+    dbg("[do_refresh] NOT CONNECTED — bail")
+    return -- silent degrade (S39's job to notify once); never throw
   end
   -- CONVERT (S29 — THE centralized seam; the ONLY ±1 is the row). `pi.lines` is the SAME
   -- reference as `lines`, so the result drops straight into the RPC params.
@@ -516,6 +607,14 @@ end
 -- @param opts     {force:boolean}        force=true ⇒ the file-force path; force=false ⇒ the slash path.
 -- @param on_items fun(buf:integer, items:pi-bridge.AutocompleteItem[], prefix:string) The result router.
 force_fetch = function(buf, pi, opts, on_items)
+  -- §17.9: shell Tab-force routes to the shell daemon (NOT the bridge). on_tab detects
+  -- ctx=="shell" and calls do_shell_fetch directly; this seam lets a future caller drive
+  -- a shell force-fetch via force_fetch too (shell uses BYTE offsets — pi's UTF-16 coords
+  -- do not apply; do_shell_fetch(buf) takes just the buf).
+  if opts and opts.shell == true then
+    do_shell_fetch(buf)
+    return
+  end
   cancel_timer()                                   -- drop any pending refresh debounce (can't race)
   local bridge = require("pi-bridge").bridge          -- READ FRESH (handshake async + test mocks)
   -- SUPERSEDE layer 1 (cancel prev in-flight — optimization; frees the round-trip).
@@ -765,17 +864,27 @@ function M.on_tab(buf)
     if type(item) == "table" then return M.accept(item) == true end   -- S32 core (no override)
   end
   -- ── BRANCH 2 (menu CLOSED): pi handleTabCompletion (editor.ts:2126) ──
+  -- Read lines + cursor FIRST (§17.9: the SHELL branch does NOT need the bridge — the
+  -- daemon is a child of nvim; a `!` line with no bridge still force-completes).
+  local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, -1, false)
+  if not ok or type(lines) ~= "table" then return false end
+  local cur
+  ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
+  if not ok or type(cur) ~= "table" then return false end
+  -- ── SHELL CONTEXT (§17.9): force an immediate shell fetch (mirrors file-force; 0 debounce).
+  -- Shell items are plain words → route to the menu (on_results), NOT _route_or_accept
+  -- (pi's single-item auto-apply does not apply; shell accept is P2.M2.T4).
+  if completion_context(lines, cur[1] - 1, cur[2]) == "shell" then
+    do_shell_fetch(buf)
+    return true                                                     -- Tab CONSUMED
+  end
+  -- bridge-connected check (only the slash/file paths need the bridge)
   local bridge = require("pi-bridge").bridge                          -- READ FRESH
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
     return false                                                    -- silent degrade (Tab → indent)
   end
-  local ok, lines = pcall(vim.api.nvim_buf_get_lines, buf, 0, -1, false)
-  if not ok or type(lines) ~= "table" then return false end
-  local cur
-  ok, cur = pcall(vim.api.nvim_win_get_cursor, 0)
-  if not ok or type(cur) ~= "table" then return false end
   local coords = require("pi-bridge.coords")
   local pi = coords.nvim_to_pi_coords(lines, cur[1], cur[2])         -- {lines, cursorLine, cursorCol(UTF-16)}
   -- beforeCursor (UTF-16→byte slice — pi.cursorCol is UTF-16; pi.lines[cursorLine] is UTF-8).

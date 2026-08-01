@@ -294,7 +294,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T3.S2",
                   "title": "Add shell branch to do_refresh + force_fetch with gen-guard + 0ms debounce",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M2.T3.S1",

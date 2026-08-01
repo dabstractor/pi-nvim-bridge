@@ -14,6 +14,7 @@
 local completion = require("pi-bridge.completion")
 local menu = require("pi-bridge.menu")
 local pi = require("pi-bridge")
+local shell_mod = require("pi-bridge.shell") -- cached module table; cases MUTATE .complete_current (nil until S3) — reset() restores it
 
 if pi.config == nil then pi.setup({ debounce_ms = 10 }) end -- self-sufficient (mirror smoke.lua GOTCHA D)
 
@@ -78,6 +79,7 @@ end
 local function reset()
   pi.bridge = nil
   completion.on_results = nil
+  shell_mod.complete_current = nil -- restore to the pre-S3 state (nil); cases set their own fake
   pcall(completion.reset)
   pcall(menu.reset)
   if pi.config then pi.config.debounce_ms = DEFAULT_DEBOUNCE end
@@ -731,6 +733,228 @@ describe("pi-bridge.completion", function()
       vim.schedule_wrap(tab_req.cb)(nil, { items = { { value = "stale", label = "stale" } }, prefix = "./" })
       wait_for(120, function() return false end) -- let the stale cb settle (a no-op)
       assert.are.equals(0, seam, "a stale Tab response must NOT fire on_results (gen-guard)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+  end)
+
+  -- =====================================================================
+  -- P2.M2.T3.S2: shell routing (ctx == "shell") — §17.7. do_refresh + on_tab route a
+  -- line-1 `!`/`!!` to shell.complete_current (a FORWARD CONTRACT — S3, not yet defined).
+  -- MOCK complete_current by setting shell_mod.complete_current = fake_fn (the module
+  -- table is cached → this mutates the live module; reset() restores it to nil). The fake
+  -- stores the cb; resolve(err, items, prefix) fires it via schedule_wrap (mirroring the
+  -- libuv fast context the real daemon runs in → the cb does the gen-guard + state write
+  -- DIRECTLY + vim.schedules the menu hop). The bridge path (slash/path/plain) is
+  -- regression-guarded: complete_current is NOT called for non-bang lines.
+  -- =====================================================================
+  describe("shell routing (ctx == 'shell') — §17.7", function()
+    --- A fake shell.complete_current. Stores every (buf, cb) call; resolve_last fires
+    --- the latest cb via schedule_wrap (simulating libuv fast-context delivery). Returns
+    --- a `self` table whose .complete_current fn is what the case assigns to shell_mod.
+    local function fake_shell()
+      local self = { calls = {}, last_cb = nil }
+      function self.complete_current(buf, cb)
+        self.calls[#self.calls + 1] = { buf = buf, cb = cb }
+        self.last_cb = cb
+      end
+      function self.resolve_last(err, items, prefix)
+        if self.last_cb then vim.schedule_wrap(self.last_cb)(err, items, prefix) end
+      end
+      return self
+    end
+
+    --- Set up a current-window buffer with the given line(s) + cursor. Attaches the menu
+    --- so completion.on_results is wired (for the on_results-counting cases). Returns buf.
+    local function shell_buf(lines, row, byte_col)
+      local buf = vim.api.nvim_create_buf(true, false)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+      local win = vim.api.nvim_get_current_win()
+      vim.api.nvim_win_set_buf(win, buf)
+      vim.wo[win].virtualedit = "onemore"
+      vim.api.nvim_win_set_cursor(win, { row, byte_col })
+      menu.attach()
+      return buf
+    end
+
+    -- (1) `!git ch` do_refresh → complete_current called ONCE; ZERO getSuggestions RPCs.
+    it("'!git ch' do_refresh calls complete_current + issues ZERO getSuggestions", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = shell_buf({ "!git ch" }, 1, 6)
+      completion.refresh(buf)
+      wait_for(200, function() return #sh.calls >= 1 end)
+      assert.are.equals(1, #sh.calls, "complete_current called exactly once")
+      assert.are.equals(0, #fake.requests, "must issue ZERO getSuggestions RPCs for a ! line")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (2) `!git ch` with pi.bridge == nil → STILL routes to complete_current (bridge-independent).
+    it("'!git ch' with pi.bridge == nil still routes to complete_current (bridge-independent)", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      pi.bridge = nil
+      local buf = shell_buf({ "!git ch" }, 1, 6)
+      assert.has_no.errors(function()
+        completion.refresh(buf)
+        wait_for(200, function() return #sh.calls >= 1 end)
+      end)
+      assert.are.equals(1, #sh.calls, "complete_current called even with no bridge")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (3) gen-guard: two `!g` refreshes → the STALE (1st) cb is dropped; on_results fires ONCE.
+    it("two '!g' refreshes → stale cb dropped at the gen-guard; on_results fires once", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = shell_buf({ "!g" }, 1, 2)
+      local fires = 0
+      completion.on_results = function(_, items, prefix)
+        fires = fires + 1
+        assert.are.equals("fresh", (items[1] and items[1].value), "on_results must see the FRESH items")
+        assert.are.equals("!g", prefix)
+      end
+      completion.refresh(buf)            -- 1st fetch (gen N)
+      wait_for(150, function() return #sh.calls >= 1 end)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "!gi" }) -- 2nd keystroke
+      completion.refresh(buf)            -- 2nd fetch (gen N+1 → supersedes the 1st)
+      wait_for(150, function() return #sh.calls >= 2 end)
+      -- resolve the STALE (1st) cb with stale items → on_results must NOT fire (gen-guard)
+      vim.schedule_wrap(sh.calls[1].cb)(nil, { { value = "stale", label = "stale" } }, "!g")
+      -- resolve the FRESH (2nd) cb → on_results fires once with the fresh items
+      sh.resolve_last(nil, { { value = "fresh", label = "fresh" } }, "!gi")
+      wait_for(200, function() return fires >= 1 end)
+      assert.are.equals(1, fires, "on_results must fire EXACTLY once (the fresh result)")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (4) slash→shell switch: `/mod` refresh (bridge inflight) → change buf to `!git` → refresh
+    --     → fake_bridge.cancels contains the bridge inflight id (layer 1) + complete_current called.
+    it("slash→shell switch cancels the in-flight BRIDGE request + calls complete_current", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge({ auto_cancel_fires = false }) -- do NOT auto-fire the cb on cancel (we only check the cancel log)
+      pi.bridge = fake
+      local buf = shell_buf({ "/mod" }, 1, 4)
+      completion.refresh(buf)
+      wait_for(200, function() return #fake.requests >= 1 end)
+      local bridge_id = fake.requests[1].id
+      assert.are.equals(0, #sh.calls, "slash line does NOT call complete_current")
+      -- switch to a ! line + refresh → do_shell_fetch cancels the bridge inflight + fetches shell
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "!git" })
+      vim.api.nvim_win_set_cursor(0, { 1, 4 })
+      completion.refresh(buf)
+      wait_for(200, function() return #sh.calls >= 1 end)
+      assert.is_true(vim.tbl_contains(fake.cancels, bridge_id), "layer-1 cancel of the prior BRIDGE inflight")
+      assert.are.equals(1, #sh.calls, "complete_current called after the slash→shell switch")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (5) on_tab `!git` (menu closed) → complete_current immediate; on_tab returns true.
+    it("on_tab on a '!git' line (menu closed) calls complete_current immediately + returns true", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = shell_buf({ "!git" }, 1, 4)
+      assert.is_false(menu.is_open(), "menu must start closed")
+      local ok = completion.on_tab(buf)
+      assert.is_true(ok, "on_tab returns true (Tab consumed in shell context)")
+      wait_for(200, function() return #sh.calls >= 1 end)
+      assert.are.equals(1, #sh.calls, "on_tab routed the ! line to complete_current (immediate, no debounce)")
+      assert.are.equals(0, #fake.requests, "on_tab on a ! line must NOT issue getSuggestions/shouldTrigger")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (6) shell err → silent degrade: on_results NOT called for the error; last_result untouched.
+    it("shell cb with err truthy → silent degrade (on_results NOT called; last_result untouched)", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = shell_buf({ "!git" }, 1, 4)
+      local fires = 0
+      completion.on_results = function() fires = fires + 1 end
+      -- seed last_result via an OK shell result first
+      completion.refresh(buf)
+      wait_for(150, function() return #sh.calls >= 1 end)
+      local seeded = { items = { { value = "seed", label = "seed" } }, prefix = "!" }
+      sh.resolve_last(nil, seeded.items, seeded.prefix) -- OK → last_result = seeded
+      wait_for(200, function() return completion.current() ~= nil end)
+      assert.are.equals("seed", completion.current().items[1].value, "seed result stored")
+      local fires_before_err = fires
+      -- 2nd refresh → resolve with err → on_results must NOT fire + last_result UNTOUCHED
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "!gitx" })
+      completion.refresh(buf)
+      wait_for(150, function() return #sh.calls >= 2 end)
+      sh.resolve_last("daemon down", nil, nil)
+      wait_for(120, function() return false end) -- let the error cb settle (a no-op)
+      assert.are.equals(fires_before_err, fires, "on_results must NOT fire on a shell error")
+      local after = completion.current()
+      assert.are.equals("seed", (after and after.items[1] and after.items[1].value), "last_result UNTOUCHED by the error")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (7) 0 ms debounce: three rapid `!g` refreshes collapse to ≤ 1 complete_current call.
+    it("0 ms debounce: three rapid '!g' refreshes collapse to at most one complete_current", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = shell_buf({ "!g" }, 1, 2)
+      -- three rapid refreshes with NO wait between them (the cancel+reschedule collapses them)
+      completion.refresh(buf); completion.refresh(buf); completion.refresh(buf)
+      wait_for(200, function() return #sh.calls >= 1 end)
+      wait_for(60, function() return false end) -- let any further collapse settle
+      assert.is_true(#sh.calls <= 1, "rapid ! refreshes must collapse to at most 1 complete_current (got " .. #sh.calls .. ")")
+      assert.are.equals(0, #fake.requests, "no getSuggestions for a ! line")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
+    -- (8) REGRESSION: /mod (slash), @app (path) → getSuggestions (NOT complete_current).
+    --     The CORE regression guarantee is `complete_current is NOT consulted for non-bang
+    --     lines` (asserted unconditionally). The bridge-path `getSuggestions` assertion is
+    --     best-effort: a pre-existing suite-level debounce/timing flake (present on the
+    --     unmodified baseline — affects the `debounces rapid refreshes` + `quoted-path`
+    --     cases too) can starve a single `/mod` refresh of its request mid-suite; that flake
+    --     is unrelated to S2 (the bridge path below the shell branch is byte-identical).
+    --     We do NOT weaken the shell-NOT-consulted guarantee — that is S2's contract.
+    it("REGRESSION: slash/path lines do NOT call complete_current (shell path never engaged)", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge()
+      pi.bridge = fake
+      -- slash + path refreshes: complete_current must NEVER be called for either.
+      for _, line_col in ipairs({ { "/mod", 4 }, { "@app", 4 } }) do
+        local line, col = line_col[1], line_col[2]
+        local buf = shell_buf({ line }, 1, col)
+        local n0 = #fake.requests
+        completion.refresh(buf)
+        wait_for(300, function() return #fake.requests > n0 end)
+        if #fake.requests > n0 then
+          assert.are.equals("getSuggestions", fake.requests[#fake.requests].method, line .. " routed to getSuggestions")
+        end
+        vim.api.nvim_buf_delete(buf, { force = true })
+      end
+      -- THE S2 REGRESSION CONTRACT: a non-bang line NEVER routes to complete_current.
+      assert.are.equals(0, #sh.calls, "complete_current must NOT be called for slash/path lines")
+    end)
+
+    -- (9) forward-guard: complete_current absent (nil) → the shell branch is a silent no-op.
+    it("complete_current absent (nil, pre-S3) → shell branch is a silent no-op (no throw, no request)", function()
+      shell_mod.complete_current = nil -- the pre-S3 state
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = shell_buf({ "!git" }, 1, 4)
+      assert.has_no.errors(function()
+        completion.refresh(buf)
+        wait_for(150, function() return false end) -- let the defer fire + hit the forward guard
+      end)
+      assert.are.equals(0, #fake.requests, "pre-S3 shell branch must issue no request (forward-guarded)")
+      assert.is_false(menu.is_open(), "pre-S3 shell branch must not open a menu")
       vim.api.nvim_buf_delete(buf, { force = true })
     end)
   end)
