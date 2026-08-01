@@ -435,7 +435,7 @@
           "type": "Milestone",
           "id": "P2.M3",
           "title": "Remaining drivers + health + docs + tests",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Implement zsh and bash drivers, wire up health check, configuration block, teardown integration, and the shell vimdoc. Finalize CI gating for shell-dependent tests.",
           "tasks": [
             {
@@ -501,7 +501,7 @@
               "type": "Task",
               "id": "P2.M3.T6",
               "title": ":checkhealth shell section + doc/pi-bridge-shell.txt + config",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Add the shell config block to init.lua defaults, a shell section to :checkhealth, wire VimLeavePre teardown, and write the pi-bridge-shell vimdoc. Set up CI gating for shell-dependent tests.",
               "subtasks": [
                 {
@@ -557,7 +557,7 @@
                   "type": "Subtask",
                   "id": "P2.M3.T6.S4",
                   "title": "doc/pi-bridge-shell.txt vimdoc — overview, prefer contract, config, drivers, trust model, degrade",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M3.T6.S1",

@@ -27,6 +27,7 @@ CONTENTS                                        *pi-bridge* *pi-bridge-contents*
 	11. Lua API (for integrators) ............ |pi-bridge-api|
 	12. Health ............................... |pi-bridge-checkhealth|
 	13. Troubleshooting / FAQ ................ |pi-bridge-troubleshooting|
+	Shell completion (!/!! bash mode) ....... |pi-bridge-shell|
 	Autosave (how your prompt persists) ...... |pi-bridge-autosave|
 
 ==============================================================================
@@ -210,6 +211,8 @@ TUI gets:
   • `<Tab>` to force file completion, matching pi's
     `shouldTriggerFileCompletion`.
 
+For shell completion of `!`/`!!` bash-mode commands, see |pi-bridge-shell|.
+
 DEBOUNCE ~
 Pi does not apply a flat debounce. The window is computed per request: slash
 commands and plain typing use 0 ms (immediate); `@...`/`#...` attachment context
@@ -261,6 +264,10 @@ is the #1 install confusion; it is not a bug. Inspect it from inside the
 launched Neovim: >
     :lua print(vim.env.PI_NVIM_BRIDGE)
 <
+The descriptor MAY also carry optional `shell` / `shellSource` / `shellPath`
+fields (advisory; absent on older bridges) — they describe the shell pi runs
+`!`/`!!` in. See |pi-bridge-shell-prefer|.
+
 SECURITY: the `token` is the real auth boundary (PRD §12). NEVER paste the live
 descriptor — especially `token` — into a bug report.
 

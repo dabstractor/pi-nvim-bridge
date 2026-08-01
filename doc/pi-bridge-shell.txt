@@ -1,0 +1,405 @@
+*pi-bridge-shell.txt*	For Nvim 0.11+.	Last change: 2026 Aug 01
+
+          SHELL COMPLETION — pi-bridge.nvim
+          Tab completion for `!`/`!!` bash-mode commands in the pi
+          external editor, driven by your real shell's completion engine.
+
+          License:  MIT
+
+==============================================================================
+CONTENTS                                  *pi-bridge-shell* *pi-bridge-shell-contents*
+
+	1. Overview ............................ |pi-bridge-shell-overview|
+	2. When it activates ................... |pi-bridge-shell-activation|
+	3. The shell mismatch + `prefer` ...... |pi-bridge-shell-prefer|
+	4. Per-shell drivers .................. |pi-bridge-shell-drivers|
+	5. Configuration ...................... |pi-bridge-shell-config|
+	6. Acceptance & quoting ............... |pi-bridge-shell-accept|
+	7. Health ............................. |pi-bridge-shell-health|
+	8. Security & trust model ............. |pi-bridge-shell-security|
+	9. Failure modes / degrade ............ |pi-bridge-shell-degrade|
+	10. Troubleshooting / FAQ ............. |pi-bridge-shell-troubleshooting|
+
+==============================================================================
+1. Overview                                         *pi-bridge-shell-overview*
+
+Shell completion is the second completion engine built into `pi-bridge.nvim`.
+Where the first (see |pi-bridge-completion|) renders pi's in-prompt provider —
+slash commands, `@file` mentions, paths — this one completes SHELL COMMANDS
+typed on a `!` or `!!` line of the pi external editor (pi's "bash mode").
+
+It does so by running YOUR shell's own completion engine. A persistent
+completion subshell — a child of the Neovim process — is spawned once per
+session, kept warm, and queried over a local pipe on each keystroke. Results
+render in the same floating menu as pi's completions; accepting an item inserts
+it with the right quoting for your shell. No per-keystroke process is started
+(shell rc + completion-library load costs 100 ms–1 s+, which would make typing
+unusable).
+
+The engine is dormant by default and activates only inside a pi-launched editor
+session (see |pi-bridge-activation|). It never touches pi's own provider: a
+`!`/`!!` line routes to the shell daemon; every other line routes to pi's
+provider exactly as before.
+
+See |pi-bridge-shell-activation| for the exact trigger, |pi-bridge-shell-prefer|
+for the central design decision (which shell is used), and
+|pi-bridge-shell-troubleshooting| if something looks wrong.
+
+==============================================================================
+2. When it activates                          *pi-bridge-shell-activation*
+
+Shell completion fires only when ALL of the following hold:
+
+  • You are inside a pi-launched editor — i.e. the `PI_NVIM_BRIDGE` env var is
+    set (see |pi-bridge-env|). Outside a pi session the whole subsystem is
+    inert, like the rest of the plugin.
+  • The cursor is on line 1 (the very first line of the buffer).
+  • That line begins with `!` (single bang) or `!!` (double bang). The leading
+    bangs are stripped before the shell is queried, so `!git ch<Tab>` asks the
+    shell to complete `git ch`.
+
+On any other line — prose, slash commands, `@file` mentions, paths — shell
+completion does nothing and pi's normal provider runs unchanged.
+
+The `!`/`!!` distinction follows pi's own bash mode: a single `!` runs the line
+as a shell command; `!!` is the "force" variant. Both are completed here.
+
+VISUAL CUE ~
+When the menu is showing shell candidates, each item is prefixed with a
+`$ ` gutter (configurable via `shell.visual_cue` — see |pi-bridge-shell-config|)
+so you can tell at a glance "this is a shell completion, not a pi one". This
+mirrors pi's TUI recoloring of the border in bash mode.
+
+==============================================================================
+3. The shell mismatch + `prefer`             *pi-bridge-shell-prefer*
+
+This is the single most important thing to understand about shell completion,
+and the answer to by far the most common question: "I use zsh/fish — why did I
+get bash-quality completions?".
+
+THE MISMATCH ~
+pi runs `!`/`!!` commands in `/bin/bash` BY DEFAULT, not in your `$SHELL`. The
+shell that COMPLETES a command should be the SAME shell that will EXECUTE it, or
+the completions can lie (a zsh-only alias would be suggested, then fail under
+bash; a bash-only option would be omitted, then be available at run time). So
+by default this plugin completes using pi's execution shell — bash — which is
+always consistent with execution, but offers fewer completions than a native
+zsh/fish setup.
+
+THE FIX (pick one) ~
+You can change which shell is resolved. The `shell.prefer` option (see
+|pi-bridge-shell-config|) accepts four values: >
+
+    prefer     resolves to                          when to use
+    ------------------------------------------------------------------
+    "pi"       pi's resolved execution shell        DEFAULT. Always matches
+               (what `!` will actually run).         execution. May be bash.
+    "shell"    your `$SHELL` env var.               Only consistent if pi
+                                                     also runs `!` in $SHELL.
+    "bash"     /bin/bash                            Force bash explicitly.
+    "/abs/path" that exact shell binary             Pin any shell you like.
+<
+The cleanest fix for a zsh/fish user is usually the FIRST of these two:
+
+  • Tell pi to run `!` in your shell too — set pi's `shellPath` (or
+    `SHELL`-equivalent) to your shell. Then execution AND completion both use
+    it, rich AND consistent. This is the recommended fix.
+  • Or set `setup({ shell = { prefer = "shell" } })`. This completes with
+    `$SHELL`; rich, but only consistent if pi also executes in `$SHELL`.
+
+THE ONE-TIME NOTICE ~
+The very first time the daemon is spawned and `prefer` (the default `"pi"`)
+resolves to bash while `$SHELL` is zsh or fish AND that shell is on your
+`$PATH`, the plugin emits ONE `vim.notify` (deduplicated to once per session)
+explaining the mismatch and pointing here. It is not an error — it is a hint.
+See |pi-bridge-shell-troubleshooting| for the full FAQ.
+
+==============================================================================
+4. Per-shell drivers                         *pi-bridge-shell-drivers*
+
+Each supported shell has a "driver" that spawns its persistent completion
+subshell and speaks the framed protocol. Drivers come in two quality tiers:
+
+TIER 1 — fish (default)
+  Mechanism: fish's built-in `complete -C "<line>"`.
+  Quality: yields each candidate WITH its description (e.g. `git cherry-pick
+           — Apply changes from existing commits`). The richest, cleanest
+           result.
+  Notes:    the daemon is `fish -i`; it loads your fish config. A known edge
+            case is that a command line containing a literal `"` can return an
+            empty candidate set (graceful — the menu just stays closed).
+
+TIER 1 — zsh
+  Mechanism: a capture-completion widget. An outer `zsh -f` drives an inner
+             completion zsh inside a `zsh/zpty` pseudo-terminal (the proven
+             capture model used by fzf's zsh completion), redefining `compadd`
+             to record candidates instead of displaying them.
+  Quality: yields each candidate WITH its description.
+  Notes:    the most fragile driver across zsh versions (the pty + widget
+            machinery is sensitive to zsh build options). To keep completions
+            consistent with execution it runs `zsh -f`, so it autoloads system
+            completion definitions (`_git`, etc.) but does NOT source your
+            `~/.zshrc` — a zsh-only alias is intentionally not suggested,
+            because pi would execute it in bash and it would fail.
+
+TIER 2 — bash
+  Mechanism: `compgen`/`complete` dispatch + best-effort `bash-completion`
+             sourcing (the four canonical install paths, each `[-r]`-guarded).
+  Quality: NO descriptions (bash's completion protocol does not produce them).
+           The candidate words themselves are correct, but you will not see the
+           trailing help text fish/zsh show.
+  Notes:    sources your `~/.bashrc` and any found `bash-completion` scripts.
+  Opt-out:  if you would rather have NO completion than bash-quality, disable
+            the driver: >
+                require("pi-bridge").setup({
+                  shell = { drivers = { bash = false } },
+                })
+<
+            Disabling a driver degrades to a plain buffer for that shell; it
+            does NOT fall back to a different shell (the shell is what pi
+            EXECUTES — you cannot change it by disabling a completion driver).
+
+UNKNOWN SHELL — degrade ~
+If the resolved shell is not fish, zsh, or bash (e.g. nushell, elvish, a custom
+binary), or its driver was disabled, completion degrades SILENTLY: the `!`/`!!`
+line behaves like an ordinary buffer line and no menu appears. One `vim.notify`
+(deduplicated) explains the degrade and points here. See
+|pi-bridge-shell-degrade|.
+
+The driver tier actually in use for your session is reported by
+|pi-bridge-shell-health|.
+
+==============================================================================
+5. Configuration                             *pi-bridge-shell-config*
+
+All shell-completion options live under the `shell` key passed to `setup()`.
+They merge over the defaults below, so set only what you want to change: >
+
+    require("pi-bridge").setup({
+      shell = {
+        enabled       = true,
+        prefer        = "pi",                 -- see |pi-bridge-shell-prefer|
+        drivers       = { fish = true, zsh = true, bash = true },
+        warm_on_enter = false,                -- spawn daemon at VimEnter
+        timeout_ms    = 1500,                 -- per-request budget
+        startup_timeout_ms = 5000,            -- daemon cold-start (rc load)
+        visual_cue    = "gutter",             -- "gutter" | "border" | "off"
+        debounce_ms   = 0,                    -- shell-context debounce
+        max_parse_failures = 5,               -- consecutive-failure threshold
+      },
+    })
+<
+DEFAULTS (mirror `lua/pi-bridge/init.lua` `M.defaults.shell`) ~
+
+    shell.enabled            true        Master switch. false → `!`/`!!` lines
+                                         get no completion at all.
+    shell.prefer             "pi"        Resolution contract (see
+                                         |pi-bridge-shell-prefer|). "pi" |
+                                         "shell" | "bash" | "/abs/path".
+                                         Default "pi" = pi's resolved
+                                         execution shell (always consistent
+                                         with what will actually run).
+    shell.drivers            { fish = true,   Per-shell enable/disable. A
+                                          zsh = true,   `false` driver → no
+                                          bash = true } completion for that
+                                         shell (degrade, not a fallback).
+    shell.warm_on_enter      false       Spawn the daemon at VimEnter so the
+                                         first `!`<Tab> is instant. Trades one
+                                         persistent subprocess (rc stays
+                                         loaded) for the 100 ms–1 s+ cold-start
+                                         latency. Default false (lazy: the
+                                         daemon starts on the first `!`).
+    shell.timeout_ms         1500        Per-request budget. On timeout the
+                                         request is aborted and an empty
+                                         result returned (see
+                                         |pi-bridge-shell-degrade|).
+    shell.startup_timeout_ms 5000        Daemon cold-start budget (rc +
+                                         completion-library load). MUST exceed
+                                         `timeout_ms`.
+    shell.visual_cue         "gutter"    How `!`/`!!` shell candidates are
+                                         flagged in the menu. "gutter" = a
+                                         `$ ` prefix on each item (default);
+                                         "border" = recolor the menu border;
+                                         "off" = no cue.
+    shell.debounce_ms        0           Debounce applied to the shell context
+                                         only. Default 0 (immediate; the
+                                         daemon is warm after first use).
+    shell.max_parse_failures 5           Consecutive daemon-response decode
+                                         failures before the daemon is marked
+                                         unhealthy and shell completion is
+                                         disabled for the session (see
+                                         |pi-bridge-shell-degrade|).
+
+The nine keys above are the full public configuration surface for this
+subsystem. They are also surfaced by `:checkhealth pi-bridge` (see
+|pi-bridge-shell-health|).
+
+==============================================================================
+6. Acceptance & quoting                      *pi-bridge-shell-accept*
+
+When you accept a shell completion, the candidate is inserted LOCALLY — this
+plugin does NOT delegate to pi's `applyCompletion` (that path is for pi's own
+completions; see |pi-bridge-completion|). Instead the plugin replaces just the
+shell word under the cursor using `nvim_buf_set_text` (a range edit, never a
+whole-buffer rewrite), then quotes it for the resolved shell:
+
+  • bash / zsh — single-quote the word, using the `'…'"'"'…'` idiom to embed a
+    literal single quote. Characters that are dangerous inside double quotes
+    (`"`, `$`, `\`, backtick) are left untouched inside single quotes, so they
+    are neutralized for free.
+  • fish — lighter rules: double-quote only when the word contains a space.
+  • unknown shell — the POSIX single-quote default.
+
+Re-triggering: after accepting a candidate, completion re-fires ONLY if the
+candidate is a DIRECTORY (so `!cd /etc/<Tab>` keeps offering the next path
+segment). A plain command/file candidate does not re-trigger.
+
+BYTE-DOMAIN ~
+Word boundaries and cursor offsets are computed in BYTES, not UTF-16 (the
+shell path never touches pi's coordinate conversion — see |pi-bridge-api|).
+The byte scan is UTF-8-safe because every delimiter it cares about (whitespace,
+single/double quote, backslash) is ASCII; multibyte command names are returned
+whole.
+
+v1 LIMITATIONS: backslash line-continuations are out of scope; an unclosed
+quote extends the word to the cursor (correct, since you are mid-quote); an
+escaped space (`\ `) is treated as part of the word.
+
+==============================================================================
+7. Health                                    *pi-bridge-shell-health*
+
+`:checkhealth pi-bridge` includes a fifth section, "pi-bridge shell
+completion", that reports the state of this subsystem WITHOUT spawning a live
+daemon (spawning is asynchronous; a synchronous health check must never block).
+It reports, read-only:
+
+  • whether the subsystem is dormant (no pi session) or active;
+  • the RESOLVED shell + its source + the `prefer` value (see
+    |pi-bridge-shell-prefer|);
+  • the picked driver + its tier (fish/zsh = Tier 1, bash = Tier 2; see
+    |pi-bridge-shell-drivers|), or a warn if no driver / a disabled driver;
+  • daemon health: ready, not-yet-spawned (lazy), or failed (permanently
+    disabled — see |pi-bridge-shell-degrade|), with the consecutive parse-
+    failure count if non-zero;
+  • the effective config (enabled, prefer, warm_on_enter);
+  • whether any of the three shell notices (shell-mismatch / shell-degrade /
+    shell-active) fired earlier this session — run `:messages` to read them.
+
+For the parent report (version / environment / connection / `fd`) see
+|pi-bridge-checkhealth|.
+
+==============================================================================
+8. Security & trust model                    *pi-bridge-shell-security*
+
+The completion daemon SOURCES your shell's rc files:
+
+  • zsh    — system completion definitions (autoloaded; `~/.zshrc` is NOT
+             sourced by the driver — see |pi-bridge-shell-drivers|).
+  • fish   — your fish config (`~/.config/fish/config.fish` and friends).
+  • bash   — your `~/.bashrc` plus any found `bash-completion` scripts.
+
+Sourcing rc files means the daemon EXECUTES CODE YOU WROTE (aliases,
+functions, prompt hooks, completions). This is the SAME trust model pi already
+operates under: pi executes arbitrary `!`/`!!` commands — including the very
+aliases and functions defined in those same rc files — every time you submit a
+bang line. The daemon adds no new trust boundary; it runs the same files pi
+would run, for the purpose of producing completions instead of executing a
+command.
+
+The daemon is a CHILD of the Neovim editor process, talking over LOCAL pipes
+(stdin/stdout/stderr) only. It NEVER touches the pi-nvim-bridge socket and
+NEVER sees the bridge descriptor or its `token` — the PRD §12 auth boundary is
+unchanged (see |pi-bridge-env|). Completion payloads are not logged anywhere
+beyond the optional local debug log.
+
+If you would rather the daemon not source rc files at all, disable the
+offending driver (see |pi-bridge-shell-config|); the plugin then degrades to a
+plain buffer for that shell rather than running anything.
+
+==============================================================================
+9. Failure modes / degrade                   *pi-bridge-shell-degrade*
+
+Shell completion is designed to FAIL SILENTLY. It never blocks editor startup,
+never throws, and never spams: at most ONE `vim.notify` per failure category
+per session (see |pi-bridge-shell-health| for how to read them). The menu
+simply does not open for `!`/`!!` lines when something is wrong. The modes:
+
+DAEMON SPAWN FAILURE / STARTUP TIMEOUT ~
+The daemon binary is missing, the rc load errors, or the daemon does not
+signal readiness within `startup_timeout_ms` (default 5000). The daemon is
+marked permanently failed for the session, one degrade notice fires, and shell
+completion is disabled until you reopen the editor.
+
+PER-REQUEST TIMEOUT ~
+A single completion request overruns `timeout_ms` (default 1500). The request
+is aborted and an empty result returned; the menu stays as-is or closes. The
+daemon itself is NOT killed — the next request proceeds normally. (Only ONE
+request is in flight at a time; a newer keystroke supersedes a pending one.)
+
+CONSECUTIVE PARSE FAILURES ~
+If the daemon emits `max_parse_failures` (default 5) malformed responses in a
+row, the daemon is killed, marked unhealthy, and shell completion is disabled
+for the session. A single malformed response among many is dropped silently
+and does NOT count toward the threshold unless consecutive.
+
+DAEMON CRASH MID-SESSION (EOF) ~
+If the daemon process dies after a successful spawn (its stdout pipe closes),
+it is marked unhealthy and one degrade notice fires. There is no automatic
+respawn in v1 — reopen the editor (or restart the daemon via a new session) to
+recover.
+
+In every case: the editor keeps working, the prompt is unaffected, and pi's
+own completions on non-`!` lines are untouched. `:checkhealth pi-bridge`
+(see |pi-bridge-shell-health|) reports which mode, if any, occurred.
+
+==============================================================================
+10. Troubleshooting / FAQ                     *pi-bridge-shell-troubleshooting*
+
+Q: "`!git ch<Tab>` shows nothing." ~
+A: Most often the daemon failed to spawn, your shell is unsupported, or you
+   are not actually inside a pi-launched editor. Run `:checkhealth pi-bridge`
+   and read the "pi-bridge shell completion" section (see
+   |pi-bridge-shell-health|) — it reports the resolved shell, the driver, and
+   daemon health. Also check `:messages` for the one-time degrade notice.
+
+Q: "I'm a zsh/fish user but I got bash-quality completions (no descriptions)." ~
+A: The shell mismatch (see |pi-bridge-shell-prefer|). With the default
+   `prefer = "pi"`, the plugin completes using pi's execution shell — which is
+   bash unless you told pi otherwise. Two fixes:
+     1. (Recommended) Set pi's `shellPath` to your shell, so pi EXECUTES `!`
+        in it too. Completion and execution are then both rich AND consistent.
+     2. Or `setup({ shell = { prefer = "shell" } })` to complete with `$SHELL`.
+   Reopen the editor after changing either.
+
+Q: "Completion worked earlier but stopped mid-session." ~
+A: The daemon crashed (EOF) or hit the consecutive parse-failure threshold
+   (see |pi-bridge-shell-degrade|). It is disabled for the rest of the
+   session — reopen the editor to get a fresh daemon. `:checkhealth pi-bridge`
+   reports the mode; `:messages` has the one-time notice.
+
+Q: "A filename with spaces was quoted wrong / not at all." ~
+A: See |pi-bridge-shell-accept| for the per-shell quoting rules. Bash/zsh
+   single-quote with the `'…'"'"'…'` idiom; fish double-quotes only on a
+   space. If a real candidate is still mis-quoted, file an issue with the
+   exact candidate word and your resolved shell.
+
+Q: "My shell is nushell / elvish / something else and it's unsupported." ~
+A: Only fish, zsh, and bash have drivers today (see |pi-bridge-shell-drivers|).
+   Anything else degrades silently to a plain buffer. Support for more shells
+   is future work.
+
+Q: "Does this work on Windows?" ~
+A: No. Git Bash completion is impoverished and the daemon model is Unix-only;
+   the subsystem degrades silently on Windows (a documented non-goal).
+
+Q: "Does it complete multi-line or backslash-continued commands?" ~
+A: No — only the current logical line is completed. The trigger is line 1
+   beginning with `!`/`!!` (see |pi-bridge-shell-activation|). Multi-line /
+   continued-command completion is future work.
+
+Q: "How do I turn it off entirely?" ~
+A: `setup({ shell = { enabled = false } })`. `!`/`!!` lines then behave like
+   ordinary buffer lines — no shell completion, no daemon, no notices. See
+   |pi-bridge-shell-config|.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:
