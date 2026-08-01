@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Shell Resolution & Notice Correctness",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Fix the shell-resolution / mismatch-notice / health-reporting cluster (Issues 1, 2, 5). These are tightly coupled: Issue 5 (expose accurate descriptor shellSource) is the foundation that Issue 2 (detect prefer:\"pi\" consistency footgun) depends on for the source==\"$SHELL\" signal. Issue 1 (gate notice on prefer==\"pi\") is independent but touches the same ensure() notice block.",
           "tasks": [
             {
@@ -41,14 +41,14 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Gate §17.4.3 mismatch notice on prefer==\"pi\" (Issue 1)",
-              "status": "Researching",
+              "status": "Ready",
               "description": "The one-time 'switch to your native shell' mismatch notice fires whenever the resolved shell is bash and $SHELL is zsh/fish — REGARDLESS of how bash was chosen. A user who explicitly sets prefer=\"bash\" (or prefer=\"/path/to/bash\") has deliberately chosen bash; the notice is misleading and its advice (set shellPath) is inert under prefer=\"bash\". Gate the notice on prefer==\"pi\" (the §17.4.3 scope) at the call site in ensure().",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Wrap the mismatch notice block in ensure() with a prefer==\"pi\" gate",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/shell_resolution_notice.md §\"Issue 1 Fix\". The notice block is at shell.lua:384-396 inside M.ensure(). It calls M.mismatch_target(resolved, vim.env.SHELL) unconditionally inside a pcall. cfg is obtained at shell.lua:378-379: `local cfg = (pi.config and pi.config.shell) or {}`. cfg.prefer is the value to gate on. mismatch_target (shell.lua:211-226) is PURE — it checks only basename(resolved)==\"bash\" + basename($SHELL)∈{zsh,fish}; it has NO prefer awareness. Keep it pure.\n2. INPUT: cfg.prefer from pi.config.shell (values: \"pi\"|\"shell\"|\"bash\"|\"/abs/path\"|nil; nil defaults to \"pi\"). resolved from M.resolve_shell(cfg.prefer). vim.env.SHELL.\n3. LOGIC: Wrap the ENTIRE existing pcall(function() ... mismatch_target ... end) notice block (shell.lua:384-396) in `if (cfg.prefer or \"pi\") == \"pi\" then ... end`. This gates the notice to fire ONLY under prefer==\"pi\" (or nil). Do NOT modify mismatch_target itself (it stays pure and prefer-free). Under prefer=\"bash\" (resolved=/bin/bash, source=\"default\") or prefer=\"/abs/path/to/bash\" (resolved=path, source=\"config\"), the notice will NOT fire even when $SHELL is zsh/fish. The existing shell-active and shell-degrade notices are UNAFFECTED (they are outside this gate).\n4. OUTPUT: Under prefer=\"bash\" or prefer=\"/bin/bash\", the shell-mismatch notice does NOT fire. Add plenary spec cases in tests/shell_notices_spec.lua (copy the existing mismatch test's before_each/after_each + inject_for + stub_executable harness): (a) prefer=\"bash\", $SHELL=/bin/zsh, fake bash driver injected, stub_executable({\"zsh\"}) → assert notify.did_notify(\"shell-mismatch\") is FALSE; (b) prefer=\"/bin/bash\" (explicit path), same $SHELL → assert no mismatch notice; (c) REGRESSION: prefer=\"pi\" (default), descriptor.shell=\"/bin/bash\", $SHELL=/bin/zsh, stub_executable({\"zsh\"}) → assert mismatch notice STILL fires (the existing behavior is preserved for the scoped case). Follow architecture/test_conventions.md patterns.\n5. DOCS: [Mode A] Update the notice block's inline comment (shell.lua:384-387) to note the prefer==\"pi\" gate: 'Fires ONLY under prefer==\"pi\" (the §17.4.3 scope) — explicit prefer=\"bash\"/path deliberately chose bash.' No user-facing/config surface change.",
@@ -64,14 +64,14 @@
               "type": "Task",
               "id": "P1.M1.T3",
               "title": "Detect & document prefer=\"pi\" consistency footgun (Issue 2)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "For the most common configuration (prefer=\"pi\" default, $SHELL=zsh/fish, PI_NVIM_SHELL unset), the descriptor advertises shell=zsh (from $SHELL fallback) but pi actually executes !/!! in bash. The plugin completes with zsh — inconsistent with bash execution. The §17.4.3 safety-net notice never fires (it checks resolved==bash, but resolved is zsh). Add a NEW detection condition in ensure() that fires when prefer==\"pi\" && source==\"$SHELL\" && $SHELL∈{zsh,fish}, and document the default-case behavior in doc/pi-bridge-shell.txt. Constrained by §17.10.2 (extension cannot read pi's shellPath) — this is a detection+documentation mitigation, not a correctness fix.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T3.S1",
                   "title": "Add prefer:\"pi\" consistency footgun detection + notice in ensure() and document the default-case behavior",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"
