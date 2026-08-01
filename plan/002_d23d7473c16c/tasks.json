@@ -466,7 +466,7 @@
                   "type": "Subtask",
                   "id": "P2.M3.T5.S2",
                   "title": "bash.lua best-effort driver — COMP_* vars, compgen/compspec, bash-completion sourcing",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S3"
