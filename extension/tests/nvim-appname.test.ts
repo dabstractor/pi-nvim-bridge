@@ -184,12 +184,23 @@ test("opt-in OFF (unset) ⇒ startBridge never touches NVIM_APPNAME; S16 descrip
 			"opt-in OFF ⇒ NVIM_APPNAME never written",
 		);
 
-		// S16 regression: the descriptor contract is byte-identical to today.
+		// S16 regression: the descriptor contract is intact. The 7 BASE keys are always
+		// present; the 3 shell* advisory fields (shell/shellSource/shellPath) are OPTIONAL
+		// — `shell`+`shellSource` are always set, `shellPath` only in the "pi" branch (and
+		// is dropped by JSON.stringify when undefined). Assert by MEMBERSHIP (not an exact
+		// key count, which varies with $SHELL / PI_NVIM_SHELL) so this stays stable.
 		const raw = process.env.PI_NVIM_BRIDGE;
 		assert.equal(typeof raw, "string", "PI_NVIM_BRIDGE still set");
 		const desc = JSON.parse(raw!);
 		assert.equal(desc.serverVersion, "0.1.0");
-		assert.equal(Object.keys(desc).length, 7, "descriptor stays EXACTLY 7 keys");
+		// the 7 base keys are always present
+		for (const k of ["transport", "path", "token", "pid", "cwd", "fdAvailable", "serverVersion"]) {
+			assert.ok(k in desc, `base descriptor key '${k}' present`);
+		}
+		assert.ok(!("version" in desc), "no stray legacy 'version' key");
+		// the §17.10 shell advisory fields (shell + shellSource always; shellPath only in the "pi" branch)
+		assert.equal(typeof desc.shell, "string", "shell advisory field present");
+		assert.ok(["pi", "$SHELL", "default"].includes(desc.shellSource), "shellSource advisory field present");
 	} finally {
 		__setFdAvailableForTest(undefined);
 		__resetNvimAppnameStateForTest();

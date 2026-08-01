@@ -137,6 +137,12 @@ describe("pi-bridge.completion", function()
     -- so a non-current buf would correctly bail — set it current to exercise the fetch)
     local win = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_buf(win, buf)
+    -- position the cursor at EOL of "/mod" (byte col 4). Without this the cursor defaults
+    -- to {1,0} (byte col 0) → before == "" → completion_context returns nil → do_refresh
+    -- (correctly) issues no request. virtualedit=onemore lets the cursor sit one past the
+    -- last char (mirrors test (3) below).
+    vim.wo[win].virtualedit = "onemore"
+    vim.api.nvim_win_set_cursor(win, { 1, 4 })
     -- 3 rapid refreshes (no wait between them -> all collapse into the last defer)
     completion.refresh(buf); completion.refresh(buf); completion.refresh(buf)
     wait_for(200, function() return #fake.requests >= 1 end)

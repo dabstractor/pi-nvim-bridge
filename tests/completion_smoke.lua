@@ -167,7 +167,7 @@ if pi.bridge == bridge then
     check(freq.method == "getSuggestions", "@sr method == getSuggestions")
     check(freq.params.lines[1] == "@sr", "@sr params.lines[1] == '@sr' (got " .. tostring(freq.params.lines and freq.params.lines[1]) .. ")")
     check(freq.params.cursorLine == 0, "@sr cursorLine == 0")
-    check(freq.params.force == false, "@sr force == false")
+    check(freq.params.force == true, "@sr force == true (PATH context makes pi skip its slash branch)")
   end
   vim.api.nvim_win_close(fwin, true)
   vim.api.nvim_buf_delete(fbuf, { force = true })

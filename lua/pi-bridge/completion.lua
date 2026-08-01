@@ -477,11 +477,24 @@ local function completion_context(lines, cursorLine, cursorCol)
   --     (e.g. "/model ant").
   if cursorLine == 0 and before:sub(1, 1) == "/" then return "slash" end
   -- (3) File/path/attachment triggers on the current word.
-  if token == "" then return nil end
+  if token == "" then
+    -- UNCLOSED @"..." quoted mention (pi's @"path with spaces" syntax): once the
+    -- cursor is past a space inside the quoted mention the trailing token is the bare
+    -- word after the space, so the @/#/. check below would miss it. Defer to
+    -- M.is_attachment_context (the SAME unclosed-@"…" arm compute_debounce uses) so
+    -- routing AGREES with the debounce side → the debounced refresh actually issues a
+    -- request instead of bailing as "plain typing". (P-1 fix; completion.lua:83–87.)
+    if M.is_attachment_context(before) then return "path" end
+    return nil
+  end
   local c1 = token:sub(1, 1)
   if c1 == "@" or c1 == "#" then return "path" end       -- @ (always) / # attachment
   if c1 == "." then return "path" end                     -- ./  ../  .
   if token:sub(1, 2) == "~/" then return "path" end       -- home path
+  -- Cursor past a space inside an UNCLOSED @"…" quoted mention: the trailing token is
+  -- the bare word after the space (not starting with @/#/./~/), but we ARE still inside
+  -- the mention → path context (defer to the unclosed-@" arm; P-1 fix).
+  if M.is_attachment_context(before) then return "path" end
   return nil
 end
 

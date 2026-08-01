@@ -90,6 +90,12 @@ describe("pi-bridge.shell _feed (P2.M1.T2.S5)", function()
 		pi.descriptor = nil
 		vim.env.SHELL = nil
 		package.loaded["pi-bridge.shell.fish"] = nil
+		-- give each test a FRESH shell config table. Tests that set
+		-- `pi.config.shell.max_parse_failures` mutate the table IN PLACE; capturing the
+		-- ref above + restoring it in after_each would NOT undo an in-place mutation
+		-- (the restored ref still carries the old threshold → leaks into later tests,
+		-- causing false "daemon disabled" observations). A fresh {} per test isolates them.
+		if pi.config then pi.config.shell = {} end
 		shell.reset()
 	end)
 	after_each(function()
