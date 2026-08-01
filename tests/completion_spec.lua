@@ -1050,6 +1050,44 @@ describe("pi-bridge.completion", function()
       end)
     end)
 
+    -- (a.2) completion_context — the §17.7 shell/bash-mode gate (S1). Direct unit cases
+    --       on the exported pure helper M.completion_context. The gate inspects line 1's
+    --       FIRST character (not the trailing token), so a "!git ch" line classifies as
+    --       "shell" even though its trailing token "ch" is a bare word.
+    describe("completion_context — shell/bash-mode gate (§17.7)", function()
+      it("single-bang line 1 → shell", function()
+        assert.are.equals("shell", completion.completion_context({ "!git ch" }, 0, 4))
+      end)
+      it("double-bang line 1 → shell (routing identical for ! and !!)", function()
+        assert.are.equals("shell", completion.completion_context({ "!!ls /tmp" }, 0, 3))
+      end)
+      it("cursor mid-word on ! line 1 → shell (gate inspects line1[1], NOT the trailing token)", function()
+        assert.are.equals("shell", completion.completion_context({ "!git ch" }, 0, 2))
+      end)
+      it("empty ! line 1 → shell", function()
+        assert.are.equals("shell", completion.completion_context({ "!" }, 0, 1))
+      end)
+      it("bang on line 2 → NOT shell (line-1-only)", function()
+        -- "!git ch" on line 2 (cursorLine 1): a bare word on a non-line-1 line → nil.
+        local v = completion.completion_context({ "echo hi", "!git ch" }, 1, 4)
+        assert.is_not_equals("shell", v, "must not classify a line-2 bang as shell")
+        assert.is_nil(v, "a bare word on line 2 classifies as nil (plain typing)")
+      end)
+      it("REGRESSION GUARD: non-bang line-1 inputs classify unchanged", function()
+        assert.are.equals("slash", completion.completion_context({ "/model" }, 0, 6))
+        assert.are.equals("slash", completion.completion_context({ "/model ant" }, 0, 9))
+        assert.are.equals("path", completion.completion_context({ "@src/comp" }, 0, 5))
+        assert.is_nil(completion.completion_context({ "hello world" }, 0, 5))
+        assert.are.equals("path", completion.completion_context({ "./p" }, 0, 2))
+        assert.are.equals("path", completion.completion_context({ "~/x" }, 0, 3))
+      end)
+      it("nil/empty lines never throw and never return shell", function()
+        local ok, v = pcall(completion.completion_context, nil, 0, 0)
+        assert.is_true(ok, "must not throw on lines == nil")
+        assert.is_not_equals("shell", v, "nil lines must not be classified as shell")
+      end)
+    end)
+
     -- (b) refresh("/mod") fires at 0 ms (next event-loop tick); 3 rapid refreshes STILL
     --     collapse to exactly 1 request (the cancel path collapses them, NOT the
     --     duration — research §2; guards against a regression to "0ms = N requests").

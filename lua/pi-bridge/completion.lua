@@ -362,7 +362,9 @@ end
 
 -- ===========================================================================
 -- completion_context(lines, cursorLine, cursorCol) — the CLIENT-SIDE completion gate.
--- Returns "slash" | "path" | nil. Mirrors the user's intent: completion should fire ONLY
+-- Returns "slash" | "path" | "shell" | nil. Mirrors the user's intent: completion should fire ONLY
+--   • "shell" — line 1 (cursorLine 0) begins with "!" (pi bash mode; covers both "!" and "!!").
+--               Checked FIRST so it wins over slash/path. Routed to the shell-completion daemon by S2.
 --   • "slash" — line 1 (cursorLine 0) begins with "/"  (commands / skills / prompts + their args)
 --   • "path"  — the trailing token before the cursor begins with "@", "#", ".", "~/", or "/"
 --               (file/path/attachment; "@" always — pi's @file mention)
@@ -371,8 +373,12 @@ end
 ---@param lines      string[] Buffer lines (raw UTF-8, as nvim_buf_get_lines returns).
 ---@param cursorLine integer 0-based line index.
 ---@param cursorCol  integer 0-based BYTE column.
----@return string|nil "slash" | "path" | nil
+---@return string|nil "slash" | "path" | "shell" | nil
 local function completion_context(lines, cursorLine, cursorCol)
+  -- §17.7: bash mode is line 1 starting with "!". Checked FIRST so it wins over
+  -- slash/path. Catches BOTH "!" and "!!" (bang-count strip is shell.lua's job, S3).
+  local line1 = (type(lines) == "table") and (lines[1] or "") or ""
+  if cursorLine == 0 and line1:sub(1, 1) == "!" then return "shell" end
   local line = (type(lines) == "table") and (lines[cursorLine + 1] or "") or ""
   local before = line:sub(1, cursorCol)                 -- 0-based byte col → bytes [1..cursorCol]
   local token = before:match("[%S]+$") or ""            -- trailing non-whitespace run (the word being typed)
@@ -398,6 +404,10 @@ local function completion_context(lines, cursorLine, cursorCol)
   if token:sub(1, 2) == "~/" then return "path" end       -- home path
   return nil
 end
+
+-- Pure-helper export: mirrors M.is_attachment_context for direct unit testing of the gate
+-- (tests/completion_spec.lua). do_refresh still calls the LOCAL upvalue — unchanged.
+M.completion_context = completion_context
 
 -- ===========================================================================
 -- do_refresh(buf) — the debounced body (runs inside the api-safe vim.defer_fn cb).
