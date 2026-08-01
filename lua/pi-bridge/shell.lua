@@ -66,6 +66,14 @@
 local M = {}
 local uv = vim.uv -- forward-contract: S3's ensure() spawns via uv (unused in S2).
 
+-- Forward declaration of `close_handles` (the S6 shared kill+close routine). It is
+-- DEFINED later (near `cancel_req_timer`) but CALLED earlier — by `M._reset()` (the EOF
+-- path). Without this forward `local`, `_reset` would resolve `close_handles` to the
+-- GLOBAL (nil) at parse time. The body is assigned later as `close_handles = function()`
+-- (NOT `local function`, which would create a fresh shadowing local) so both `_reset` and
+-- `teardown` close over the SAME upvalue and see the real function at call time.
+local close_handles
+
 -- [TEMP DEBUG] trace shell-daemon flow to /tmp/pi-bridge-shell-debug.log
 -- (forward-contract stub for S3/S4 tracing; no-op today — S2 calls neither uv nor notify).
 local function dbg(msg)
@@ -505,17 +513,25 @@ function M._feed(chunk)
 	end
 end
 
---- Forward-contract stub for S6: the §17.12 EOF-on-daemon-pipe path (shell crashed
---- mid-session). Marks the daemon unhealthy (`state.failed = true`) + nils proc/pipes so
---- the next `ensure` short-circuits via the `failed` guard (no auto-respawn in v1). S6's
---- `teardown()` will REPLACE/EXTEND this: prepend `uv.process_kill(proc, "sigkill")` +
---- `pipe:read_stop()` + `pipe:close()`×3 THEN clear state (on EOF the proc is already
---- dead, so kill is moot; pipe-close matters for real handles — S6 owns it). Does NOT
---- call `M.reset()` (that clears `failed = false`; `_reset` must LEAVE `failed = true` —
---- a CRASH is not a clean exit). Runs on the libuv loop (fast context). NEVER throws
---- (plain table assignments). Exported so S6 replaces it.
+--- The §17.12 EOF-on-daemon-pipe path (shell crashed mid-session). Marks the daemon
+--- unhealthy (`state.failed = true`) + nils proc/pipes so the next `ensure` short-
+--- circuits via the `failed` guard (no auto-respawn in v1).
+---
+--- S6 EXTENSION: `close_handles()` is prepended as the FIRST line (the EOF pipe-close
+--- S3's [Mode A] header explicitly assigned to S6). Without it, a daemon crash mid-
+--- session leaves the stdin/stdout/proc handles open for the rest of the session (a
+--- `uv_handle_t` leak — libuv owns the C structs; not GC'd until closed). On EOF the proc
+--- is already dead (libuv delivered `data==nil`), so `process_kill` is moot-but-harmless
+--- (pcall); the PIPE-close is the real fix. ZERO risk to S3's tests (the fake pipes
+--- absorb read_stop/close; S3's assertions — `failed=true`, nil proc, "does NOT call
+--- reset" — all hold since `close_handles()` touches neither `failed` nor `reset()`).
+---
+--- Does NOT call `M.reset()` (that clears `failed = false`; `_reset` must LEAVE
+--- `failed = true` — a CRASH is not a clean exit). Runs on the libuv loop (fast context).
+--- NEVER throws (close_handles pcall's every luv call; plain table assignments).
 function M._reset()
-	state.failed = true
+	close_handles()               -- S6: close the real handles (the EOF pipe leak S3 deferred here)
+	state.failed = true           -- S3 (unchanged): a crash is NOT a clean exit
 	state.proc   = nil
 	state.stdin  = nil
 	state.stdout = nil
@@ -552,6 +568,47 @@ local function cancel_req_timer()
 		end
 	end)
 	req_timer = nil
+end
+
+--- close_handles() — the SHARED, idempotent, never-throws kill+close routine (used by BOTH
+--- `M.teardown()` — active kill + reset — AND `M._reset()` — the EOF path, where the proc is
+--- already dead). Mirrors bridge.lua `M.close()` (GOTCHA 2: is_closing-guard + pcall; the
+--- double-close "already closing" throw) + completion.lua `cancel_timer` (L350-360: stop the
+--- active op THEN close) + the fish spike teardown idiom (is_closing + pcall + "sigkill").
+---
+--- Order: (1) stdout `read_stop` THEN `close` (stop the read cb from re-entering `_feed`/
+--- `_reset` mid-teardown — completion.lua `cancel_timer` order; NOT the reversed close-then-
+--- read_stop); (2) proc `process_kill("sigkill")` THEN `close` — F3 LIVE-VERIFIED:
+--- `process_kill` does NOT close the `uv_process_t` (`is_closing()` stays false even after
+--- `on_exit` fires); `proc:close()` is REQUIRED or the handle LEAKS for the session. The fish
+--- spike omits `proc:close()` (acceptable — nvim exits); production teardown does NOT.
+--- (3) stdin `close` (no read_start on it).
+---
+--- IDEMPOTENT + never-throws: every `:close()`/`:read_stop()`/`process_kill` is guarded by
+--- `if state.X and not state.X:is_closing()` AND `pcall`'d (F5: double-close throws). A 2nd call
+--- sees `state.X == nil` (reset nil'd the refs) → every `if` skips → all no-ops; the
+--- `is_closing()` guard covers the narrow kill→reset window AND the EOF path where `_reset`
+--- already closed them. NO `vim.api.*`; NO notify; NO `vim.schedule` (runs from libuv FAST
+--- context — S5's `_feed` caller — AND the nvim main loop — VimLeave). Does NOT touch
+--- `state.failed` and does NOT call `reset()` (handle-only; `_reset` owns failed; teardown
+--- owns reset). Does NOT close stderr — shell.lua never stores it (the driver owns it).
+close_handles = function()
+	-- (1) stdout: read_stop THEN close (stops the read cb re-entering _feed/_reset mid-teardown).
+	if state.stdout and not state.stdout:is_closing() then
+		pcall(function() state.stdout:read_stop() end)
+		pcall(function() state.stdout:close() end)
+	end
+	-- (2) proc: process_kill("sigkill") THEN close. F3: process_kill does NOT close the
+	--     uv_process_t (is_closing stays false even after on_exit) — proc:close() is REQUIRED
+	--     or it LEAKS. "sigkill" is unconditional (the daemon may be wedged).
+	if state.proc and not state.proc:is_closing() then
+		pcall(uv.process_kill, state.proc, "sigkill")
+		pcall(function() state.proc:close() end)
+	end
+	-- (3) stdin: close (no read_start on it; is_closing-guarded + pcall'd).
+	if state.stdin and not state.stdin:is_closing() then
+		pcall(function() state.stdin:close() end)
+	end
 end
 
 --- The §17.5.1 framing-protocol + §17.5.2 supersession layer of the completion daemon.
@@ -685,6 +742,66 @@ function M.request(line, cursor, after, cb)
 			cb("write failed")
 		end
 	end)
+end
+
+--- teardown() — §17.5.2 + §17.12 daemon teardown. Kill the daemon (`uv.process_kill`
+--- SIGKILL), close the stdin/stdout/proc handles, finalize the in-flight request
+--- (soft-degrade empty result → the user `cb(nil, {}, "")`), then `M.reset()` (full clean
+--- slate). The §17.5.2 skeleton's `teardown()/on_exit()` comment verbatim: "kill proc
+--- (uv.process_kill SIGKILL), close pipes, reset state."
+---
+--- Callers (do NOT implement here — S6 is called BY these):
+---   * ftplugin VimLeavePre/ExitPre (P2.M3.T6.S3): `autocmd VimLeavePre,ExitPre <buffer>
+---     lua require("pi-bridge.shell").teardown()`. BOTH fire on exit → teardown MUST tolerate
+---     the double-call (idempotent).
+---   * S5's parse-failure threshold (§17.12): after N (default 5) consecutive garbage daemon
+---     responses, S5 forward-GUARDS `if type(M.teardown)=="function" then pcall(M.teardown)
+---     end` THEN re-asserts `state.failed=true` (S6's `reset()` clears failed; S5 re-asserts
+---     so the dead daemon stays failed — §17.12 "no auto-respawn in v1").
+---
+--- IDEMPOTENT: a 2nd call sees `state.proc/stdin/stdout == nil` (reset nil'd them) →
+--- every `if state.X` guard in `close_handles()` skips → all no-ops; the `is_closing()`
+--- guard covers the narrow kill→reset window. Needs NO shadow flag (unlike bridge.lua's
+--- persistent socket) — it nils the state refs in `reset()`.
+---
+--- pending_cb soft-degrade resolution (the D-conflict): the item description says call
+--- `state.pending_cb("teardown", {}, "")`, but S4's `pending_cb` signature is
+--- `(items, prefix)` — 2 params. Passing `("teardown", {})` makes `items="teardown"` (a
+--- string — type bug). S6 invokes `pcall(state.pending_cb, {}, "")` → through S4's
+--- gen-guarded closure → user `cb(nil, {}, "")` (soft-degrade empty, IDENTICAL to S4's
+--- timeout path). "teardown" vs "degrade" is not distinguishable through S4's closure;
+--- §17.12 does not require distinguishing (both = "no completion this keystroke").
+--- Delivered BEFORE `reset()` (reset nils the slot → if reset-first, the in-flight cb
+--- never fires → the menu dangles on the parse-failure path).
+---
+--- NEVER throws: every luv call pcall'd + is_closing-guarded (F5: double-close throws);
+--- pending_cb pcall'd + type-guarded; state writes are plain assignments. NO `vim.api.*`
+--- (teardown is lifecycle, not UI). NO `vim.schedule` (synchronous cleanup; the consumer's
+--- cb-scheduling is its concern per S4). NO notify (the §17.12 one-time degrade notify is
+--- P2.M2.T3.S4). Runs from libuv FAST context (S5's `_feed` caller) AND the nvim main loop
+--- (VimLeavePre) — never-throws is a luv-callback + VimLeave safety requirement.
+---
+--- Forward contracts (do NOT implement; documented):
+---   * `cancel_req_timer()` (S4) is called FIRST (stops the per-request timer from firing
+---     mid-teardown — a fire would race teardown's own pending_cb deliver).
+---   * The proc:close() leak fix (F3) — `process_kill` alone LEAKS the uv_process_t.
+---   * S5 re-asserts `state.failed=true` AFTER teardown on the parse-failure path.
+---   * The driver owns stderr — shell.lua stores only proc/stdin/stdout (S3); teardown
+---     cannot close a handle it never stored.
+function M.teardown()
+	-- (1) cancel the per-request timer FIRST (S4 forward contract: stop a fire racing
+	--     teardown). Idempotent (nil-guarded + is_closing-guarded).
+	cancel_req_timer()
+	-- (2) finalize the in-flight request (soft-degrade empty). pcall'd + type-guarded so
+	--     a throwing/absent cb can't escape teardown. BEFORE reset() — reset() nils pending_cb.
+	--     D-conflict: invoke ({}, "") NOT ("teardown",...) — S4's pending_cb is (items, prefix).
+	if type(state.pending_cb) == "function" then pcall(state.pending_cb, {}, "") end
+	-- (3) kill + close the handles (idempotent; is_closing-guarded; pcall'd). Also closes
+	--     the proc handle (the F3 leak fix — process_kill alone does NOT close it).
+	close_handles()
+	-- (4) full clean slate. (S5 re-asserts state.failed=true AFTER teardown on the
+	--     parse-failure path; on VimLeave failed is moot — editor closing.)
+	M.reset()
 end
 
 -- ===========================================================================
