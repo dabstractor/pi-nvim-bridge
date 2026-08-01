@@ -66,6 +66,54 @@ do
   vim.health = real_health
 end
 
+-- (3) the shell-completion section start()s in BOTH dormant and active sessions.
+-- Sets a fake PI_NVIM_BRIDGE (active path) + a fake shell module so status()/resolve_shell()
+-- are deterministic; asserts check() never throws + the 'pi-bridge shell completion'
+-- section is among the captured start() calls.
+do
+  local captured = {}
+  local function stub(method)
+    return function(msg, advice)
+      captured[#captured + 1] = { method = method, msg = msg, advice = advice }
+    end
+  end
+  local real_health = vim.health
+  vim.health = {
+    start = stub("start"), ok = stub("ok"), warn = stub("warn"), error = stub("error"), info = stub("info"),
+  }
+  local real_env = vim.env.PI_NVIM_BRIDGE
+  vim.env.PI_NVIM_BRIDGE =
+    '{"transport":"unix","path":"/tmp/x.sock","token":"t","pid":1,"cwd":"/tmp","fdAvailable":false,"serverVersion":"0.1.0"}'
+  -- a fake shell module so the section's resolve/status probes are deterministic (no spawn)
+  local real_shell = package.loaded["pi-bridge.shell"]
+  package.loaded["pi-bridge.shell"] = {
+    resolve_shell = function(_p) return "/bin/zsh", "$SHELL" end,
+    pick_driver = function(_r) return { start = function() end } end,
+    status = function()
+      return { shell = nil, driver_basename = "", proc_alive = false, inflight = false, failed = false, parse_failures = 0 }
+    end,
+  }
+  local real_notify = package.loaded["pi-bridge.notify"]
+  package.loaded["pi-bridge.notify"] = { did_notify = function(_c) return false end, once = function() end }
+
+  local ok, err = pcall(health.check)
+  check(ok, "check() does not throw in the active shell section" .. (ok and "" or (" (err=" .. tostring(err) .. ")")))
+
+  local shell_section = false
+  for _, c in ipairs(captured) do
+    if c.method == "start" and tostring(c.msg):find("shell completion", 1, true) then
+      shell_section = true
+      break
+    end
+  end
+  check(shell_section, "check() renders the 'pi-bridge shell completion' section")
+
+  vim.env.PI_NVIM_BRIDGE = real_env
+  vim.health = real_health
+  package.loaded["pi-bridge.shell"] = real_shell
+  package.loaded["pi-bridge.notify"] = real_notify
+end
+
 if fails > 0 then
   io.stderr:write(fails .. " check(s) failed\n")
   vim.cmd("cquit 1")

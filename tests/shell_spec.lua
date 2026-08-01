@@ -246,3 +246,143 @@ describe("pi-bridge.shell reset + exports (P2.M1.T2.S2)", function()
 		assert.is_nil(shell.pick_driver("/bin/nope"))
 	end)
 end)
+
+-- ===========================================================================
+-- M.status() — the read-only snapshot accessor (P2.M3.T6.S2) for :checkhealth.
+-- Mirrors M.get_shell()'s minimal-surface design: a plain table-field read returning a
+-- FRESH table of plain values (never the raw `state` table or its luv handles). Driven
+-- via a fake fish driver (the shell_ensure_spec pattern) so a successful ensure sets
+-- state.proc; state.failed is exercised via a no-driver ensure.
+-- ===========================================================================
+local function fake_bridge_status(shell_path)
+	return {
+		get_shell_info = function() return { shell = shell_path } end,
+		server_info = {},
+	}
+end
+
+local function make_fake_driver_status()
+	local function fake_pipe()
+		return {
+			read_start = function() end,
+			write = function() end,
+			close = function() end,
+			read_stop = function() end,
+			is_closing = function() return false end,
+		}
+	end
+	return {
+		start = function(opts, cb)
+			cb(nil, { is_closing = function() return false end }, fake_pipe(), fake_pipe())
+		end,
+	}
+end
+
+describe("pi-bridge.shell status (P2.M3.T6.S2)", function()
+	local orig_shell, orig_bridge, orig_desc
+
+	before_each(function()
+		orig_shell = vim.env.SHELL
+		orig_bridge = pi.bridge
+		orig_desc = pi.descriptor
+		pi.bridge = nil
+		pi.descriptor = nil
+		vim.env.SHELL = nil
+		package.loaded["pi-bridge.shell.fish"] = nil
+		shell.reset()
+	end)
+
+	after_each(function()
+		vim.env.SHELL = orig_shell
+		pi.bridge = orig_bridge
+		pi.descriptor = orig_desc
+		package.loaded["pi-bridge.shell.fish"] = nil
+		shell.reset()
+	end)
+
+	it("exposes M.status as a function", function()
+		assert.are.equals("function", type(shell.status))
+	end)
+
+	it("returns a table with the 6 status fields + correct types (no handle leakage)", function()
+		local st = shell.status()
+		assert.is_true(type(st) == "table")
+		-- shell: string|nil (nil at reset is valid). driver_basename: string (never nil).
+		assert.is_true(type(st.driver_basename) == "string", "driver_basename is a string")
+		assert.is_true(type(st.proc_alive) == "boolean", "proc_alive is boolean")
+		assert.is_true(type(st.inflight) == "boolean", "inflight is boolean")
+		assert.is_true(type(st.failed) == "boolean", "failed is boolean")
+		assert.is_true(type(st.parse_failures) == "number", "parse_failures is a number")
+		-- if shell is present it MUST be a string
+		if st.shell ~= nil then
+			assert.is_true(type(st.shell) == "string", "shell is a string when present")
+		end
+		-- NO raw-state / handle leakage (minimal surface): the accessor returns ONLY plain values
+		assert.is_nil(rawget(st, "proc"), "must NOT expose the proc handle")
+		assert.is_nil(rawget(st, "stdin"), "must NOT expose the stdin handle")
+		assert.is_nil(rawget(st, "stdout"), "must NOT expose the stdout handle")
+		assert.is_nil(rawget(st, "driver"), "must NOT expose the driver module")
+		assert.is_nil(rawget(st, "rx_buf"), "must NOT expose the rx buffer")
+	end)
+
+	it("initial/reset state: proc_alive=false, failed=false, parse_failures=0, shell=nil", function()
+		shell.reset()
+		local st = shell.status()
+		assert.is_nil(st.shell)
+		assert.are.equals("", st.driver_basename)
+		assert.is_false(st.proc_alive)
+		assert.is_false(st.inflight)
+		assert.is_false(st.failed)
+		assert.are.equals(0, st.parse_failures)
+	end)
+
+	it("after a successful ensure, proc_alive=true + shell/driver_basename reflect state", function()
+		package.loaded["pi-bridge.shell.fish"] = make_fake_driver_status()
+		pi.bridge = fake_bridge_status("/usr/bin/fish")
+		local got = "UNSET"
+		shell.ensure(function(err) got = err end)
+		assert.is_nil(got)
+		local st = shell.status()
+		assert.is_true(st.proc_alive, "proc is alive after a successful spawn")
+		assert.are.equals("/usr/bin/fish", st.shell)
+		assert.are.equals("fish", st.driver_basename, "driver_basename is the resolved shell's basename")
+		assert.is_false(st.failed)
+	end)
+
+	it("after a no-driver ensure, failed=true (proc_alive stays false)", function()
+		-- resolve to an unsupported shell so pick_driver returns nil → state.failed=true
+		pi.bridge = fake_bridge_status("/bin/dash")
+		local got = "UNSET"
+		shell.ensure(function(err) got = err end)
+		assert.is_truthy(got, "ensure reported a no-driver err")
+		local st = shell.status()
+		assert.is_true(st.failed, "failed=true after a no-driver ensure")
+		assert.is_false(st.proc_alive, "proc_alive stays false on the failed path")
+	end)
+
+	it("driver_basename derives from state.shell basename (zsh path)", function()
+		package.loaded["pi-bridge.shell.zsh"] = make_fake_driver_status()
+		pi.bridge = fake_bridge_status("/opt/homebrew/bin/zsh")
+		local got = "UNSET"
+		shell.ensure(function(err) got = err end)
+		assert.is_nil(got)
+		assert.are.equals("zsh", shell.status().driver_basename)
+		package.loaded["pi-bridge.shell.zsh"] = nil
+	end)
+
+	it("never throws (a plain table-field read)", function()
+		assert.has_no.errors(function() shell.status() end)
+		-- also safe after a reset (state at its initial literal)
+		shell.reset()
+		assert.has_no.errors(function() shell.status() end)
+	end)
+
+	it("returns a FRESH table each call (mutating one result does not affect the next)", function()
+		local a = shell.status()
+		a.shell = "MUTATED"
+		a.failed = true
+		local b = shell.status()
+		assert.is_not_equal(a.shell, b.shell, "results are independent snapshots")
+		assert.is_not_equal(a.failed, b.failed)
+	end)
+end)

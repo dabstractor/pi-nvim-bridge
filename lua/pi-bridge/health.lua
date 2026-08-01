@@ -57,6 +57,12 @@ local M = {}
 --- 0.12.4 is the verified target. Read by the version gate below + asserted by tests.
 M.min_nvim = "0.11"
 
+--- Per-shell driver quality tiers (PRD §17.6). Drivers do NOT export `M.tier` (verified:
+--- fish/zsh/bash expose only `.start`/`.cd`/`.return`). The §17.6 "shell completion" health
+--- section derives the tier from the resolved-shell basename via this map (tier-1 for
+--- fish/zsh — clean/capture-completion; tier-2 for bash — best-effort; else "unknown").
+local SHELL_TIER = { fish = "tier-1", zsh = "tier-1", bash = "tier-2" }
+
 --- The `:checkhealth pi-bridge` report. Run by the loader as
 --- `require("pi-bridge.health").check()` (VERIFIED runtime/lua/vim/health.lua:152).
 --- Never throws — every probe is pcall-wrapped (the loader pcall-wraps the WHOLE call at
@@ -206,6 +212,150 @@ function M.check()
     )
   elseif server_fd == false and fd then
     health.info("`fd` is on your $PATH but the bridge reports it unavailable — `@file` completion may be limited.")
+  end
+
+  -- ===== Section 5: pi-bridge shell completion =====
+  -- Read-only diagnostics for the §17 shell-completion subsystem (PRD §17.4 resolution /
+  -- §17.6 driver tiers / §17.12 failure flags / §17.15 health surface). NEVER spawns a live
+  -- daemon: `vim.uv.spawn` is ASYNC — its cb fires AFTER `check()` returns → an incomplete
+  -- report or a hang on a dead server (the SAME reason sections 2-3 never issue a live
+  -- `ping`). This section reads ONLY state `shell.lua`/`init.lua`/`bridge.lua` already compute
+  -- (table reads + the PURE `resolve_shell`/`pick_driver` helpers + `notify.did_notify`).
+  -- PRD §17.15's "live-spawns each available shell driver for a 1-shot smoke" is ASPIRATIONAL
+  -- + OUT OF SCOPE for v1 (it conflicts with the sync `check()` invariant); the in-variant
+  -- behavior is state-only reporting. Dormant (no `PI_NVIM_BRIDGE`) is the EXPECTED state
+  -- outside a pi session → `info`, NEVER `error`/`warn` (mirrors sections 2-3).
+  do
+    health.start("pi-bridge shell completion")
+
+    -- Dormant gate (mirrors sections 2-3): if the bridge env var is unset AND no descriptor
+    -- was parsed, the shell subsystem is dormant — emit info + skip the daemon probes.
+    local raw_env = vim.env[env_name]
+    local s_desc = (pi and pi.descriptor) or nil
+    if raw_env == nil and s_desc == nil then
+      health.info(
+        "shell completion is dormant (no pi editor session — `!`/`!!` completion only runs inside a pi-launched editor)."
+      )
+    else
+      -- Lazy-load the shell + notify modules INSIDE check() (call-time, pcall-wrapped so a
+      -- broken/missing module degrades to a graceful skip — never throws).
+      local shell_mod = nil ---@type table|nil
+      pcall(function() shell_mod = require("pi-bridge.shell") end)
+      local notify_mod = nil ---@type table|nil
+      pcall(function() notify_mod = require("pi-bridge.notify") end)
+      -- Effective config (S1 COMPLETE — config.shell is populated; defensive AND-chain so a
+      -- nil config does NOT throw).
+      local cfg = (pi and pi.config and pi.config.shell) or {}
+      local prefer = cfg.prefer or "pi"
+
+      -- Resolved shell + source (PURE resolve_shell — never mutates state; safe in check();
+      -- shows the WOULD-BE resolution even pre-spawn, unlike state.shell which is nil until
+      -- the first ensure()).
+      local resolved, source = nil, nil
+      if shell_mod and type(shell_mod.resolve_shell) == "function" then
+        pcall(function() resolved, source = shell_mod.resolve_shell(prefer) end)
+      end
+      if resolved then
+        health.info(
+          ("resolved shell: %s (source: %s, prefer: %s)"):format(tostring(resolved), tostring(source), tostring(prefer))
+        )
+        -- tier from the basename via the module-local SHELL_TIER map (§17.6).
+        local base = tostring(resolved):gsub(".*/", "")
+        local tier = SHELL_TIER[base] or "unknown"
+        health.info(("driver: %s (%s)"):format(base, tier))
+      else
+        health.warn("could not resolve a shell (resolve_shell returned nil — check config.shell.prefer).")
+      end
+
+      -- Driver picked? (PURE pick_driver — returns nil for unknown shells OR user-disabled
+      -- drivers; §17.4.2). Distinguish the two cases for actionable advice.
+      if shell_mod and type(shell_mod.pick_driver) == "function" and resolved then
+        local drv_ok, has_driver = pcall(function() return shell_mod.pick_driver(resolved) ~= nil end)
+        if drv_ok and not has_driver then
+          local base = tostring(resolved):gsub(".*/", "")
+          local disabled = type(cfg.drivers) == "table" and cfg.drivers[base] == false
+          if disabled then
+            health.warn(("driver for %s is disabled in config (shell.drivers.%s = false) — no completion for this shell."):format(
+              base, base
+            ))
+          else
+            health.warn(("no driver for %s (unsupported shell — only fish/zsh/bash are supported; degrades to no completion)."):format(
+              base
+            ))
+          end
+        end
+      end
+
+      -- Daemon health via M.status() (read-only snapshot; never spawns). Branch on failed
+      -- (§17.12 permanent disable) → warn+advice; proc_alive → ok; else → info (lazy).
+      local st = nil ---@type table|nil
+      if shell_mod and type(shell_mod.status) == "function" then
+        pcall(function() st = shell_mod.status() end)
+      end
+      if type(st) == "table" then
+        if st.failed then
+          health.warn("daemon failed — shell completion is disabled for `!`/`!!` lines this session.", {
+            "Run `:messages` for the degrade notice (category `shell-degrade`).",
+            "See `:help pi-bridge-shell` (P2.M3.T6.S4) for resolution / config.",
+          })
+          if type(st.parse_failures) == "number" and st.parse_failures > 0 then
+            health.info(
+              ("consecutive parse failures: %d (threshold %d)"):format(st.parse_failures, cfg.max_parse_failures or 5)
+            )
+          end
+        elseif st.proc_alive then
+          health.ok(("daemon ready (%s)"):format(st.driver_basename ~= "" and st.driver_basename or "?"))
+        else
+          health.info(
+            "daemon not spawned yet (lazy — starts on the first `!`/`!!`; or enable shell.warm_on_enter)."
+          )
+        end
+        if st.inflight then
+          health.info("a completion request is in flight (daemon busy).")
+        end
+      end
+
+      -- Last notice (sync surrogate for "last error" — notify.did_notify is a table read;
+      -- the actual last-error string is NOT stored, the category conveys it).
+      if notify_mod and type(notify_mod.did_notify) == "function" then
+        for _, cat in ipairs({ "shell-degrade", "shell-mismatch", "shell-active" }) do
+          local fired = false
+          pcall(function() fired = notify_mod.did_notify(cat) == true end)
+          if fired then
+            health.info(
+              ("a `%s` notice fired earlier this session (run `:messages` to see it)."):format(cat)
+            )
+          end
+        end
+      end
+
+      -- Effective config (S1 COMPLETE — config.shell is populated). Report enabled=false as
+      -- a warn (the master switch is OFF). Otherwise report the effective knobs.
+      if cfg.enabled == false then
+        health.warn("shell completion is disabled in config (shell.enabled = false).")
+      else
+        health.info(("config: enabled=%s, prefer=%s, warm_on_enter=%s"):format(
+          tostring(cfg.enabled ~= false), tostring(prefer), tostring(cfg.warm_on_enter)
+        ))
+      end
+
+      -- Cross-check the descriptor's advertised shell vs the resolved one (advisory). A
+      -- mismatch (e.g. resolve picked /bin/bash via $SHELL but the descriptor advertises
+      -- /bin/zsh) is the §17.4.3 footgun — surface it.
+      local advertised = nil
+      pcall(function()
+        local br = require("pi-bridge.bridge")
+        if type(br) == "table" and type(br.get_shell_info) == "function" then
+          local si = br.get_shell_info()
+          advertised = (si and si.shell) or (s_desc and s_desc.shell) or nil
+        end
+      end)
+      if advertised and resolved and advertised ~= resolved then
+        health.info(("note: descriptor advertises shell %q but resolve_shell picked %q (prefer=%s)."):format(
+          tostring(advertised), tostring(resolved), tostring(prefer)
+        ))
+      end
+    end
   end
 end
 

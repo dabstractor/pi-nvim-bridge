@@ -286,6 +286,31 @@ function M.get_shell()
 	return state.shell
 end
 
+--- Read-only snapshot of the shell-daemon state for `:checkhealth pi-bridge` (PRD §17.15).
+--- Returns a FRESH table of plain values — NEVER the raw `state` table or its luv handles
+--- (`proc`/`stdin`/`stdout`) — preserving the minimal-surface design of `M.get_shell()`
+--- (L283-285). Pure table-field reads; never throws; safe to call when `state` is at its
+--- initial literal (proc=nil, parse_failures=0, etc.). `:checkhealth` reads this INSTEAD of
+--- spawning a live daemon — the §17 sync/never-block invariant (PRD §17.15's "live-spawns
+--- each available shell driver for a 1-shot smoke" is ASPIRATIONAL + OUT OF SCOPE for v1:
+--- `vim.uv.spawn` is async, its cb fires AFTER `check()` returns → incomplete report / hang;
+--- the same reason the existing health sections never issue a live `ping`).
+---@return { shell: string?, driver_basename: string, proc_alive: boolean, inflight: boolean, failed: boolean, parse_failures: integer }
+function M.status()
+	-- driver_basename: the resolved shell's basename ("" when unresolved — NOT the
+	-- basename() "?" sentinel, which is for display; a health report reads cleaner as "").
+	local base = ""
+	if type(state.shell) == "string" and state.shell ~= "" then base = basename(state.shell) end
+	return {
+		shell = state.shell,
+		driver_basename = base,
+		proc_alive = state.proc ~= nil,
+		inflight = state.inflight,
+		failed = state.failed,
+		parse_failures = state.parse_failures,
+	}
+end
+
 -- ===========================================================================
 
 --- Restore `state` to its initial literal (mirrors completion.lua's M.reset). The

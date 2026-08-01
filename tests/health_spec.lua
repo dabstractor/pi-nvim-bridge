@@ -40,6 +40,11 @@ local function any_ok_substr(s)
   return has("ok", function(msg) return tostring(msg):find(s, 1, true) ~= nil end)
 end
 
+--- True if ANY `warn` msg contains `s` (substring).
+local function any_warn_substr(s)
+  return has("warn", function(msg) return tostring(msg):find(s, 1, true) ~= nil end)
+end
+
 --- Count captured calls of `method`.
 local function count(method)
   local n = 0
@@ -329,5 +334,271 @@ describe("pi-bridge.health (S42)", function()
     local w = find("warn", function(msg) return tostring(msg):find("not connected", 1, true) ~= nil end)
     assert.is_not_nil(w, "a warn says 'not connected'")
     assert.is_false(any_error(), "not-connected must NOT be an error")
+  end)
+end)
+
+-- ===========================================================================
+-- S2 (P2.M3.T6.S2): the "pi-bridge shell completion" 5th health section.
+-- Stubs the shell module (status/resolve_shell/pick_driver) + notify.did_notify +
+-- config.shell via package.loaded swap, then asserts the section renders the right
+-- lines across dormant / active-not-spawned / proc_alive / failed / no-driver /
+-- disabled-driver / config-disabled / did-notice / never-throws / never-spawns cases.
+-- ===========================================================================
+describe("pi-bridge.health shell section (S2)", function()
+  local saved_shell, saved_notify, saved_ensure_spy
+  local fake_shell, ensure_spy
+
+  -- Build a fresh fake shell module each test. `overrides` may set status/resolve_shell/
+  -- pick_driver/ensure. `ensure` is spied so the never-spawns assertion can observe it.
+  local function mount_shell(overrides)
+    overrides = overrides or {}
+    ensure_spy = { called = 0 }
+    fake_shell = {
+      resolve_shell = overrides.resolve_shell or function(_prefer) return "/bin/zsh", "$SHELL" end,
+      pick_driver = overrides.pick_driver or function(_r) return { start = function() end } end,
+      status = overrides.status or function()
+        return { shell = nil, driver_basename = "", proc_alive = false, inflight = false, failed = false, parse_failures = 0 }
+      end,
+      ensure = function(_cb) ensure_spy.called = ensure_spy.called + 1 end, -- the NEVER-spawn spy
+    }
+    saved_shell = package.loaded["pi-bridge.shell"]
+    package.loaded["pi-bridge.shell"] = fake_shell
+  end
+
+  -- Mount a fake notify module whose did_notify returns the given per-category map.
+  local function mount_notify(did)
+    did = did or {}
+    local fake_notify = {
+      did_notify = function(cat) return did[cat] == true end,
+      once = function() end,
+    }
+    saved_notify = package.loaded["pi-bridge.notify"]
+    package.loaded["pi-bridge.notify"] = fake_notify
+  end
+
+  before_each(function()
+    captured = {}
+    saved = {}
+    local function stub(method)
+      return function(msg, advice)
+        captured[#captured + 1] = { method = method, msg = msg, advice = advice }
+      end
+    end
+    saved.vim_health = vim.health
+    vim.health = {
+      start = stub("start"), ok = stub("ok"), warn = stub("warn"), error = stub("error"), info = stub("info"),
+    }
+    -- default to an ACTIVE session (env var set) — individual cases may nil it for dormant.
+    saved.env = vim.env.PI_NVIM_BRIDGE
+    vim.env.PI_NVIM_BRIDGE =
+      '{"transport":"unix","path":"/tmp/x.sock","token":"t","pid":1,"cwd":"/tmp","fdAvailable":false,"serverVersion":"0.1.0"}'
+    saved.fn_executable = vim.fn.executable
+    saved.fn_has = vim.fn.has
+    saved.fn_exepath = vim.fn.exepath
+    vim.fn.executable = function(_n) return 0 end
+    vim.fn.exepath = function(_n) return "" end
+    vim.fn.has = function(feature)
+      if feature == "nvim-" .. health.min_nvim then return 1 end
+      return 0
+    end
+    -- a populated config.shell so the effective-config line is deterministic.
+    local pi = require("pi-bridge")
+    saved.pi_config = pi.config
+    pi.config = {
+      shell = {
+        enabled = true, prefer = "pi", warm_on_enter = false, max_parse_failures = 5,
+        drivers = { fish = true, zsh = true, bash = true },
+      },
+    }
+    saved.pi_descriptor = pi.descriptor
+    pi.descriptor = nil
+    local bridge = require("pi-bridge.bridge")
+    saved.bridge_version = bridge.version
+    saved.bridge_is_connected = bridge.is_connected
+    saved.bridge_server_info = bridge.server_info
+    bridge.is_connected = function() return false end
+    bridge.server_info = nil
+  end)
+
+  after_each(function()
+    vim.health = saved.vim_health
+    vim.env.PI_NVIM_BRIDGE = saved.env
+    vim.fn.executable = saved.fn_executable
+    vim.fn.has = saved.fn_has
+    vim.fn.exepath = saved.fn_exepath
+    local pi = require("pi-bridge")
+    pi.config = saved.pi_config
+    pi.descriptor = saved.pi_descriptor
+    local bridge = require("pi-bridge.bridge")
+    bridge.version = saved.bridge_version
+    bridge.is_connected = saved.bridge_is_connected
+    bridge.server_info = saved.bridge_server_info
+    -- restore the real shell/notify modules
+    package.loaded["pi-bridge.shell"] = saved_shell
+    package.loaded["pi-bridge.notify"] = saved_notify
+  end)
+
+  -- (a) surface: the 5th section start()s (in BOTH dormant and active sessions)
+  it("renders the 'pi-bridge shell completion' section in an active session", function()
+    mount_shell()
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok, "check() must not throw")
+    assert.is_true(
+      has("start", function(msg) return tostring(msg):find("shell completion", 1, true) ~= nil end),
+      "start('pi-bridge shell completion') captured"
+    )
+    -- a resolved shell + source line is present
+    assert.is_true(any_info_substr("resolved shell"), "info names the resolved shell")
+    assert.is_false(any_error(), "active-not-spawned must emit ZERO errors")
+  end)
+
+  -- (b) dormant session: section renders info 'dormant' + skips daemon probes + NO spawn
+  it("dormant session emits info 'dormant' + skips shell.status/ensure", function()
+    vim.env.PI_NVIM_BRIDGE = nil
+    mount_shell()
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    assert.is_true(any_info_substr("shell completion is dormant"), "dormant info line")
+    assert.is_false(any_error(), "dormant must NOT be an error")
+    assert.is_false(any_warn_substr("shell"), "dormant must NOT emit a shell warn")
+    -- the dormant gate returns BEFORE daemon probes → ensure() (the spawn path) was NOT called
+    assert.are.equals(0, ensure_spy.called, "dormant gate must NOT call shell.ensure")
+  end)
+
+  -- (c) active + not spawned + not failed: info 'not spawned' + resolved shell/driver, no error
+  it("active + daemon-not-spawned emits info 'not spawned' + resolved shell + driver", function()
+    mount_shell({
+      resolve_shell = function(_p) return "/bin/zsh", "$SHELL" end,
+      pick_driver = function(_r) return { start = function() end } end,
+      status = function()
+        return { shell = nil, driver_basename = "", proc_alive = false, inflight = false, failed = false, parse_failures = 0 }
+      end,
+    })
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    assert.is_true(any_info_substr("not spawned"), "info says daemon not spawned (lazy)")
+    assert.is_true(any_info_substr("resolved shell"), "info names the resolved shell")
+    assert.is_true(any_info_substr("/bin/zsh"), "info names the zsh path")
+    assert.is_true(any_info_substr("driver: zsh"), "info names the driver + basename")
+    assert.is_true(any_info_substr("tier-1"), "info names the tier")
+    assert.is_false(any_error(), "not-spawned must NOT be an error")
+  end)
+
+  -- (d) active + proc_alive: ok 'daemon ready'
+  it("active + proc_alive emits ok 'daemon ready' with the basename", function()
+    mount_shell({
+      status = function()
+        return { shell = "/bin/bash", driver_basename = "bash", proc_alive = true, inflight = false, failed = false, parse_failures = 0 }
+      end,
+    })
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    assert.is_true(any_ok_substr("daemon ready"), "ok says daemon ready")
+    assert.is_true(any_ok_substr("bash"), "ok names the driver basename")
+  end)
+
+  -- (e) active + failed: warn 'daemon failed' with TABLE advice + parse_failures info
+  it("active + failed emits warn 'daemon failed' with string[] advice + parse_failures info", function()
+    mount_shell({
+      status = function()
+        return { shell = "/bin/zsh", driver_basename = "zsh", proc_alive = false, inflight = false, failed = true, parse_failures = 7 }
+      end,
+    })
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    local w = find("warn", function(msg) return tostring(msg):find("daemon failed", 1, true) ~= nil end)
+    assert.is_not_nil(w, "warn says daemon failed")
+    assert.is_true(type(w.advice) == "table", "advice is a string[] table")
+    local advice = table.concat(w.advice, " ")
+    assert.is_true(advice:find(":messages", 1, true) ~= nil, "advice points at :messages")
+    assert.is_true(advice:find("pi-bridge-shell", 1, true) ~= nil, "advice points at :help pi-bridge-shell")
+    assert.is_true(any_info_substr("parse failures"), "info reports the parse_failures count")
+    assert.is_true(any_info_substr("7"), "info names the count 7")
+  end)
+
+  -- (f) notify.did_notify('shell-degrade') → info mentioning the degrade notice
+  it("surfaces a prior shell-degrade notice via an info line", function()
+    mount_shell()
+    mount_notify({ ["shell-degrade"] = true })
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    assert.is_true(any_info_substr("shell-degrade"), "info mentions the degrade notice")
+    assert.is_true(any_info_substr(":messages"), "info points at :messages")
+  end)
+
+  -- (g) config.shell.enabled == false → warn 'disabled in config'
+  it("config.enabled=false emits a warn 'disabled in config'", function()
+    local pi = require("pi-bridge")
+    pi.config.shell.enabled = false
+    mount_shell()
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    assert.is_true(any_warn_substr("disabled in config"), "warn says shell completion is disabled in config")
+  end)
+
+  -- (h) no driver for the resolved shell (e.g. /bin/dash) → warn 'no driver'
+  it("resolved shell with no driver (dash) emits a warn 'no driver'", function()
+    mount_shell({
+      resolve_shell = function(_p) return "/bin/dash", "default" end,
+      pick_driver = function(_r) return nil end, -- dash unsupported
+    })
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    local w = find("warn", function(msg) return tostring(msg):find("no driver", 1, true) ~= nil end)
+    assert.is_not_nil(w, "warn says no driver")
+    assert.is_true(tostring(w.msg):find("dash", 1, true) ~= nil, "warn names dash")
+  end)
+
+  -- (i) user-disabled driver → warn mentioning the disabled driver
+  it("user-disabled driver emits a warn naming config.drivers.<base> = false", function()
+    local pi = require("pi-bridge")
+    pi.config.shell.drivers.zsh = false
+    mount_shell({
+      resolve_shell = function(_p) return "/bin/zsh", "$SHELL" end,
+      pick_driver = function(_r) return nil end, -- disabled → nil (mirrors shell.pick_driver)
+    })
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok)
+    assert.is_true(any_warn_substr("disabled in config"), "warn says driver is disabled in config")
+    assert.is_true(any_warn_substr("drivers.zsh"), "warn names the disabled driver key")
+  end)
+
+  -- (j) never-throws: a throwing shell.status does NOT escape check()
+  it("never throws when shell.status throws", function()
+    mount_shell({
+      status = function() error("boom") end,
+      resolve_shell = function(_p) return "/bin/zsh", "$SHELL" end,
+    })
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok, "check() must not throw when shell.status throws")
+    -- the OTHER sections still rendered (4 + the shell section start)
+    assert.is_true(count("start") >= 5, "all sections still started")
+  end)
+
+  -- (k) never-throws: a throwing resolve_shell does NOT escape check()
+  it("never throws when shell.resolve_shell throws", function()
+    mount_shell({ resolve_shell = function(_p) error("boom") end })
+    mount_notify()
+    local ok = pcall(health.check)
+    assert.is_true(ok, "check() must not throw when resolve_shell throws")
+    -- resolve_shell threw → the 'could not resolve a shell' warn path fires (never error)
+    assert.is_false(any_error(), "a resolve throw must NOT become an error")
+  end)
+
+  -- (l) never-spawns: shell.ensure is NEVER called during check()
+  it("never calls shell.ensure during check() (the never-spawn invariant)", function()
+    mount_shell()
+    mount_notify()
+    pcall(health.check)
+    assert.are.equals(0, ensure_spy.called, "check() must NEVER call shell.ensure (no live spawn)")
   end)
 end)
