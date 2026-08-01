@@ -392,22 +392,28 @@ function M.ensure(on_ready)
 	--     ensure (health §17.15 reports it).
 	local resolved = M.resolve_shell(cfg.prefer or "pi")
 	state.shell = resolved
-	-- §17.4.3 one-time mismatch notice: prefer:"pi" resolved bash while $SHELL is a richer
-	-- zsh/fish on PATH. PURE condition (M.mismatch_target) + the PATH check
-	-- (vim.fn.executable, pcall'd). notify.once dedups to once-per-session. Fires here ONLY
-	-- on the first spawn (steps 4-8 run once per session — subsequent ensures hit the proc cache).
-	pcall(function()
-		local richer = M.mismatch_target(resolved, vim.env.SHELL)
-		if richer then
-			local ok, ex = pcall(vim.fn.executable, richer)
-			if ok and ex == 1 then
-				require("pi-bridge.notify").once("shell-mismatch", vim.log.levels.WARN,
-					"pi-bridge: pi runs commands in bash; using bash completion to match. For your native "
-					.. richer .. " completions, set pi's shellPath to " .. (vim.env.SHELL or richer)
-					.. " (then completion and execution both use it). :help pi-bridge-shell")
+	-- §17.4.3 one-time mismatch notice: fires ONLY under prefer=="pi" (the §17.4.3 scope —
+	-- explicit prefer="bash"/"/abs/path" deliberately chose bash, so advising "set shellPath
+	-- to your native zsh" would be misleading AND is inert under prefer="bash", which forces
+	-- bash regardless of shellPath). Under prefer=="pi" (or nil/default): resolved bash while
+	-- $SHELL is a richer zsh/fish on PATH. PURE condition (M.mismatch_target, prefer-free) +
+	-- the PATH check (vim.fn.executable, pcall'd). notify.once dedups to once-per-session.
+	-- The shell-active + shell-degrade notices are OUTSIDE this gate (they always run).
+	-- Fires only on the first spawn (steps 4-8 run once per session — proc cache thereafter).
+	if (cfg.prefer or "pi") == "pi" then
+		pcall(function()
+			local richer = M.mismatch_target(resolved, vim.env.SHELL)
+			if richer then
+				local ok, ex = pcall(vim.fn.executable, richer)
+				if ok and ex == 1 then
+					require("pi-bridge.notify").once("shell-mismatch", vim.log.levels.WARN,
+						"pi-bridge: pi runs commands in bash; using bash completion to match. For your native "
+						.. richer .. " completions, set pi's shellPath to " .. (vim.env.SHELL or richer)
+						.. " (then completion and execution both use it). :help pi-bridge-shell")
+				end
 			end
-		end
-	end)
+		end)
+	end
 	-- (5) Pick the driver (§17.4.2). No driver → permanent degrade (§17.6.4): set failed so
 	--     the next ensure short-circuits (do NOT retry resolve→pick per keystroke).
 	state.driver = M.pick_driver(resolved)

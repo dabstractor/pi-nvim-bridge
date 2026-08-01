@@ -184,6 +184,49 @@ describe("pi-bridge.shell notices (P2.M2.T3.S4)", function()
 		assert.are.equals("pi-bridge", found.opts.title)
 	end)
 
+	-- (2c) ISSUE-1: prefer="bash" + resolved=/bin/bash + $SHELL=/bin/zsh → NO mismatch
+	it("ISSUE-1: prefer='bash' does NOT fire the mismatch notice (user chose bash)", function()
+		pi.config.shell = { prefer = "bash" }
+		inject_for("/bin/bash")           -- REQUIRED: pick_driver("/bin/bash") looks up .shell.bash
+		pi.bridge = fake_bridge("/bin/bash")
+		vim.env.SHELL = "/bin/zsh"
+		local restore_exec = stub_executable({ "zsh" })
+		shell.ensure(function() end)
+		assert.is_false(wait_notify("shell-mismatch"), "mismatch MUST NOT fire under prefer='bash'")
+		assert.is_false(notify.did_notify("shell-mismatch"))
+		-- SCOPE guard: the gate suppresses ONLY the mismatch notice — active still fires
+		assert.is_true(notify.did_notify("shell-active"), "shell-active still fires (gate is scoped)")
+		assert.is_false(notify.did_notify("shell-degrade"), "no degrade (healthy bash spawn)")
+		restore_exec()
+	end)
+
+	-- (2d) ISSUE-1: prefer="/bin/bash" (explicit path) + $SHELL=/bin/zsh → NO mismatch
+	it("ISSUE-1: prefer='/bin/bash' (explicit path) does NOT fire the mismatch notice", function()
+		pi.config.shell = { prefer = "/bin/bash" }
+		inject_for("/bin/bash")
+		pi.bridge = fake_bridge("/bin/bash")
+		vim.env.SHELL = "/bin/zsh"
+		local restore_exec = stub_executable({ "zsh" })
+		shell.ensure(function() end)
+		assert.is_false(wait_notify("shell-mismatch"), "mismatch MUST NOT fire under explicit prefer='/bin/bash'")
+		assert.is_false(notify.did_notify("shell-mismatch"))
+		assert.is_true(notify.did_notify("shell-active"), "scope guard: active still fires")
+		restore_exec()
+	end)
+
+	-- (2e) ISSUE-1 REGRESSION: prefer="pi" (explicit) + descriptor bash + $SHELL=/bin/zsh → STILL fires
+	it("ISSUE-1 regression: prefer='pi' (explicit) STILL fires the mismatch notice", function()
+		pi.config.shell = { prefer = "pi" }
+		inject_for("/bin/bash")
+		pi.bridge = fake_bridge("/bin/bash")
+		vim.env.SHELL = "/bin/zsh"
+		local restore_exec = stub_executable({ "zsh" })
+		shell.ensure(function() end)
+		assert.is_true(wait_notify("shell-mismatch"), "mismatch MUST fire under prefer='pi' (regression)")
+		assert.is_true(notify.did_notify("shell-mismatch"))
+		restore_exec()
+	end)
+
 	-- (3) MISMATCH no-PATH: zsh NOT on PATH (executable returns 0) → no mismatch
 	it("mismatch does NOT fire when the richer shell is absent from PATH", function()
 		inject_for("/bin/bash")
