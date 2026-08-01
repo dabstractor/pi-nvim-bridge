@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Shell Resolution & Notice Correctness",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Fix the shell-resolution / mismatch-notice / health-reporting cluster (Issues 1, 2, 5). These are tightly coupled: Issue 5 (expose accurate descriptor shellSource) is the foundation that Issue 2 (detect prefer:\"pi\" consistency footgun) depends on for the source==\"$SHELL\" signal. Issue 1 (gate notice on prefer==\"pi\") is independent but touches the same ensure() notice block.",
           "tasks": [
             {
@@ -64,14 +64,14 @@
               "type": "Task",
               "id": "P1.M1.T3",
               "title": "Detect & document prefer=\"pi\" consistency footgun (Issue 2)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "For the most common configuration (prefer=\"pi\" default, $SHELL=zsh/fish, PI_NVIM_SHELL unset), the descriptor advertises shell=zsh (from $SHELL fallback) but pi actually executes !/!! in bash. The plugin completes with zsh — inconsistent with bash execution. The §17.4.3 safety-net notice never fires (it checks resolved==bash, but resolved is zsh). Add a NEW detection condition in ensure() that fires when prefer==\"pi\" && source==\"$SHELL\" && $SHELL∈{zsh,fish}, and document the default-case behavior in doc/pi-bridge-shell.txt. Constrained by §17.10.2 (extension cannot read pi's shellPath) — this is a detection+documentation mitigation, not a correctness fix.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T3.S1",
                   "title": "Add prefer:\"pi\" consistency footgun detection + notice in ensure() and document the default-case behavior",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"

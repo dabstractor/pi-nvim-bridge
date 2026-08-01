@@ -388,9 +388,10 @@ function M.ensure(on_ready)
 	--     (throws if config nil) — use the AND-chain.
 	local pi = require("pi-bridge")
 	local cfg = (pi.config and pi.config.shell) or {}
-	-- (4) Resolve ONE shell (§17.4; consistent with what pi EXECUTES). source is unused by
-	--     ensure (health §17.15 reports it).
-	local resolved = M.resolve_shell(cfg.prefer or "pi")
+	-- (4) Resolve ONE shell (§17.4; consistent with what pi EXECUTES). `source` (2nd return,
+	--     accurate since Issue 5 / T1.S1) feeds the §17 default-case consistency-footgun
+	--     detection in step 4b (health §17.15 ALSO reports it).
+	local resolved, source = M.resolve_shell(cfg.prefer or "pi")
 	state.shell = resolved
 	-- §17.4.3 one-time mismatch notice: fires ONLY under prefer=="pi" (the §17.4.3 scope —
 	-- explicit prefer="bash"/"/abs/path" deliberately chose bash, so advising "set shellPath
@@ -413,6 +414,30 @@ function M.ensure(on_ready)
 				end
 			end
 		end)
+	end
+	-- §17 default-case consistency footgun (Issue 2): under prefer=="pi", when the descriptor
+	-- fell back to $SHELL (source=="$SHELL" — the extension could not read pi's shellPath per
+	-- §17.10.2, so $SHELL is the best available signal) AND $SHELL is zsh/fish, the COMPLETION
+	-- shell (zsh/fish) may NOT match pi's EXECUTION shell (bash). This is the ONE default config
+	-- where prefer=="pi" is not yet the correctness-preserving default it is meant to be. The
+	-- §17.4.3 "shell-mismatch" notice above CANNOT catch it (that needs resolved==bash; here
+	-- resolved==zsh/fish). notify.once with a DISTINCT "shell-consistency" category so the dedup
+	-- set does NOT conflate the two. pcall'd + PATH-checked (mirrors the mismatch block). First
+	-- spawn only (steps 4-8 run once per session — proc cache thereafter).
+	if (cfg.prefer or "pi") == "pi" and source == "$SHELL" then
+		local env_base = basename(vim.env.SHELL or "")
+		if env_base == "zsh" or env_base == "fish" then
+			pcall(function()
+				local ok, ex = pcall(vim.fn.executable, env_base)
+				if ok and ex == 1 then
+					require("pi-bridge.notify").once("shell-consistency", vim.log.levels.WARN,
+						"pi-bridge: completions use " .. env_base
+						.. " (from $SHELL) but pi may execute commands in bash. "
+						.. "For guaranteed consistency set PI_NVIM_SHELL=" .. (vim.env.SHELL or env_base)
+						.. " (or pi's shellPath). :help pi-bridge-shell")
+				end
+			end)
+		end
 	end
 	-- (5) Pick the driver (§17.4.2). No driver → permanent degrade (§17.6.4): set failed so
 	--     the next ensure short-circuits (do NOT retry resolve→pick per keystroke).

@@ -23,11 +23,11 @@ if pi.config == nil then pi.setup({}) end -- self-sufficient (mirror completion_
 
 -- --- a fake bridge exposing the surface point ensure/resolve read FRESH:
 -- get_shell_info() (controls the resolved shell).
-local function fake_bridge(shell_path)
+local function fake_bridge(shell_path, shell_source)
 	return {
 		get_shell_info = function()
 			if shell_path == nil then return nil end
-			return { shell = shell_path }
+			return { shell = shell_path, shellSource = shell_source }
 		end,
 		server_info = {},
 	}
@@ -224,6 +224,76 @@ describe("pi-bridge.shell notices (P2.M2.T3.S4)", function()
 		shell.ensure(function() end)
 		assert.is_true(wait_notify("shell-mismatch"), "mismatch MUST fire under prefer='pi' (regression)")
 		assert.is_true(notify.did_notify("shell-mismatch"))
+		restore_exec()
+	end)
+
+	-- (2f) ISSUE-2: prefer="pi" + descriptor fell back to $SHELL (zsh) → shell-consistency fires
+	it("ISSUE-2: prefer='pi' + $SHELL fallback (source='$SHELL') fires shell-consistency notice", function()
+		local calls = {}
+		local orig_vnotify = vim.notify
+		vim.notify = function(msg, level, opts)
+			calls[#calls + 1] = { msg = msg, level = level, opts = opts }
+		end
+		pi.config.shell = { prefer = "pi" }
+		inject_for("/bin/zsh")                          -- pick_driver("/bin/zsh") needs .shell.zsh
+		pi.bridge = fake_bridge("/bin/zsh", "$SHELL")   -- descriptor fell back to $SHELL
+		vim.env.SHELL = "/bin/zsh"
+		local restore_exec = stub_executable({ "zsh" })
+		shell.ensure(function() end)
+		-- flush the scheduled consistency toast
+		vim.wait(200, function()
+			for _, c in ipairs(calls) do
+				if c.msg and c.msg:find("completions use zsh") then return true end
+			end
+			return false
+		end, 5)
+		vim.notify = orig_vnotify
+		restore_exec()
+		assert.is_true(notify.did_notify("shell-consistency"), "shell-consistency fired (the footgun)")
+		-- distinct from mismatch: resolved is zsh (not bash) → mismatch structurally false
+		assert.is_false(notify.did_notify("shell-mismatch"), "mismatch is a DIFFERENT condition (resolved!=bash)")
+		-- healthy zsh spawn → active fires, no degrade
+		assert.is_true(notify.did_notify("shell-active"), "scope guard: active still fires")
+		assert.is_false(notify.did_notify("shell-degrade"), "no degrade (healthy spawn)")
+		-- message content (the opt-in fix + the warning)
+		local found
+		for _, c in ipairs(calls) do
+			if c.msg and c.msg:find("completions use zsh") then found = c; break end
+		end
+		assert.is_truthy(found, "consistency toast fired")
+		assert.is_truthy(found.msg:find("zsh"), "message names the completion shell")
+		assert.is_truthy(found.msg:find("bash"), "message warns pi may execute in bash")
+		assert.is_truthy(found.msg:find("PI_NVIM_SHELL=/bin/zsh"), "message gives the PI_NVIM_SHELL=<SHELL> fix")
+		assert.are.equals(vim.log.levels.WARN, found.level)
+		assert.are.equals("pi-bridge", found.opts.title)
+	end)
+
+	-- (2g) ISSUE-2 no false positive: prefer="pi" + real pi source (source="pi", PI_NVIM_SHELL set)
+	it("ISSUE-2: prefer='pi' + real pi source (source='pi') does NOT fire shell-consistency", function()
+		pi.config.shell = { prefer = "pi" }
+		inject_for("/bin/zsh")
+		pi.bridge = fake_bridge("/bin/zsh", "pi")        -- user set PI_NVIM_SHELL=/bin/zsh
+		vim.env.SHELL = "/bin/zsh"
+		local restore_exec = stub_executable({ "zsh" })
+		shell.ensure(function() end)
+		assert.is_false(wait_notify("shell-consistency"), "no false positive (source='pi' → consistent)")
+		assert.is_false(notify.did_notify("shell-consistency"))
+		assert.is_true(notify.did_notify("shell-active"), "scope guard: active still fires")
+		assert.is_false(notify.did_notify("shell-degrade"))
+		restore_exec()
+	end)
+
+	-- (2h) ISSUE-2 no false positive: prefer="shell" + source="$SHELL" (user explicitly chose $SHELL)
+	it("ISSUE-2: prefer='shell' + source='$SHELL' does NOT fire shell-consistency (user chose $SHELL)", function()
+		pi.config.shell = { prefer = "shell" }
+		inject_for("/bin/zsh")
+		pi.bridge = fake_bridge("/bin/zsh")              -- irrelevant: prefer="shell" bypasses descriptor
+		vim.env.SHELL = "/bin/zsh"
+		local restore_exec = stub_executable({ "zsh" })
+		shell.ensure(function() end)
+		assert.is_false(wait_notify("shell-consistency"), "no notice (the prefer=='pi' gate excludes prefer='shell')")
+		assert.is_false(notify.did_notify("shell-consistency"))
+		assert.is_true(notify.did_notify("shell-active"), "scope guard: active still fires")
 		restore_exec()
 	end)
 

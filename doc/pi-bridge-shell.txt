@@ -86,6 +86,35 @@ by default this plugin completes using pi's execution shell — bash — which i
 always consistent with execution, but offers fewer completions than a native
 zsh/fish setup.
 
+THE DEFAULT-CASE CONSISTENCY GAP (non-bash $SHELL) ~
+The paragraph above says the plugin completes "using pi's execution shell — bash — which is
+always consistent with execution." That holds ONLY when the bridge can read pi's execution
+shell. It cannot today: there is no public API on the bridge `ExtensionContext` to read pi's
+`shellPath`/`getShellConfig` (PRD §17.10.2). So under the DEFAULT config — `prefer = "pi"`,
+`$SHELL` is zsh or fish, and `PI_NVIM_SHELL` is NOT exported — the bridge falls back to
+advertising `$SHELL` as the completion shell. Completion then uses zsh/fish while pi still
+EXECUTES `!`/`!!` in bash. They MAY NOT be consistent: a zsh-only alias (e.g. `g=git`) can be
+offered as a completion, then fail as `g: command not found` when pi runs the line in bash.
+This is the one configuration where `prefer = "pi"` is not yet the correctness-preserving
+default it is meant to be. The first time the daemon spawns in this configuration the plugin
+emits ONE `vim.notify` (deduplicated per session) warning you and pointing here.
+
+THE OPT-IN FIX: `PI_NVIM_SHELL` ~
+Export `PI_NVIM_SHELL` to tell the bridge which shell pi actually executes `!`/`!!` in. It is
+read by the bridge's shell resolver BEFORE `$SHELL`: >
+
+    export PI_NVIM_SHELL=/bin/zsh     " if pi runs ! in zsh (e.g. shellPath set)
+<
+With `PI_NVIM_SHELL` set to your shell, `prefer = "pi"` resolves to that shell for BOTH
+completion and execution — consistent again. (Equivalently, set pi's own `shellPath`; the two
+are the same fix from different sides.) Reopen the editor after changing either.
+
+NOTE (forward contract) ~
+This gap is fundamental to PRD §17.10.2 and is expected to close upstream: once pi exposes
+`ctx.getShellConfig()` (PRD §17.17), the bridge will advertise pi's REAL execution shell
+automatically and `prefer = "pi"` will be correct by default — with no `PI_NVIM_SHELL` needed.
+Until that API lands, exporting `PI_NVIM_SHELL` is the documented workaround.
+
 THE FIX (pick one) ~
 You can change which shell is resolved. The `shell.prefer` option (see
 |pi-bridge-shell-config|) accepts four values: >
