@@ -90,6 +90,7 @@ end
 ---@field cwd          string?    The session cwd at spawn (set by S3 ensure via session_cwd).
 ---@field pending_cb   fun(items:table?, prefix:string?)? The gen-guarded response cb (set by S4 request()).
 ---@field failed       boolean    True after a permanent spawn failure (S3/§17.12) — ensure() won't retry; health (§17.15) reports it.
+---@field parse_failures integer Consecutive decode-failure count (§17.12; set by S5 _feed). Reset to 0 on a successful decode + by M.reset(). At threshold (default 5) → state.failed=true.
 ---@type pi-bridge.ShellState
 local state = {
 	proc = nil,
@@ -103,6 +104,7 @@ local state = {
 	cwd = nil,
 	pending_cb = nil,
 	failed = false,
+	parse_failures = 0,
 }
 
 -- ===========================================================================
@@ -242,8 +244,9 @@ function M.reset()
 	state.shell      = nil
 	state.driver     = nil
 	state.cwd        = nil
-	state.pending_cb = nil
-	state.failed     = false
+	state.pending_cb   = nil
+	state.failed       = false
+	state.parse_failures = 0
 end
 
 -- ===========================================================================
@@ -339,17 +342,167 @@ function M.ensure(on_ready)
 	end
 end
 
---- Forward-contract stub for S5: append a stdout chunk to the rx buffer. S5 will REPLACE
---- this body with the full `__PIRESP_START__`/`__PIRESP_END__` sentinel slicing +
---- `vim.json.decode` + AutocompleteItem normalization → the gen-guarded
---- `state.pending_cb`. S3 ships append-only so the read_start wiring ensure installs is
---- complete + a stray chunk during S3's window (before S5 lands) degrades to a no-op,
---- never errors. Runs on the libuv loop (fast context) — S5 must `vim.schedule` the
---- final menu hop (`:help E5560`). NEVER throws (string concat + a table write). Exported
---- so S5 replaces via `M._feed = ...` + tests assert the read_start route.
----@param chunk string? A stdout chunk (nil/"" tolerated).
+--- Normalize ONE raw daemon item `{ value, description? }` (§17.6 driver wire shape) into
+--- an `AutocompleteItem { value, label, description? }` (completion.lua L244-250). Defensive:
+--- a non-table item, or a non-string/empty `value`, returns `nil` (the item is DROPPED — a
+--- single malformed item among many must NOT fail the whole response; mirrors jsonlreader's
+--- never-throws + completion.lua's `result.items or {}`). `label` defaults to `value` (the
+--- §17.6 drivers emit no label); a future driver's explicit label is honored if it is a
+--- non-empty string. `description` is carried through iff present + non-empty, else omitted
+--- (nil). NEVER throws (pure table reads).
+---@param raw table? A raw daemon item `{ value:string, description?:string, label?:string }`.
+---@return table|nil item The normalized AutocompleteItem, or nil to drop.
+local function normalize_item(raw)
+	if type(raw) ~= "table" then return nil end
+	local value = raw.value
+	if type(value) ~= "string" or value == "" then return nil end
+	return {
+		value = value,
+		label = (type(raw.label) == "string" and raw.label ~= "" and raw.label) or value,
+		description = (type(raw.description) == "string" and raw.description ~= "") and raw.description or nil,
+	}
+end
+
+--- The §17.12 consecutive-parse-failure threshold. PRD §17.11 config defines NO parse-failure
+--- key (grep-confirmed: zero matches repo-wide) → default `5`. Reads
+--- `config.shell.max_parse_failures` DEFENSIVELY (forward-compatible — a future config key
+--- works without a code change): a non-number or `<1` falls back to 5. Lazy
+--- `require("pi-bridge")` (async handshake + test mocks swap fakes after require — mirrors
+--- S2/S4). Called ONLY on the decode-failure path (cheap). NEVER throws.
+---@return integer n The threshold (>=1; default 5).
+local function max_parse_failures()
+	local pi = require("pi-bridge")
+	local cfg = (pi.config and pi.config.shell) or {}
+	local n = cfg.max_parse_failures
+	if type(n) ~= "number" or n < 1 then return 5 end
+	return math.floor(n)
+end
+
+-- The sentinel delimiters (§17.5.1). Module-locals so the plain `find` reuses them without
+-- re-allocating. The trailing `\n` is part of the delimiter (§17.5.1:
+-- `__PIRESP_START__\n` / `__PIRESP_END__\n`) — searching WITH the `\n` ensures the FULL
+-- sentinel arrived before slicing (a half-arrived `__PIRESP_END` does not falsely match;
+-- we wait for the close newline).
+local START = "__PIRESP_START__\n"
+local END   = "__PIRESP_END__\n"
+
+--- The §17.5.1/§17.5.2 response PARSE layer of the completion daemon. Appends a stdout
+--- `chunk` to `state.rx_buf`, then DRAINS every complete `__PIRESP_START__\n`…`__PIRESP_END__\n`
+--- pair present: trims the payload between them, `pcall(vim.json.decode)`s it as ONE
+--- `{ items, prefix }` object (§17.5.1 — NOT NDJSON; the §17.6 driver sketches' per-line
+--- format is a doc inconsistency the drivers must reconcile), normalizes each raw
+--- `{ value, description? }` item into an `AutocompleteItem { value, label, description? }`
+--- (dropping malformed items), and invokes the gen-guarded `state.pending_cb(items, prefix)`
+--- (set by S4 `request`) — guarded by `if type(...)=="function"` so a late/duplicate
+--- delivery after S4 nil'd the slot is a no-op. Anything OUTSIDE the sentinels (prompts,
+--- async segments, stray output) is buffered-then-discarded. Leftover (a partial pair)
+--- stays in `rx_buf`.
+---
+--- §17.12 parse-failure handling: a decode failure (or a non-table decode) increments
+--- `state.parse_failures`; at the threshold (`config.shell.max_parse_failures`, default 5)
+--- the daemon is marked unhealthy (`state.failed = true` — `ensure()` then short-circuits,
+--- no new requests) + `M.teardown()` is forward-GUARDED (no-op until S6 lands) + `failed`
+--- re-asserted (S6's teardown may `reset()`; the daemon is DEAD → must stay failed — §17.12
+--- "no auto-respawn in v1"). The one-time degrade NOTIFY is P2.M2.T3.S4's job (S5 sets only
+--- the FACT — mirrors S3 `_reset` / S4 `request`). A SUCCESSFUL decode resets
+--- `parse_failures` to 0 (§17.12 "consecutive").
+---
+--- `prefix` is READ from `decoded.prefix` (§17.5.1; default "") — NOT derived from
+--- `line[1..cursor]`, because `_feed` receives ONLY the chunk (the `read_start` cb passes
+--- no line/cursor; see S3's wiring). The consumer `complete_current` (P2.M2.T3.S3), which
+--- has the buffer, may refine prefix.
+---
+--- Runs in the libuv `read_start` callback (FAST context) but does NO `vim.api.*` (string
+--- + `vim.json` + state writes + the `pending_cb` call only) → fast-safe WITHOUT
+--- `vim.schedule` (E5560); the menu hop is the CONSUMER's (P2.M2.T3) scheduling
+--- responsibility. NEVER throws (`pcall` decode; type-guarded `decoded`/`.items`/`.prefix`/
+--- `pending_cb`; `ipairs` over `.items`; nil/"" `chunk` guarded).
+---
+--- FORWARD CONTRACTS (do NOT implement here):
+---   * S4's `state.pending_cb` → this invokes `if type(state.pending_cb)=="function" then
+---     state.pending_cb(items, prefix) end`. The `if type(...)` guard is what makes a
+---     late/duplicate delivery a no-op (S4 nil's the slot first — one-shot).
+---   * S6's `M.teardown()` → forward-GUARDED on the parse-failure threshold (`if type(
+---     M.teardown)=="function" then pcall(M.teardown) end`) + `failed` re-asserted after.
+---   * P2.M2.T3.S4 → the §17.12 one-time degrade `notify.once`.
+---   * P2.M2.T3.S2/S3 → `complete_current(buf, cb)` receives `(err, items, prefix)` from
+---     S5→S4's cb; it may RE-DERIVE prefix from the buffer + must `vim.schedule` the menu hop.
+---   * P2.M2.T4 / P2.M3.T5 drivers → MUST emit the §17.5.1 single-object format
+---     `__PIRESP_START__\n{"items":[...],"prefix":"..."}\n__PIRESP_END__\n`, NOT the §17.6.x
+---     per-item NDJSON sketch (NDJSON fails to decode — LIVE-VERIFIED).
+---
+---@param chunk string? A stdout chunk from the daemon pipe (nil ⇒ EOF ⇒ `M._reset`; "" ⇒ no-op).
 function M._feed(chunk)
-	state.rx_buf = state.rx_buf .. (chunk or "")
+	-- (0) EOF guard (D8). S3's read_start routes EOF to _reset directly, so _feed(nil)
+	--     shouldn't occur via the loop — but a direct _feed(nil) call (e.g. a test) also
+	--     marks the daemon unhealthy (idempotent with _reset). Empty chunk → no-op (avoid
+	--     a useless concat + drain loop).
+	if chunk == nil then M._reset(); return end
+	if chunk == "" then return end
+	-- (1) APPEND (byte-safe — Lua strings are byte buffers; split-multibyte chars reassemble
+	--     on the next chunk, NO UTF-8 streaming decoder needed; mirrors jsonlreader GOTCHA 1).
+	state.rx_buf = state.rx_buf .. chunk
+	-- (2) DRAIN: while a complete __PIRESP_START__\n .. __PIRESP_END__\n pair is present,
+	--     slice + decode + normalize + deliver. A single chunk may carry MANY pairs (drain
+	--     loop) or a PARTIAL pair (left buffered). Mirrors jsonlreader.feed's drain loop.
+	while true do
+		-- plain byte scan (4th `true` arg — jsonlreader GOTCHA 3: pattern matching OFF, so
+		-- literal '%'/'+.'/etc in the JSON payload never corrupts the sentinel search).
+		local s = state.rx_buf:find(START, 1, true)
+		if not s then break end                         -- no START → noise-only; wait for more
+		local ps = s + #START                           -- payload starts AFTER "__PIRESP_START__\n"
+		local e = state.rx_buf:find(END, ps, true)      -- END\n AFTER the START
+		if not e then break end                         -- START but no END yet → wait for more
+		-- (3) EXTRACT the payload (bytes between START\n and END\n) + trim surrounding
+		--     whitespace. vim.json.decode tolerates whitespace (LIVE-VERIFIED) but trim is
+		--     deterministic + makes the empty-payload edge explicit (empty → "" → decode
+		--     throws → parse_failure; §17.5.1 mandates {"items":[]} so empty is a protocol
+		--     violation — do NOT special-case it to success).
+		local payload = state.rx_buf:sub(ps, e - 1):gsub("^%s+", ""):gsub("%s+$", "")
+		-- (4) ADVANCE rx_buf PAST this response (keep the remainder for the next iteration /
+		--     chunk; trailing noise after END\n stays buffered, inert until the next START).
+		state.rx_buf = state.rx_buf:sub(e + #END)
+		-- (5) DECODE (pcall'd — never throws; mirrors jsonlreader GOTCHA 6). The payload MUST
+		--     be a single {items,prefix} object (§17.5.1; NDJSON throws — D1). A bare
+		--     number/string decodes to a non-table → treated as a parse failure (no .items).
+		local dok, decoded = pcall(vim.json.decode, payload)
+		if not dok or type(decoded) ~= "table" then
+			-- (6a) PARSE FAILURE: increment the §17.12 consecutive counter. At threshold →
+			--     disable + forward-guard teardown (S6) + re-assert failed. NO notify
+			--     (P2.M2.T3.S4).
+			state.parse_failures = (state.parse_failures or 0) + 1
+			if state.parse_failures >= max_parse_failures() then
+				state.failed = true
+				-- Forward-guard: kill the daemon IF S6's teardown() has landed (no-op today).
+				-- Re-assert failed AFTER (S6's teardown may reset(); the daemon is dead → must
+				-- STAY failed so ensure() short-circuits instead of re-spawning a known-broken
+				-- daemon — §17.12 "no auto-respawn in v1").
+				pcall(function() if type(M.teardown) == "function" then M.teardown() end end)
+				state.failed = true
+			end
+		else
+			-- (6b) SUCCESS: reset the consecutive counter (§17.12 "consecutive"). Extract
+			--     items + prefix DEFENSIVELY (mirrors completion.lua do_refresh L465-470:
+			--     type-guarded, default {} / ""). Normalize each item → AutocompleteItem[]
+			--     (drop malformed — D5).
+			state.parse_failures = 0
+			local raw_items = (type(decoded.items) == "table") and decoded.items or {}
+			local prefix     = (type(decoded.prefix) == "string") and decoded.prefix or ""
+			local items = {}
+			for _, raw in ipairs(raw_items) do           -- ipairs: ordered + nil-hole-safe; non-array → {}
+				local norm = normalize_item(raw)
+				if norm then items[#items + 1] = norm end
+			end
+			-- (7) DELIVER via the gen-guarded ONE-SHOT pending_cb (set by S4 request). The
+			--     `if type(...)=="function"` guard is MANDATORY (pending_cb may be nil — no
+			--     request in flight, or S4 already fired+nil'd it). S5 INVOKES it; S4 OWNS
+			--     setting/niling it. Do NOT vim.schedule (fast context; the consumer P2.M2.T3
+			--     schedules the menu hop — D9).
+			if type(state.pending_cb) == "function" then
+				state.pending_cb(items, prefix)
+			end
+		end
+	end
 end
 
 --- Forward-contract stub for S6: the §17.12 EOF-on-daemon-pipe path (shell crashed

@@ -69,7 +69,7 @@
           "type": "Milestone",
           "id": "P2.M1",
           "title": "Pescriptor shell fields + daemon manager + spike",
-          "status": "Planned",
+          "status": "Researching",
           "description": "First vertical slice: the descriptor advertises the resolved shell, and shell.lua can resolve -> spawn -> do a framed round-trip in isolation (proven with fish, printed to :messages). No plugin integration yet.",
           "tasks": [
             {
@@ -152,7 +152,7 @@
               "type": "Task",
               "id": "P2.M1.T2",
               "title": "shell.lua daemon manager + fish spike",
-              "status": "Planned",
+              "status": "Researching",
               "description": "Create the shell.lua daemon manager module: state, resolve_shell(prefer), pick_driver(basename), ensure(on_ready), request(line, cursor, after, cb) with gen-guard supersession, _feed(chunk) buffering/sentinel-slicing/decode/normalize, teardown(). Validate the framed round-trip with a standalone fish spike.",
               "subtasks": [
                 {
@@ -229,7 +229,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S5",
                   "title": "_feed(chunk) buffering + sentinel slicing + JSON decode + normalize to AutocompleteItem[]",
-                  "status": "Researching",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S4"
@@ -246,7 +246,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S6",
                   "title": "teardown() — uv.process_kill SIGKILL, close pipes, reset state",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M1.T2.S3"
