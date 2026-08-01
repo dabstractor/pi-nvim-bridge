@@ -148,7 +148,10 @@ real `shellPath` setting through the public API. `PI_NVIM_SHELL` is the
 workaround: the user sets it once to advertise the shell pi runs `!`/`!!` in,
 so the plugin's `prefer:"pi"` resolver can match it instead of falling back to
 `$SHELL`. (PRD §17.10.2 / §17.17 — a future upstream `ctx.getShellConfig()`
-would retire this manual mirror.)
+would retire this manual mirror.) From the plugin side, the same gap + the
+one-time `:messages` warning are documented in `:help pi-bridge-shell` §3
+([`doc/pi-bridge-shell.txt`](../doc/pi-bridge-shell.txt),
+`pi-bridge-shell-prefer`).
 
 **Worked example — a zsh user who wants native zsh `!` completions:**
 

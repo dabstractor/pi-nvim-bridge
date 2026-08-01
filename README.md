@@ -40,9 +40,12 @@ There is a **second completion engine** for `!`/`!!` "bash mode" lines: your
 real shell's own completion engine (fish/zsh/bash) completes shell commands,
 rendered in the same floating menu with a `$ ` gutter marker. It defaults to
 the shell pi *executes* commands in (`prefer = "pi"` — bash unless you set pi's
-`shellPath`), so completions and execution always agree rather than a zsh-only
-alias being suggested then failing under bash. See `:help pi-bridge-shell`
-([`doc/pi-bridge-shell.txt`](./doc/pi-bridge-shell.txt)) for the full guide.
+`shellPath`), so completions and execution agree when the bridge can read pi's
+execution shell; when it can't (non-bash `$SHELL`, `PI_NVIM_SHELL` unset), a
+one-time `:messages` notice and the `PI_NVIM_SHELL` env var close the gap
+rather than a zsh-only alias being suggested then failing under bash. See
+`:help pi-bridge-shell` ([`doc/pi-bridge-shell.txt`](./doc/pi-bridge-shell.txt),
+§3) for the full guide.
 
 > **Note:** the companion `pi-bridge.nvim` plugin is **complete** (its runtime
 > files live at the repo root: `lua/pi-bridge/`, `plugin/pi-bridge.lua`,
@@ -147,9 +150,20 @@ process pi spawns, which the companion plugin keys on.
 `!`/`!!` bash-mode lines are completed by your real shell's completion engine
 (fish/zsh/bash), rendered in the same floating menu as pi's completions. It
 defaults to the shell pi *executes* commands in (`prefer = "pi"` — bash unless
-you set pi's `shellPath`), so a completion and the command that runs always
-agree. See `:help pi-bridge-shell`
+you set pi's `shellPath`), so a completion and the command that runs agree
+whenever the bridge can read pi's execution shell. If your `$SHELL` is zsh or
+fish and you have NOT set pi's `shellPath`, export `PI_NVIM_SHELL=<that shell>`
+so completion and execution both use it (a one-time `:messages` notice warns
+you; see `:help pi-bridge-shell` §3). See `:help pi-bridge-shell`
 ([`doc/pi-bridge-shell.txt`](./doc/pi-bridge-shell.txt)) for the full table.
+
+> **Note** — `PI_NVIM_SHELL`. Sets the shell pi executes `!`/`!!` in when the
+> bridge can't read pi's `shellPath` (it can't today — no public API). With a
+> non-bash `$SHELL` and `PI_NVIM_SHELL` unset, `prefer="pi"` completes with
+> `$SHELL` while pi still runs bash — they may disagree. Export
+> `PI_NVIM_SHELL` (or set pi's `shellPath`) to fix. See
+> `:help pi-bridge-shell` (§3). It is an env var you set in the shell that
+> launches pi — not a `setup()` option.
 
 ```lua
 require("pi-bridge").setup({
@@ -301,11 +315,17 @@ The descriptor is a single-line JSON object:
   Correct: `openExternalEditor` is TUI-only, so the bridge no-ops when
   `ctx.mode !== "tui"`.
 - **"`!`/`!!` completions are bash-quality / missing."**
-  With the default `prefer = "pi"`, completion uses pi's execution shell —
-  bash unless you set pi's `shellPath`. To get native fish/zsh completions,
-  set pi's `shellPath` to your shell (recommended) or
-  `setup({ shell = { prefer = "shell" } })`. Run `:checkhealth pi-bridge`
-  (the "pi-bridge shell completion" section) and see `:help pi-bridge-shell`.
+  The default `prefer = "pi"` resolves the shell two ways depending on whether
+  the bridge could read pi's execution shell:
+  - **You see zsh/fish completions that then FAIL under bash** — the resolver
+    fell back to `$SHELL` (non-bash `$SHELL`, `PI_NVIM_SHELL` unset). Export
+    `PI_NVIM_SHELL=<your shell>` (or set pi's `shellPath`) so completion
+    matches execution.
+  - **You want bash-quality forced off** — set `setup({ shell = { prefer = "shell" } })`
+    to complete with `$SHELL`, or disable the bash driver
+    (`setup({ shell = { drivers = { bash = false } } })`).
+  Run `:checkhealth pi-bridge` (the "pi-bridge shell completion" section) and
+  see `:help pi-bridge-shell` (§3).
 
 ## Security
 

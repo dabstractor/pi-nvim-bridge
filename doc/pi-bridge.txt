@@ -1,4 +1,4 @@
-*pi-bridge.txt*	For Nvim 0.11+.	Last change: 2025 Jul 20
+*pi-bridge.txt*	For Nvim 0.11+.	Last change: 2026 Aug 01
 
           NVIM PORT — pi-bridge.nvim
           Bring pi's in-prompt completion into the Neovim instance pi
@@ -225,7 +225,9 @@ See |pi-bridge-shell-accept|. A `$ ` gutter marks shell items in the menu
 (`shell.visual_cue`, default "gutter"; |pi-bridge-shell-config|).
 
 By default the daemon completes using pi's execution shell (commonly
-/bin/bash) so completions match what `!` will actually run — see
+/bin/bash) so completions match what `!` will actually run when the bridge
+can read it; otherwise it falls back to `$SHELL` and a one-time notice warns
+you (see |pi-bridge-shell-prefer| §3 + `PI_NVIM_SHELL`). See
 |pi-bridge-shell-prefer| for why + how to change it. Full subsystem docs:
 |pi-bridge-shell|.
 
@@ -373,9 +375,13 @@ A: pi runs `!`/`!!` commands in /bin/bash by default, and completions must
    match execution — otherwise a suggested command could fail when run. So
    the daemon completes with pi's execution shell. To use your native shell,
    either set pi's `shellPath` to it (so pi EXECUTES `!` in it too) or set
-   `shell.prefer` (see |pi-bridge-shell-prefer|). If NO completion appears on
-   a `!` line at all, the daemon may be disabled or the shell unsupported —
-   see |pi-bridge-shell-troubleshooting| + |pi-bridge-shell-health|.
+   `shell.prefer` (see |pi-bridge-shell-prefer|). If instead you SEE zsh/fish
+   completions that then fail under bash, the resolver fell back to `$SHELL`
+   (the bridge could not read pi's execution shell) — export `PI_NVIM_SHELL`
+   (see |pi-bridge-shell-prefer|) so completion matches execution. If NO
+   completion appears on a `!` line at all, the daemon may be disabled or the
+   shell unsupported — see |pi-bridge-shell-troubleshooting| +
+   |pi-bridge-shell-health|.
 
 Q: "I typed, then `:q`, and lost my prompt." ~
 A: pi reads the temp file only after the editor exits with status 0. The plugin
