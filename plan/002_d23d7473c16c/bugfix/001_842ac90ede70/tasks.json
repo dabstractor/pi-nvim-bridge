@@ -1,0 +1,174 @@
+{
+  "backlog": [
+    {
+      "type": "Phase",
+      "id": "P1",
+      "title": "Shell Completion Correctness Patch",
+      "status": "Planned",
+      "description": "Fix 6 bugs found during E2E validation of the §17 shell-completion feature (!/!! bash-mode lines): 2 Major (notice scoping under prefer=\"bash\"; prefer=\"pi\" consistency guarantee not honored by default) and 4 Minor (supersession race on ! deletion; dead cwd re-tracking code; inaccurate health source label; literal-quote command flood). All fixes target the Lua plugin (lua/pi-bridge/) and embedded driver scripts; the TS extension's resolveShell constraint (§17.10.2) is acknowledged as an upstream limitation mitigated by detection + documentation.",
+      "milestones": [
+        {
+          "type": "Milestone",
+          "id": "P1.M1",
+          "title": "Shell Resolution & Notice Correctness",
+          "status": "Planned",
+          "description": "Fix the shell-resolution / mismatch-notice / health-reporting cluster (Issues 1, 2, 5). These are tightly coupled: Issue 5 (expose accurate descriptor shellSource) is the foundation that Issue 2 (detect prefer:\"pi\" consistency footgun) depends on for the source==\"$SHELL\" signal. Issue 1 (gate notice on prefer==\"pi\") is independent but touches the same ensure() notice block.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M1.T1",
+              "title": "Expose accurate descriptor shellSource in resolve_shell (Issue 5)",
+              "status": "Planned",
+              "description": "descriptor_shell() currently returns only the shell path; resolve_shell hard-codes \"pi\" as the source label regardless of descriptor.shellSource. Fix descriptor_shell() to return (path, source) and have resolve_shell propagate the real source. This makes health.lua's 'resolved shell: X (source: Y)' report accurate and provides the source==\"$SHELL\" signal needed by T3 (Issue 2).",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S1",
+                  "title": "Make descriptor_shell() return (path, source) and resolve_shell propagate it",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3/h3.4", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/shell_resolution_notice.md §\"Issue 5 Fix\". descriptor_shell() (shell.lua:135-156) returns ONLY the shell path — it reads bridge.get_shell_info().shell and pi.descriptor.shell but IGNORES .shellSource. resolve_shell (shell.lua:168-189) hard-codes \"pi\" at line 177: `if ds then return ds, \"pi\" end`. bridge.get_shell_info() (bridge.lua:902-915) returns {shell, shellSource, shellPath}. descriptor_shell() is module-local — its ONLY caller is resolve_shell (confirmed by grep), so changing its return arity (1→2 values) is safe.\n2. INPUT: bridge.get_shell_info() returns a table with .shell (string) and .shellSource (\"pi\"|\"$SHELL\"|\"default\" or nil). pi.descriptor has the same fields (set by the extension's BridgeDescriptor, HelloResult, PingResult).\n3. LOGIC: (a) Modify descriptor_shell() (shell.lua:135-156) to ALSO return shellSource: in the get_shell_info branch, return `si.shell, si.shellSource`; in the pi.descriptor branch, return `desc.shell, desc.shellSource`. (b) Modify resolve_shell (shell.lua:175-177): change `local ds = descriptor_shell()` to `local ds, dsrc = descriptor_shell()` and change `return ds, \"pi\"` to `return ds, dsrc or \"pi\"`. The `or \"pi\"` fallback covers descriptors that carry a shell but no shellSource (older bridge versions). All other resolve_shell branches (\"$SHELL\"→\"$SHELL\", /bin/bash→\"default\", path→\"config\") are UNCHANGED.\n4. OUTPUT: resolve_shell(prefer) returns an accurate second value matching descriptor.shellSource. health.lua:255-256 reads both return values — it AUTOMATICALLY gets the accurate source (no health.lua code change needed). Add a plenary spec case: inject pi.bridge with get_shell_info returning {shell=\"/bin/zsh\", shellSource=\"$SHELL\"}, call shell.resolve_shell(\"pi\"), assert second return == \"'$SHELL'\". Also assert the existing \"pi\"-source case still works (shellSource=\"pi\" → source==\"pi\"). Follow the shell_notices_spec.lua fake_bridge + save/restore pattern (see architecture/test_conventions.md).\n5. DOCS: [Mode A] Update the resolve_shell doc-comment (shell.lua:157-166) to reflect that the \"pi\" branch now propagates descriptor.shellSource instead of a hard-coded \"pi\". Update the header claim on line 163 that says 'source aligns with descriptor.shellSource' to note this is now ACCURATE (was previously violated). No user-facing/config/API surface change."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M1.T2",
+              "title": "Gate §17.4.3 mismatch notice on prefer==\"pi\" (Issue 1)",
+              "status": "Planned",
+              "description": "The one-time 'switch to your native shell' mismatch notice fires whenever the resolved shell is bash and $SHELL is zsh/fish — REGARDLESS of how bash was chosen. A user who explicitly sets prefer=\"bash\" (or prefer=\"/path/to/bash\") has deliberately chosen bash; the notice is misleading and its advice (set shellPath) is inert under prefer=\"bash\". Gate the notice on prefer==\"pi\" (the §17.4.3 scope) at the call site in ensure().",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T2.S1",
+                  "title": "Wrap the mismatch notice block in ensure() with a prefer==\"pi\" gate",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.2/h3.0", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/shell_resolution_notice.md §\"Issue 1 Fix\". The notice block is at shell.lua:384-396 inside M.ensure(). It calls M.mismatch_target(resolved, vim.env.SHELL) unconditionally inside a pcall. cfg is obtained at shell.lua:378-379: `local cfg = (pi.config and pi.config.shell) or {}`. cfg.prefer is the value to gate on. mismatch_target (shell.lua:211-226) is PURE — it checks only basename(resolved)==\"bash\" + basename($SHELL)∈{zsh,fish}; it has NO prefer awareness. Keep it pure.\n2. INPUT: cfg.prefer from pi.config.shell (values: \"pi\"|\"shell\"|\"bash\"|\"/abs/path\"|nil; nil defaults to \"pi\"). resolved from M.resolve_shell(cfg.prefer). vim.env.SHELL.\n3. LOGIC: Wrap the ENTIRE existing pcall(function() ... mismatch_target ... end) notice block (shell.lua:384-396) in `if (cfg.prefer or \"pi\") == \"pi\" then ... end`. This gates the notice to fire ONLY under prefer==\"pi\" (or nil). Do NOT modify mismatch_target itself (it stays pure and prefer-free). Under prefer=\"bash\" (resolved=/bin/bash, source=\"default\") or prefer=\"/abs/path/to/bash\" (resolved=path, source=\"config\"), the notice will NOT fire even when $SHELL is zsh/fish. The existing shell-active and shell-degrade notices are UNAFFECTED (they are outside this gate).\n4. OUTPUT: Under prefer=\"bash\" or prefer=\"/bin/bash\", the shell-mismatch notice does NOT fire. Add plenary spec cases in tests/shell_notices_spec.lua (copy the existing mismatch test's before_each/after_each + inject_for + stub_executable harness): (a) prefer=\"bash\", $SHELL=/bin/zsh, fake bash driver injected, stub_executable({\"zsh\"}) → assert notify.did_notify(\"shell-mismatch\") is FALSE; (b) prefer=\"/bin/bash\" (explicit path), same $SHELL → assert no mismatch notice; (c) REGRESSION: prefer=\"pi\" (default), descriptor.shell=\"/bin/bash\", $SHELL=/bin/zsh, stub_executable({\"zsh\"}) → assert mismatch notice STILL fires (the existing behavior is preserved for the scoped case). Follow architecture/test_conventions.md patterns.\n5. DOCS: [Mode A] Update the notice block's inline comment (shell.lua:384-387) to note the prefer==\"pi\" gate: 'Fires ONLY under prefer==\"pi\" (the §17.4.3 scope) — explicit prefer=\"bash\"/path deliberately chose bash.' No user-facing/config surface change."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M1.T3",
+              "title": "Detect & document prefer=\"pi\" consistency footgun (Issue 2)",
+              "status": "Planned",
+              "description": "For the most common configuration (prefer=\"pi\" default, $SHELL=zsh/fish, PI_NVIM_SHELL unset), the descriptor advertises shell=zsh (from $SHELL fallback) but pi actually executes !/!! in bash. The plugin completes with zsh — inconsistent with bash execution. The §17.4.3 safety-net notice never fires (it checks resolved==bash, but resolved is zsh). Add a NEW detection condition in ensure() that fires when prefer==\"pi\" && source==\"$SHELL\" && $SHELL∈{zsh,fish}, and document the default-case behavior in doc/pi-bridge-shell.txt. Constrained by §17.10.2 (extension cannot read pi's shellPath) — this is a detection+documentation mitigation, not a correctness fix.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T3.S1",
+                  "title": "Add prefer:\"pi\" consistency footgun detection + notice in ensure() and document the default-case behavior",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M1.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2/h3.1", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/shell_resolution_notice.md §\"Issue 2 Fix\". For a default zsh user: resolve_shell(\"pi\") returns (\"/bin/zsh\", source). After T1.S1, source==\"$SHELL\" (accurate, was hard-coded \"pi\"). mismatch_target checks basename(resolved)==\"bash\" → returns nil for zsh → no notice. Need a SEPARATE detection: prefer==\"pi\" && source==\"$SHELL\" && basename($SHELL)∈{zsh,fish}. This is the case where the descriptor fell back to $SHELL (extension couldn't read pi's shellPath per §17.10.2), so completions use the login shell but pi executes in bash. The basename() module-local helper is at shell.lua:86-89.\n2. INPUT: `source` from resolve_shell's second return value (T1.S1 makes this accurate: \"$SHELL\" when descriptor fell back to $SHELL). cfg.prefer from pi.config.shell. vim.env.SHELL. basename() helper (shell.lua:86-89). require(\"pi-bridge.notify\").once(cat, level, msg).\n3. LOGIC: In M.ensure(), AFTER the existing mismatch notice block (which T2.S1 gates on prefer==\"pi\") and BEFORE pick_driver (shell.lua:398), capture both return values from resolve_shell: change line 382 `local resolved = M.resolve_shell(cfg.prefer or \"pi\")` to `local resolved, source = M.resolve_shell(cfg.prefer or \"pi\")`. Then add a new pcall'd detection block: if (cfg.prefer or \"pi\")==\"pi\" and source==\"$SHELL\" then compute env_base=basename(vim.env.SHELL or \"\"); if env_base==\"zsh\" or env_base==\"fish\" then pcall vim.fn.executable(env_base); if on-PATH then notify.once(\"shell-consistency\", vim.log.levels.WARN, message). The message should explain: completions use <env_base> (from $SHELL) but pi may execute commands in bash; for guaranteed consistency set PI_NVIM_SHELL=<vim.env.SHELL> or pi's shellPath; see :help pi-bridge-shell. Use a DISTINCT notice category \"shell-consistency\" (NOT \"shell-mismatch\") so the dedup set doesn't conflate the two conditions.\n4. OUTPUT: A default zsh/fish user (no PI_NVIM_SHELL) gets a one-time WARN notice guiding them to set PI_NVIM_SHELL for guaranteed completion/execution consistency. Add plenary spec cases in tests/shell_notices_spec.lua: (a) prefer=\"pi\" (default), $SHELL=/bin/zsh, pi.bridge.get_shell_info returns {shell=\"/bin/zsh\", shellSource=\"$SHELL\"}, stub_executable({\"zsh\"}) → assert notify.did_notify(\"shell-consistency\") is TRUE; (b) prefer=\"pi\", descriptor {shell=\"/bin/zsh\", shellSource=\"pi\"} (user set PI_NVIM_SHELL) → assert did_notify(\"shell-consistency\") is FALSE (no false positive); (c) prefer=\"shell\" + source=\"$SHELL\" → assert no consistency notice (the user explicitly chose $SHELL; consistency is their responsibility).\n5. DOCS: [Mode A] Update doc/pi-bridge-shell.txt §3 'THE MISMATCH' (lines 74-119): (a) Add a paragraph after the existing 'THE MISMATCH' explanation stating that under the DEFAULT config (prefer=\"pi\", $SHELL is zsh/fish, PI_NVIM_SHELL unset), completions use $SHELL but pi executes in bash — they may NOT be consistent (the footgun). (b) Document the PI_NVIM_SHELL environment variable as the opt-in fix: exporting PI_NVIM_SHELL=/bin/zsh tells the bridge to advertise zsh as pi's execution shell, making prefer=\"pi\" correct. (c) Add a forward-contract note: once pi exposes ctx.getShellConfig() (PRD §17.17), the extension will advertise the real execution shell automatically; until then, PI_NVIM_SHELL is the workaround. This doc update rides WITH the code — do NOT create a separate docs subtask."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P1.M2",
+          "title": "Completion Robustness & Driver Polish",
+          "status": "Planned",
+          "description": "Fix the 4 Minor issues: supersession race on `!` deletion (Issue 3), dead cwd re-tracking code (Issue 4), and quoted-command flood (Issue 6). These are independent of M1 and of each other (different files: completion.lua, shell.lua+drivers, drivers). Includes a final changeset-level documentation sweep (Mode B).",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M2.T4",
+              "title": "Fix supersession race: deleting `!` while shell request in flight re-opens stale menu (Issue 3)",
+              "status": "Planned",
+              "description": "do_refresh's ctx==nil (plain-typing) branch closes the menu via on_results(buf, {}, \"\", nil) WITHOUT bumping state.gen. A late shell response (whose cb captured the old gen) passes the gen guard and re-opens the shell menu for a buffer that no longer starts with `!`. Fix: bump state.gen + cancel bridge inflight in the nil branch, mirroring the shell/slash/path supersession discipline.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T4.S1",
+                  "title": "Bump state.gen and cancel inflight in do_refresh's ctx==nil branch",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3/h3.2", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/completion_drivers.md §\"Issue 3\". do_refresh (completion.lua:507-599) classifies context via completion_context() → \"shell\"|\"slash\"|\"path\"|nil. The ctx==nil branch (completion.lua:543-548) closes the menu via `pcall(M.on_results, buf, {}, \"\", nil)` and returns WITHOUT bumping state.gen or cancelling inflight. ALL other branches bump gen: do_shell_fetch at line 419, slash/path at line 568, force_fetch (Tab) at line 639, reset at line 735, on_commands_changed at line 1083. Shell requests have NO cancel wire (shell.lua has no cancel method) — the gen-guard (if gen ~= state.gen then return end at completion.lua:431) is the SOLE protection. menu.on_results (menu.lua:567-595) TRUSTS the caller's gen-guard and will happily M.open(items) for any non-empty payload.\n2. INPUT: state.gen (completion.lua:263, integer), state.inflight_id (completion.lua:257, string?). require(\"pi-bridge\").bridge for the cancel method.\n3. LOGIC: In the `if not ctx then` block (completion.lua:543-548), BEFORE the existing `pcall(M.on_results, buf, {}, \"\", nil)` close call, add: (a) Layer 1 — cancel a pending BRIDGE inflight: `local b = require(\"pi-bridge\").bridge; if state.inflight_id and b and type(b.cancel) == \"function\" then pcall(b.cancel, state.inflight_id) end; state.inflight_id = nil`. (b) Layer 2 — bump gen: `state.gen = state.gen + 1`. Then keep the existing on_results close call. This mirrors the slash/path supersession block at lines 576-580. Do NOT add a shell cancel (none exists). The gen bump ensures a late shell cb (captured gen=N) finds state.gen=N+1 → guard drops it.\n4. OUTPUT: After deleting `!` (shell→plain transition), a late shell response is dropped by the gen-guard → menu does NOT re-open. Add a plenary spec case in tests/completion_spec.lua: set up the fake bridge with {auto_cancel_fires=false} (so the stale cb is NOT auto-fired), create a buffer with \"!git c\", call completion.refresh(buf) → do_shell_fetch (gen bumped, stale_cb captured). Edit buffer to \"git c\" (delete `!`). Call completion.refresh(buf) → ctx==nil → menu closes + gen bumped. Fire the stale shell cb with items. Assert: the on_results seam counter did NOT increment (the stale cb was dropped by gen-guard). Use the on_results seam-counter pattern from architecture/test_conventions.md.\n5. DOCS: none — no user-facing/config/API surface change (internal supersession bug fix)."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M2.T5",
+              "title": "Wire daemon cwd re-tracking — M.cd is defined but never called (Issue 4)",
+              "status": "Planned",
+              "description": "All three shell drivers (fish/zsh/bash) define M.cd(path) that writes a __PICD__ frame to re-cd the daemon, but NOTHING in the plugin ever calls it. session_cwd() is read only once at spawn time. Per PRD §17.5.2, if pi's session cwd changes after spawn, the daemon should be re-cd'd so relative/path completions match. Wire the re-cd in complete_current (the per-keystroke entry point) and update driver doc-comments for post-wiring accuracy.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T5.S1",
+                  "title": "Wire cwd re-tracking in complete_current and update driver M.cd doc-comments",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3/h3.3", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/completion_drivers.md §\"Issue 4\". M.session_cwd() (shell.lua:259-271) reads bridge.server_info.cwd → pi.descriptor.cwd. Called ONCE at spawn (shell.lua:419, opts.cwd). Cached into state.cwd (shell.lua:443). All 3 drivers define M.cd(path) writing __PICD__\\t<path>\\n to last_stdin: fish.lua:428-444, zsh.lua:497-513, bash.lua:477-493. grep -rn '\\.cd(' across lua/ ftplugin/ plugin/ returns ONLY the driver definitions (no callers). M.complete_current (shell.lua:984-1047) is the per-keystroke entry — the right place for re-cd. Daemon scripts: fish honors __PICD__ with `builtin cd` (functional, fish.lua:111-115); bash honors it with `builtin cd` (functional, bash.lua:187-191); zsh matches (__PICD*) but does NOTHING (empty case body, zsh.lua:219 — known no-op for v1).\n2. INPUT: M.session_cwd() (fresh read). state.cwd (string?, cached at spawn). state.driver (table?, the resolved driver module). state.driver.cd (function?, the cd method).\n3. LOGIC: In M.complete_current (shell.lua:984), BEFORE the M.request call (around line 1040, after the empty-command guard at line ~1037 and before the M.request delegation), add a cwd re-tracking block: `local cwd_now = M.session_cwd(); if cwd_now and state.cwd and cwd_now ~= state.cwd and state.driver and type(state.driver.cd) == \"function\" then pcall(state.driver.cd, cwd_now); state.cwd = cwd_now end`. This writes the __PICD__ frame to stdin BEFORE the __PIREQ__ frame (M.request writes after) → daemon processes cd first (sequential pipe writes). The state.cwd update prevents re-cd'ing every keystroke (only when cwd actually changes). pcall ensures a driver.cd error never aborts the completion. Note: for zsh, cd is advisory (daemon swallows __PICD__) — this is a known limitation.\n4. OUTPUT: If pi's session cwd changes after daemon spawn, the daemon is re-cd'd before the next completion. zsh remains advisory (daemon no-op). Add a plenary spec case in tests/shell_request_spec.lua (or shell_ensure_spec.lua): inject a fake driver with a `cd` spy (cd = function(self, path) self.cd_calls = self.cd_calls or {}; table.insert(self.cd_calls, path) end). ensure() with bridge.server_info.cwd=\"/old\" (state.cwd=\"/old\"). Change bridge.server_info.cwd to \"/new\". Call shell.complete_current(buf, cb). Assert fake.cd was called with \"/new\" and state.cwd==\"/new\". Also test NO cd call when cwd is unchanged. Follow the fake-driver injection pattern from architecture/test_conventions.md.\n5. DOCS: [Mode A] Update the M.cd doc-comments in all 3 drivers: fish.lua (419-426) — change to note cd is WIRED and functional (daemon honors __PICD__ with builtin cd); bash.lua (466-475) — same (WIRED and functional); zsh.lua (486-495) — note cd is WIRED but ADVISORY (the daemon script matches __PICD__ but the inner zsh doesn't cd; known limitation for v1). No user-facing/config surface change."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M2.T6",
+              "title": "Graceful-degrade quoted-command flood — literal `\"` returns all commands (Issue 6)",
+              "status": "Planned",
+              "description": "Each driver's crude .line extraction regex/param-sub stops at the first `\"`, resolving cmd to empty when the command contains a literal double-quote. An empty cmd makes the completion engine return ALL commands (fish: complete -C \"\"; bash: compgen -abck; zsh: empty zpty line) — flooding the floating menu with 158+ items. Fix: emit an empty items array when the extracted cmd is empty, rather than passing \"\" to the completion engine.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T6.S1",
+                  "title": "Add empty-cmd graceful-degrade guard in fish.lua DAEMON_SCRIPT",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3/h3.5", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/completion_drivers.md §\"Issue 6\". fish.lua's DAEMON_SCRIPT (embedded as a Lua string literal) has a `__pi_handle` function (fish.lua:118-130). It extracts cmd via `set -l m (string match -r '\"line\":\"([^\"]*)\"' -- $payload)` (fish.lua:121) then `set cmd $m[2]` (or \"\" if no match). Then runs `complete -C \"$cmd\"` (fish.lua:129). When the line contains a literal `\"`, the regex capture stops early → cmd is empty/truncated → `complete -C \"\"` returns ALL fish commands → menu flood.\n2. INPUT: The fish DAEMON_SCRIPT Lua string literal in fish.lua (the `__pi_handle` function body, lines ~118-130). The cmd variable extracted at line ~127.\n3. LOGIC: In the fish DAEMON_SCRIPT's `__pi_handle`, AFTER the cmd extraction (after `set cmd $m[2]` or the default `set cmd \"\"`) and BEFORE the `complete -C \"$cmd\"` pipeline (fish.lua:129), insert a guard: `if test -z \"$cmd\"; echo __PIRESP_START__; echo '{\"items\":[]}'; echo __PIRESP_END__; return; end`. This makes the daemon emit a valid empty-items response frame (the _feed rx_buf slicer pairs START/END correctly) instead of flooding. The guard uses fish syntax (if/test/echo/return). Be careful with Lua string escaping for the embedded fish script.\n4. OUTPUT: A `!echo \"feat` or `!git commit -m \"wip` line → cmd extracts to empty → daemon returns {\"items\":[]} → clean no-results menu instead of 158+ command flood. Add a test in tests/shell_fish_driver_spec.lua or tests/shell_fish_driver_smoke.lua: construct a __PIREQ__ frame with a line containing a literal `\"` (e.g. `{\"line\":\"git \\\"feature\",\"cursor\":11,\"after\":\"\"}`), feed it to the fish driver's handler, assert the response has 0 items.\n5. DOCS: [Mode A] Update the fish.lua header 'KNOWN LIMITATION' note (fish.lua:49-51) to reflect that an empty/quote-containing .line now degrades to empty results (not a flood). The limitation note about crude regex extraction remains (the regex still can't parse escaped quotes) but the SYMPTOM is now a clean empty menu."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T6.S2",
+                  "title": "Add empty-cmd graceful-degrade guard in zsh.lua and bash.lua scripts",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3/h3.5", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/completion_drivers.md §\"Issue 6\". zsh.lua's OUTER_SCRIPT (embedded Lua string literal) has a `(__PIREQ__*)` case (zsh.lua:192-196) that extracts cmd via `local cmd=\"${${payload#*\\\"line\\\":\\\"}%%\\\"*}\"` then sends `$'\\003'\\'\\025'\"$cmd\"$'\\t'` to zpty (zsh.lua:196). Empty cmd → zpty sends empty line → zsh fires full command completion → flood. bash.lua's DAEMON_SCRIPT has a `(__PIREQ__*)` case (bash.lua:193-201) that extracts line via `local line=\"${payload#*\\\"line\\\":\\\"}\"; line=\"${line%%\\\"*}\"` then calls `__pi_complete \"$line\" \"$cursor\"` (bash.lua:200). For empty line, __pi_complete (bash.lua:145-179) sets COMP_WORDS=(\"\"), COMP_CWORD=0, cur=\"\" → `compgen -abck -A function -- \"\"` returns ALL commands → flood.\n2. INPUT: The zsh OUTER_SCRIPT Lua string literal (zsh.lua:192-196, the (__PIREQ__*) case). The bash DAEMON_SCRIPT Lua string literal (bash.lua:193-201, the (__PIREQ__*) case). The cmd/line variables extracted at zsh.lua:194 / bash.lua:194.\n3. LOGIC: For ZSH: in the `(__PIREQ__*)` case, AFTER extracting cmd (zsh.lua:194) and BEFORE the `echo __PIRESP_START__` + zpty write (zsh.lua:195-196), insert: `if [[ -z \"$cmd\" ]]; then echo __PIRESP_START__; echo '{\"items\":[]}'; echo __PIRESP_END__; return 0; fi`. Uses zsh syntax ([[ ]]/echo/return). For BASH: in the `(__PIREQ__*)` case, AFTER extracting line (bash.lua:194) and BEFORE `echo __PIRESP_START__` + __pi_complete (bash.lua:199-200), insert: `if [[ -z \"$line\" ]]; then echo __PIRESP_START__; echo '{\"items\":[]}'; echo __PIRESP_END__; return; fi`. Uses bash syntax. Be careful with Lua string escaping for the embedded shell scripts (backslashes, quotes).\n4. OUTPUT: Same as T6.S1 but for zsh and bash drivers. A line containing `\"` → empty cmd → daemon returns {\"items\":[]} → clean empty menu. Add tests in tests/shell_zsh_driver_spec.lua/_smoke.lua and tests/shell_bash_driver_spec.lua/_smoke.lua: feed a __PIREQ__ with a quote-containing line, assert 0 items.\n5. DOCS: [Mode A] Update the zsh.lua (62-64) and bash.lua (71-73) header 'KNOWN LIMITATION' notes to reflect that empty/quote-containing .line now degrades to empty results (not a flood)."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M2.T7",
+              "title": "Sync changeset-level documentation",
+              "status": "Planned",
+              "description": "Mode B final documentation sweep. Per-feature docs (doc/pi-bridge-shell.txt §prefer, driver doc-comments, resolve_shell doc-comment) were updated Mode A in their implementing subtasks. This task sweeps the OVERVIEW docs (README.md, extension/README.md, doc/pi-bridge.txt) that span the whole changeset, ensuring they accurately reflect the post-fix behavior. Depends on ALL implementing subtasks.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T7.S1",
+                  "title": "Sweep README.md, extension/README.md, and doc/pi-bridge.txt for changeset consistency",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T2.S1", "P1.M1.T3.S1", "P1.M2.T4.S1", "P1.M2.T5.S1", "P1.M2.T6.S1", "P1.M2.T6.S2"],
+                  "prd_selectors": ["h2.0", "h2.4"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: This is the Mode B final sweep (SOW §5). All per-feature docs were updated Mode A in their implementing subtasks: doc/pi-bridge-shell.txt §3 (T3.S1), resolve_shell doc-comment (T1.S1), ensure notice comment (T2.S1), driver M.cd doc-comments (T5.S1), driver KNOWN LIMITATION notes (T6.S1, T6.S2). This task covers the cross-cutting overview docs ONLY.\n2. INPUT: All code+doc changes from T1-T6. The three overview doc files: README.md (root, 19KB — has a shell-completion section + configuration tables + known-limitations), extension/README.md (10KB — has shell/env-var sections), doc/pi-bridge.txt (21KB — main plugin help with cross-references to pi-bridge-shell.txt).\n3. LOGIC: Review each file for accuracy after the 6 fixes: (a) README.md — check the shell-completion feature section for any 'always consistent by default' claims (Issue 2 changes this for non-bash $SHELL users); check the configuration/known-limitations tables for PI_NVIM_SHELL documentation (newly surfaced by T3); check any mention of the mismatch notice (now scoped to prefer==\"pi\"). (b) extension/README.md — check if PI_NVIM_SHELL is documented (it exists as SHELL_MIRROR_ENV but may not be in the README); add it if missing, cross-referencing the new doc/pi-bridge-shell.txt §3 content. (c) doc/pi-bridge.txt — ensure cross-references to pi-bridge-shell-prefer and pi-bridge-shell-config are consistent with the T3 doc updates. Make ONLY documentation changes — no code.\n4. OUTPUT: README.md, extension/README.md, and doc/pi-bridge.txt accurately reflect the post-fix behavior. No stale claims about default-case consistency, no missing PI_NVIM_SHELL documentation.\n5. DOCS: This IS the documentation task."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

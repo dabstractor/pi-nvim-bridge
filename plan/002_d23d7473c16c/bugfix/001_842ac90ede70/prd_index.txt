@@ -1,0 +1,14 @@
+h1.0 Bug Fix Requirements
+ h2.0 Overview
+ h2.1 Critical Issues (Must Fix)
+ h2.2 Major Issues (Should Fix)
+  h3.0 Issue 1: prefer = "bash" (and prefer = "/path/to/bash") wrongly fires the §17.4.3 "switch to your native shell" mismatch notice
+  h3.1 Issue 2: The headline prefer = "pi" guarantee ("completions and execution always agree") is not honored in the most common configuration, and the §17.4.3 safety-net notice is dead code by default
+ h2.3 Minor Issues (Nice to Fix)
+  h3.2 Issue 3: Supersession race — deleting the leading ! while a shell request is in flight lets the stale response re-open the shell menu
+  h3.3 Issue 4: Daemon cwd re-tracking is documented (PRD §17.5.2) and shipped (all three drivers define M.cd) but is never wired — dead code
+  h3.4 Issue 5: :checkhealth pi-bridge shell section reports an inaccurate "source" label
+  h3.5 Issue 6: Command lines containing a literal " produce an all-commands flood instead of a graceful "no results"
+ h2.4 Testing Summary
+---
+para:36 list:6

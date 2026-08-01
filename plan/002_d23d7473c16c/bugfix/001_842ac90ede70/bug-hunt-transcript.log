@@ -1,0 +1,21 @@
+The bug report is written and verified. Here's a summary of what I did and found.
+
+## Testing Summary
+
+I validated the `pi-nvim-bridge` implementation against the PRD, focusing creative adversarial testing on the newest/most complex feature — **§17 shell completion** — by driving the *real* production code paths the unit tests stub out (live `fish`/`zsh`/`bash` daemons through real `shell.lua`, real-buffer `complete_current`/`accept.apply` round-trips, `:checkhealth`, descriptor flow, plus targeted repros).
+
+**Baseline:** All 84 existing tests pass (66 Lua + 18 TS). The core functionality is solid and well-engineered.
+
+**Findings written to `plan/002_d23d7473c16c/bugfix/001_842ac90ede70/TEST_RESULTS.md`** (6 issues, each with deterministic repros):
+
+- **Critical:** None.
+- **Major (2):**
+  1. `prefer = "bash"` (explicit user choice) wrongly fires the §17.4.3 "switch to your native zsh" mismatch notice — contradicts the PRD scope (notice is for `prefer:"pi"` only), the user docs, and gives *inert* advice (`shellPath` has no effect under `prefer:"bash"`).
+  2. The headline `prefer:"pi"` "completions and execution always agree" guarantee silently fails for the most common config (non-bash `$SHELL` user): the descriptor falls back to `$SHELL` while pi executes in bash, and the §17.4.3 safety-net notice is consequently dead code by default.
+- **Minor (4):**
+  3. Supersession race: deleting the `!` while a shell request is in flight re-opens a stale shell menu (the `ctx==nil` close path doesn't bump `state.gen`).
+  4. Daemon cwd re-tracking (PRD §17.5.2) is shipped (`M.cd` in all 3 drivers) but never wired — dead code.
+  5. `:checkhealth` reports an inaccurate shell "source" (always `"pi"` when descriptor.shell is present, ignoring `shellSource`).
+  6. Command lines containing a literal `"` flood the menu with all commands instead of a graceful empty result.
+
+I confirmed I did not modify any source code, PRD/PRP files, or pipeline state — only wrote the single TEST_RESULTS.md report (and cleaned up my `/tmp` probe scripts).
