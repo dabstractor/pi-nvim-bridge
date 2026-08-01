@@ -23,3 +23,6 @@ Thumbs.db
 
 # pi-subagents runtime artifacts (transcripts, meta, transient outputs)
 .pi-subagents/
+
+# pi agent runtime artifacts (session task tracking, transient state)
+.pi/
