@@ -386,7 +386,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T4.S2",
                   "title": "fish.lua response parsing + AutocompleteItem normalization + prefix derivation",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M2.T4.S1"

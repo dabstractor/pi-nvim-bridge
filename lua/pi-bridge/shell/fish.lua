@@ -167,6 +167,46 @@ end
 ]]
 
 -- ===========================================================================
+-- M.parse(raw) — pure-Lua complete -C parser (PRD §17.6.1 / §17.15)
+-- ===========================================================================
+
+--- Parse raw fish `complete -C` output (newline-delimited `word⇥description` lines,
+--- 0x09 = the first-tab delimiter) into the driver's raw-item wire shape
+--- `{ value:string, description?:string }[]` — the exact input shell.lua `normalize_item`
+--- consumes to build `AutocompleteItem {value, label=value, description?}` (PRD §17.6.1).
+--- Pure Lua + never-throws + dependency-free (no `vim.*`/require) → fixture-testable
+--- offline (PRD §17.15 "no live fish needed for the parser"). Mirrors the S1 daemon's
+--- `__pi_handle` split semantics (first literal tab; description optional; empty-word
+--- lines dropped). KNOWN LIMITATION: a candidate WORD containing a literal 0x09 cannot
+--- round-trip (the format is unescaped tab-delimited; first tab = delimiter) — documented
+--- in the spec; do not add an escape scheme. NOT called by shell.lua `_feed` (the daemon
+--- pre-builds single-object JSON; `M.parse` is the testable reference of the same spec).
+--- The completion prefix is derived CLIENT-SIDE in shell.lua (`shell_word_prefix` /
+--- `complete_current`, which OVERRIDES the daemon's advisory `"prefix":""`) — `M.parse`
+--- emits ONLY `{value, description?}`, never a prefix or label.
+---@param raw string? Raw `complete -C` stdout (UTF-8; non-string → {}).
+---@return table[] items `{ value:string, description?:string }[]` (may be empty).
+function M.parse(raw)
+	if type(raw) ~= "string" then
+		return {}
+	end
+	local items = {}
+	for line in raw:gmatch("[^\r\n]+") do -- split lines; empty lines skipped by gmatch
+		local tab = line:find("\t", 1, true) -- FIRST literal tab, PLAIN find (4th arg = plain; no pattern)
+		local value = tab and line:sub(1, tab - 1) or line
+		if value ~= "" then -- drop empty-word lines (parity with normalize_item, which drops empty-value items)
+			local item = { value = value }
+			local desc = tab and line:sub(tab + 1) or nil
+			if desc and desc ~= "" then
+				item.description = desc
+			end -- description OPTIONAL (omit if absent/empty)
+			items[#items + 1] = item
+		end
+	end
+	return items
+end
+
+-- ===========================================================================
 -- M.start(opts, on_ready) — spawn the fish daemon + detect cold-start readiness
 -- ===========================================================================
 
@@ -197,12 +237,15 @@ end
 ---@param on_ready fun(err:string|nil, proc:userdata?, stdin:userdata?, stdout:userdata?) The ready cb.
 function M.start(opts, on_ready)
 	-- never-throws on a bad arg (mirrors shell.lua's discipline; a non-function cb is a noop).
-	if type(on_ready) ~= "function" then return end
+	if type(on_ready) ~= "function" then
+		return
+	end
 	opts = opts or {}
 	local shell_bin = (type(opts.shell) == "string" and opts.shell ~= "") and opts.shell or "fish"
 	local cwd = (type(opts.cwd) == "string" and opts.cwd ~= "") and opts.cwd or nil
 	local timeout_ms = (type(opts.startup_timeout_ms) == "number" and opts.startup_timeout_ms > 0)
-		and opts.startup_timeout_ms or 5000
+			and opts.startup_timeout_ms
+		or 5000
 
 	-- the single exit point: exactly-one on_ready call (guards the timer/read/on_exit races).
 	local resolved = false
@@ -211,7 +254,9 @@ function M.start(opts, on_ready)
 	local proc, stdin, stdout, stderr_pipe, timer, tmp_path
 
 	local function done(err, p, si, so)
-		if resolved then return end
+		if resolved then
+			return
+		end
 		resolved = true
 		on_ready(err, p, si, so)
 	end
@@ -222,7 +267,10 @@ function M.start(opts, on_ready)
 	-- (double-close throws; a half-spawned state may have nil handles). NO vim.api.* (fast ctx).
 	local function fail(errmsg)
 		pcall(function()
-			if timer and not timer:is_closing() then timer:stop(); timer:close() end
+			if timer and not timer:is_closing() then
+				timer:stop()
+				timer:close()
+			end
 		end)
 		pcall(function()
 			if stderr_pipe and not stderr_pipe:is_closing() then
@@ -236,9 +284,19 @@ function M.start(opts, on_ready)
 				proc:close()
 			end
 		end)
-		pcall(function() if stdin and not stdin:is_closing() then stdin:close() end end)
-		pcall(function() if stdout and not stdout:is_closing() then stdout:close() end end)
-		if tmp_path then pcall(os.remove, tmp_path) end
+		pcall(function()
+			if stdin and not stdin:is_closing() then
+				stdin:close()
+			end
+		end)
+		pcall(function()
+			if stdout and not stdout:is_closing() then
+				stdout:close()
+			end
+		end)
+		if tmp_path then
+			pcall(os.remove, tmp_path)
+		end
 		last_stdin = nil
 		done(errmsg, nil, nil, nil)
 	end
@@ -250,7 +308,9 @@ function M.start(opts, on_ready)
 		f:write(DAEMON_SCRIPT)
 		f:close()
 	end)
-	if not wok then return fail("script write failed: " .. tostring(werr)) end
+	if not wok then
+		return fail("script write failed: " .. tostring(werr))
+	end
 
 	-- (2) create the three piped streams (false = not a TTY; matches the spike L57-59).
 	stdin = uv.new_pipe(false)
@@ -268,27 +328,40 @@ function M.start(opts, on_ready)
 			args = { "-i", "--init-command=source " .. tmp_path },
 			stdio = { stdin, stdout, stderr_pipe },
 		}
-		if cwd then spawn_opts.cwd = cwd end
+		if cwd then
+			spawn_opts.cwd = cwd
+		end
 		proc = uv.spawn(shell_bin, spawn_opts, function(exit_code, signal)
 			-- proc died. If we already resolved (success), do nothing — shell.lua's stdout EOF
 			-- → _reset handles the mid-session crash. If NOT yet ready, it's a startup failure.
-			if not resolved then fail("fish exited pre-ready (code=" .. tostring(exit_code)
-				.. " sig=" .. tostring(signal) .. ")") end
+			if not resolved then
+				fail("fish exited pre-ready (code=" .. tostring(exit_code) .. " sig=" .. tostring(signal) .. ")")
+			end
 		end)
 	end)
-	if not spawn_ok then return fail("spawn threw: " .. tostring(spawn_err)) end
-	if not proc then return fail("spawn returned no handle (binary missing?): " .. tostring(spawn_err)) end
+	if not spawn_ok then
+		return fail("spawn threw: " .. tostring(spawn_err))
+	end
+	if not proc then
+		return fail("spawn returned no handle (binary missing?): " .. tostring(spawn_err))
+	end
 
 	-- (4) arm the cold-start timer (the driver OWNS it — shell.lua passes startup_timeout_ms
 	--     THROUGH). One-shot (start(ms, 0, cb)); on fire → fail("startup timeout").
 	timer = uv.new_timer()
-	if not timer then return fail("timer alloc failed") end
+	if not timer then
+		return fail("timer alloc failed")
+	end
 	local tok = pcall(function()
 		timer:start(timeout_ms, 0, function()
-			if not resolved then fail("startup timeout") end
+			if not resolved then
+				fail("startup timeout")
+			end
 		end)
 	end)
-	if not tok then return fail("timer start threw") end
+	if not tok then
+		return fail("timer start threw")
+	end
 
 	-- (5) read STDERR for the `__PIREADY__\n` marker (stdout stays PRISTINE for shell.lua —
 	--     two read_start's on one pipe is illegal). Accumulate into ready_buf; on marker →
@@ -297,19 +370,34 @@ function M.start(opts, on_ready)
 	local ready_buf = ""
 	local rok = pcall(function()
 		stderr_pipe:read_start(function(rerr, data)
-			if resolved then return end
-			if rerr then return fail("stderr read err: " .. tostring(rerr)) end
+			if resolved then
+				return
+			end
+			if rerr then
+				return fail("stderr read err: " .. tostring(rerr))
+			end
 			if data then
 				ready_buf = ready_buf .. data
 				if ready_buf:find("__PIREADY__\n", 1, true) then
 					-- READY: stop + close stderr (the driver owns it), stop+close the timer,
 					-- remove the temp script, cache stdin for cd(), hand off stdout PRISTINE.
-					pcall(function() stderr_pipe:read_stop() end)
-					pcall(function() if not stderr_pipe:is_closing() then stderr_pipe:close() end end)
 					pcall(function()
-						if timer and not timer:is_closing() then timer:stop(); timer:close() end
+						stderr_pipe:read_stop()
 					end)
-					if tmp_path then pcall(os.remove, tmp_path) end
+					pcall(function()
+						if not stderr_pipe:is_closing() then
+							stderr_pipe:close()
+						end
+					end)
+					pcall(function()
+						if timer and not timer:is_closing() then
+							timer:stop()
+							timer:close()
+						end
+					end)
+					if tmp_path then
+						pcall(os.remove, tmp_path)
+					end
 					last_stdin = stdin
 					done(nil, proc, stdin, stdout)
 				end
@@ -319,7 +407,9 @@ function M.start(opts, on_ready)
 			end
 		end)
 	end)
-	if not rok then return fail("stderr read_start threw") end
+	if not rok then
+		return fail("stderr read_start threw")
+	end
 end
 
 -- ===========================================================================
@@ -336,11 +426,19 @@ end
 --- silently swallows EPIPE; we pass a noop cb so the write is fire-and-forget but luv-clean).
 ---@param path string The target directory (tostring'd; nil/non-string → noop).
 function M.cd(path)
-	if type(path) ~= "string" or path == "" then return end
-	if not last_stdin then return end
+	if type(path) ~= "string" or path == "" then
+		return
+	end
+	if not last_stdin then
+		return
+	end
 	-- is_closing may itself be missing on a malformed handle — pcall the whole guard.
-	local alive = pcall(function() return not last_stdin:is_closing() end)
-	if not alive then return end
+	local alive = pcall(function()
+		return not last_stdin:is_closing()
+	end)
+	if not alive then
+		return
+	end
 	pcall(function()
 		last_stdin:write(string.format("__PICD__\t%s\n", path), function() end)
 	end)
