@@ -542,7 +542,7 @@
                   "type": "Subtask",
                   "id": "P2.M3.T6.S3",
                   "title": "ftplugin/pi-prompt.lua VimLeavePre/ExitPre teardown also calls shell.teardown()",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M1.T2.S6"

@@ -840,13 +840,18 @@ autosave_if_modified = function(buf)
 end
 
 --- VimLeavePre / ExitPre handler — fulfills the S22 ftplugin forward contract
---- (`require("pi-bridge.bridge").on_exit(buf)`). Three idempotent steps, each pcall-guarded
+--- (`require("pi-bridge.bridge").on_exit(buf)`). Four idempotent steps, each pcall-guarded
 --- so exit is NEVER blocked or aborted (research §Q6.1; never vim.schedule — GOTCHA E):
 ---   (1) autosave buf to its file if modified (PRD §11 — prevents the lost-prompt bug;
 ---       independent of connection state, GOTCHA G).
 ---   (2) best-effort graceful `bye` JSON-RPC, fire-and-forget, ONLY when connected (PRD §5.4;
 ---       GOTCHA C — do NOT await; the ~60B bye flushes synchronously, the server handles EOF).
 ---   (3) M.close() — idempotent transport teardown (GOTCHA 2).
+---   (4) shell.teardown() — kill + close the §17 completion daemon (pcall'd; never-throws;
+---       no-op if never spawned). PRD §17.5/§17.13. INDEPENDENT of the bridge socket (§17.13)
+---       — order vs M.close() is not load-bearing; placed last to keep steps (1)-(3)'s
+---       proven ordering intact. Lazy require (fresh-reads discipline; test fakes inject
+---       after require) + type-guarded (the S5 forward-guard idiom; free future-proofing).
 --- Safe across the ExitPre→VimLeavePre double-fire (GOTCHA A): autosave is gated on
 --- 'modified' (cleared in step 1), bye on is_connected() (false after step 3), close on
 --- state.closed. Safe when never connected (GOTCHA 12 — autosave guard + is_connected gate).
@@ -860,6 +865,19 @@ function M.on_exit(buf)
   end
   -- (3) teardown — idempotent (GOTCHA 2; safe across the ExitPre+VimLeavePre double-fire, GOTCHA A).
   M.close()
+  -- (4) §17 completion-daemon teardown (P2.M3.T6.S3). Kill + close the persistent shell
+  --     daemon so its uv handles don't leak for the session (PRD §17.5/§17.13). pcall'd
+  --     (never aborts exit); no-op when the daemon was never spawned (S6's nil +
+  --     is_closing guards). INDEPENDENT of the bridge socket (§17.13) — order vs M.close()
+  --     is not load-bearing; placed last to keep steps (1)-(3)'s proven ordering intact.
+  --     Never vim.schedule (GOTCHA E — teardown() is synchronous; a deferred call would race
+  --     the editor actually exiting and the handles would never be closed in time).
+  pcall(function()
+    local ok, shell = pcall(require, "pi-bridge.shell")
+    if ok and type(shell) == "table" and type(shell.teardown) == "function" then
+      shell.teardown()
+    end
+  end)
 end
 
 --- Read-only accessor: `true` only between `on_ready(nil)` and the start of teardown.
