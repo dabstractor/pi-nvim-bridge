@@ -147,6 +147,7 @@ end
 ---@field open            boolean                     Whether the menu is showing (true after open() with items).
 ---@field win             integer|nil                 S34: the floating window handle (set by render; nil when closed).
 ---@field menu_buf        integer|nil                 S34: the scratch buffer handle (lazy create; reused across opens; nil'd by reset()).
+---@field context         string|nil                   S5: the completion context ("shell"|"slash"|"path"|nil) set by on_results. "shell" renders the visual cue.
 ---@type pi-bridge.MenuState
 local state = {
   attached = false,
@@ -158,6 +159,7 @@ local state = {
   open = false,
   win = nil,
   menu_buf = nil,
+  context = nil, -- S5: shell context → renders the $ gutter (or border) visual cue
 }
 
 -- ===========================================================================
@@ -171,6 +173,24 @@ local ns = nil
 do
   local ok, id = pcall(vim.api.nvim_create_namespace, "pi-bridge-menu")
   if ok and type(id) == "number" then ns = id end -- nil on failure (apply_highlights degrades)
+end
+
+-- ===========================================================================
+-- S5: shell-context visual cue (PRD §17.9). When completion_context == "shell", every
+-- menu line is prefixed with a `$ ` gutter (2 display cells) — mirroring pi's TUI
+-- isBashMode border recolor. Alternative cues ("border"/"off") are read fresh in
+-- render() from config.shell.visual_cue. The default hl groups (PiBridgeShellGutter /
+-- PiBridgeShellBorder) are defined LAZILY with default=true so user themes win.
+-- ===========================================================================
+local GUTTER = "$ "   -- the 2-cell prefix prepended to each shell-context line
+local GUTTER_W = 2    -- vim.fn.strdisplaywidth(GUTTER) (ASCII; never CJK-skewed)
+
+--- Define the two shell-cue default highlight groups ONCE (idempotent + default=true so
+--- a user's :hi / theme wins; mirrors the standard nvim plugin form). pcall-wrapped
+--- (never throws; :hi is api-safe on the main loop).
+local function define_shell_hl()
+  pcall(vim.api.nvim_set_hl, 0, "PiBridgeShellGutter", { link = "SpecialKey", default = true })
+  pcall(vim.api.nvim_set_hl, 0, "PiBridgeShellBorder", { link = "WarningMsg", default = true })
 end
 
 -- ===========================================================================
@@ -241,16 +261,19 @@ end
 -- every S34 label-only case stays green).
 -- ===========================================================================
 
--- Width = label-only (S34) OR label+gap+description (S35, when any item has a desc).
--- CJK-aware via strdisplaywidth. Clamped to the available screen columns minus border
--- horizontal overhead.
+--- Width = label-only (S34) OR label+gap+description (S35, when any item has a desc),
+--- PLUS an optional S5 gutter prefix width (gutter_w, default 0). CJK-aware via
+--- strdisplaywidth. Clamped to the available screen columns minus border horizontal
+--- overhead.
 ---@param items pi-bridge.AutocompleteItem[] The items to size for.
 ---@param ui_cols integer Full-screen columns (vim.o.columns).
 ---@param border_h_overhead integer Horizontal border overhead in cells (2 for a real border, 0 for "none").
+---@param gutter_w? integer S5: the shell-context gutter width (default 0 — no gutter).
 ---@return integer The content width, >= 1, clamped to fit the screen.
-local function compute_width(items, ui_cols, border_h_overhead)
+local function compute_width(items, ui_cols, border_h_overhead, gutter_w)
   local m = column_metrics(items)
   local w = m.any_desc and (m.max_label_w + DESC_GAP + m.max_desc_w) or m.max_label_w
+  w = w + (gutter_w or 0) -- S5: grow by the gutter prefix width (0 by default — back-compatible)
   return math.max(1, math.min(w, ui_cols - border_h_overhead))
 end
 
@@ -344,13 +367,19 @@ end
 --- Build the S35 two-column lines: label (right-padded to label_w) + DESC_GAP + the
 --- description truncated to desc_w (right-padded), the whole line padded to a clean
 --- rectangle. When desc_w==0, produces S34-identical label-only padded lines.
+--- S5: when `gutter` is true, each row is prefixed with the `$ ` gutter (GUTTER_W cells)
+--- and `total` grows by GUTTER_W so the clean-rectangle padding stays correct. The
+--- label/desc column math is UNCHANGED (the gutter is a fixed once-per-row prefix).
 --- Never throws (type-guarded). CJK-aware via strdisplaywidth/strcharpart.
 ---@param state pi-bridge.MenuState The menu state (reads state.items).
 ---@param label_w integer The label column width.
 ---@param desc_w integer The description column width (0 ⇒ label-only).
+---@param gutter? boolean S5: prepend the `$ ` gutter to each row (default false).
 ---@return string[] The padded two-column (or label-only) lines.
-local function render_lines(state, label_w, desc_w)
-  local total = label_w + (desc_w > 0 and DESC_GAP or 0) + desc_w
+local function render_lines(state, label_w, desc_w, gutter)
+  local gw = (gutter == true) and GUTTER_W or 0
+  local total = gw + label_w + (desc_w > 0 and DESC_GAP or 0) + desc_w
+  local prefix = (gutter == true) and GUTTER or ""
   local lines = {}
   for i = 1, #state.items do
     local it = state.items[i]
@@ -368,6 +397,7 @@ local function render_lines(state, label_w, desc_w)
         row = row .. string.rep(" ", desc_w) -- no desc → blank desc col
       end
     end
+    row = prefix .. row -- S5: prepend the gutter AFTER the label/desc columns are padded
     local rw = vim.fn.strdisplaywidth(row)
     lines[i] = row .. string.rep(" ", math.max(0, total - rw)) -- clean rectangle (CJK-safe)
   end
@@ -378,13 +408,17 @@ end
 --- from render()'s SHOW path AFTER nvim_buf_set_lines. NEVER throws (pcall every nvim
 --- call; type-guards; nvim_buf_is_valid guards; type(ns) guard). Order is load-bearing
 --- (LAST-WINS within a namespace, neovim#8449 — research/notes.md §2):
----   (a) clear  (b) base Pmenu every row  (c) Comment on desc ranges  (d) PmenuSel selected LAST.
+---   (a) clear  (b) base Pmenu every row  (c) Comment on desc ranges
+---   (c.5) S5: PiBridgeShellGutter on [0,GUTTER_W) when `gutter`  (d) PmenuSel selected LAST.
 --- `state.selected` is 1-BASED (S31); nvim rows are 0-BASED → passes `state.selected - 1`.
+--- The gutter highlight PRECEDES PmenuSel (LAST-WINS) so the selected row's `$` stays
+--- visible — PmenuSel wins there, tinting it with the selection bg (the intended look).
 ---@param state pi-bridge.MenuState reads state.items + state.selected (1-based).
 ---@param buf integer the scratch buffer (state.menu_buf).
 ---@param label_w integer the label column width.
 ---@param desc_w integer the description column width (0 ⇒ no desc column).
-local function apply_highlights(state, buf, label_w, desc_w)
+---@param gutter? boolean S5: paint PiBridgeShellGutter on [0,GUTTER_W) of every row (default false).
+local function apply_highlights(state, buf, label_w, desc_w, gutter)
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then return end
   if type(ns) ~= "number" then return end -- namespace create failed → degrade
   pcall(vim.api.nvim_buf_clear_namespace, buf, ns, 0, -1) -- (a) clear (reused scratch buf)
@@ -403,6 +437,11 @@ local function apply_highlights(state, buf, label_w, desc_w)
           pcall(vim.api.nvim_buf_add_highlight, buf, ns, "Comment", i - 1, desc_start, desc_start + dw)
         end
       end
+    end
+  end
+  if gutter == true then -- (c.5) S5: PiBridgeShellGutter on [0,GUTTER_W) BEFORE PmenuSel (LAST-WINS)
+    for i = 1, n do
+      pcall(vim.api.nvim_buf_add_highlight, buf, ns, "PiBridgeShellGutter", i - 1, 0, GUTTER_W)
     end
   end
   if type(state.selected) == "number" and state.selected >= 1 and state.selected <= n then
@@ -432,18 +471,29 @@ local function render(state)
   -- READ config FRESH (setup() may never have run — self-sufficient).
   local cfg = require("pi-bridge")
   local menu_cfg = ((cfg.config or cfg.defaults) or {}).menu or {}
+  -- S5: shell-context visual cue (PRD §17.9). Read config.shell.visual_cue DEFENSIVELY
+  -- (the formal shell={} defaults block is T6.S1, not yet landed — a nil config must NOT
+  -- throw; default "gutter"). state.context == "shell" activates the cue; anything else
+  -- renders normally (slash/path/nil = no cue).
+  local shell_cfg = (cfg.config and cfg.config.shell) or {}
+  local cue = (type(shell_cfg.visual_cue) == "string" and shell_cfg.visual_cue) or "gutter"
+  local is_shell = state.context == "shell"
+  local gutter_on = is_shell and cue == "gutter"
+  local border_shell = is_shell and cue == "border"
   local max_height = (type(menu_cfg.max_height) == "number" and menu_cfg.max_height > 0)
                     and menu_cfg.max_height or 12
   local border = (type(menu_cfg.border) == "string" or type(menu_cfg.border) == "table")
                  and menu_cfg.border or "rounded"
   local has_border = border ~= "none"
   local bh = has_border and 2 or 0
+  -- S5: define the lazy default hl groups once (default=true → user themes win).
+  define_shell_hl()
   -- LIVE screen reads (correct interactively; pinned to 1 headless → geometry is unit-tested
   -- via the pure compute_geometry, NOT through render — research/notes.md §4). pcall-safe.
   local ui_lines, ui_cols = vim.o.lines, vim.o.columns
   local sr = (pcall(vim.fn.screenrow) and vim.fn.screenrow()) or 1
   local sc = (pcall(vim.fn.screencol) and vim.fn.screencol()) or 1
-  local width = compute_width(state.items, ui_cols, bh)
+  local width = compute_width(state.items, ui_cols, bh, gutter_on and GUTTER_W or 0)
   local height = compute_height(#state.items, max_height)
   if height <= 0 then                                    -- defensive (items guard already)
     if type(state.win) == "number" and vim.api.nvim_win_is_valid(state.win) then
@@ -453,22 +503,26 @@ local function render(state)
     return
   end
   local g = compute_geometry(sr, sc, ui_lines, ui_cols, width, height, max_height, border)
+  -- S5: the gutter is a fixed 2-cell prefix; subtract it from the FINAL g.width BEFORE the
+  -- label/desc split so the desc column math stays correct (compute_width already added it
+  -- to the REQUESTED width; compute_geometry may have clamped it — recompute from g.width).
+  local gw = gutter_on and GUTTER_W or 0
   -- S35: split the FINAL g.width (compute_geometry may have clamped it) into label + desc
   -- columns. compute_width REQUESTED the two-column width; compute_geometry may clamp it
   -- further (case 5 over-wide). Recompute the split from the FINAL g.width so the desc
   -- column fits what actually got painted.
   local m = column_metrics(state.items)
   local label_w = m.max_label_w
-  local desc_w  = m.any_desc and math.max(0, g.width - label_w - DESC_GAP) or 0
+  local desc_w  = m.any_desc and math.max(0, g.width - gw - label_w - DESC_GAP) or 0
   if m.any_desc and desc_w < 3 then desc_w = 0 end -- too thin → label-only (no 1–2 cell sliver)
-  local _rlines = render_lines(state, label_w, desc_w)
+  local _rlines = render_lines(state, label_w, desc_w, gutter_on)
   dbg(string.format("[menu.render] items=%d height=%s width=%s label_w=%s desc_w=%s nrlines=%d first=%q",
       #state.items, tostring(g.height), tostring(g.width), tostring(label_w), tostring(desc_w), #_rlines, tostring(_rlines[1] or "<none>")))
   local _sl_ok, _sl_err = pcall(vim.api.nvim_buf_set_lines, buf, 0, -1, false, _rlines)
   -- read-back: confirm the buffer actually holds the lines (rules out a silent set_lines failure)
   local _rb = vim.api.nvim_buf_get_lines(buf, 0, 1, false)
   dbg(string.format("[menu.render] set_lines ok=%s err=%q buf_first=%q win=%s", tostring(_sl_ok), tostring(_sl_err), tostring((_rb or {})[1] or "<EMPTY>"), tostring(state.win)))
-  apply_highlights(state, buf, label_w, desc_w) -- ← THE S35 INSERTION (3-layer highlights)
+  apply_highlights(state, buf, label_w, desc_w, gutter_on) -- ← THE S35 INSERTION (3-layer highlights) + S5 gutter
   local win_cfg = {
     relative = "cursor", anchor = g.anchor, row = g.row, col = g.col,
     width = g.width, height = g.height, style = "minimal", border = border,
@@ -488,6 +542,16 @@ local function render(state)
   end
   -- window options (non-deprecated form): single-line entries, CJK-safe.
   pcall(vim.api.nvim_set_option_value, "wrap", false, { win = state.win })
+  -- S5: border mode — set the FloatBorder tint via the window OPTION (winhighlight is a
+  -- win option, NOT a win_config key on nvim < 0.10; setting it as an option is the
+  -- cross-version-safe form — mirrors the `wrap` set above). Re-applied each render so an
+  -- in-place reposition keeps the shell tint (no flicker). The REUSED window's prior tint
+  -- is cleared on a non-border render (the window survives close→reopen — blink lifecycle).
+  if border_shell then
+    pcall(vim.api.nvim_set_option_value, "winhighlight", "FloatBorder:PiBridgeShellBorder", { win = state.win })
+  else
+    pcall(vim.api.nvim_set_option_value, "winhighlight", "", { win = state.win })
+  end
   -- PAINT the freshly-set buffer lines. The window is opened with `noautocmd=true` from a
   -- deferred/scheduled callback; without an explicit repaint neovim sometimes leaves the
   -- floating window blank until a later keystroke (the intermittent "empty box" that
@@ -506,10 +570,15 @@ end
 --- research/notes.md §4; re-querying cursor/lines is a false-negative race). Called on
 --- the nvim main loop (api-safe — S30 fires it inline from its `vim.defer_fn` cb, whose
 --- bridge cb is itself `schedule_wrap`d). Never throws.
+--- S5: the OPTIONAL 4th `context` arg ("shell"|"slash"|"path"|nil) is stored on
+--- state.context BEFORE the empty/open routing — it is the ONLY source of truth for the
+--- visual cue at render time (coupled to the payload, so a stale menu never shows the
+--- wrong cue). Back-compatible: omitted/nil → renders normally (today's behavior).
 ---@param buf    integer                      The pi-prompt buffer handle (from S30's on_results).
 ---@param items  pi-bridge.AutocompleteItem[] The completion items (possibly empty — S30 normalized null→{}).
 ---@param prefix string                       The completion prefix (for get_prefix/S32).
-function M.on_results(buf, items, prefix)
+---@param context? string                     S5: the completion context ("shell"|"slash"|"path"|nil). "shell" renders the visual cue.
+function M.on_results(buf, items, prefix, context)
   -- WIPE guard (the ONLY nvim-state read here — NOT a staleness re-derive): a buffer may
 -- be wiped during the 20ms debounce. Silent no-op, never throw.
   if type(buf) ~= "number" or not vim.api.nvim_buf_is_valid(buf) then
@@ -518,10 +587,11 @@ function M.on_results(buf, items, prefix)
   end
   items = (type(items) == "table") and items or {}           -- defensive (S30 sends a valid array)
   local first = (items[1] and (items[1].label or items[1].value)) or "<none>"
-  dbg(string.format("[menu.on_results] buf=%s items=%d prefix=%q first=%q",
-      tostring(buf), #items, tostring(prefix), tostring(first)))
+  dbg(string.format("[menu.on_results] buf=%s items=%d prefix=%q first=%q ctx=%s",
+      tostring(buf), #items, tostring(prefix), tostring(first), tostring(context)))
   state.buf = buf
   state.prefix = (type(prefix) == "string") and prefix or "" -- defensive (S30 sends a string)
+  state.context = (type(context) == "string") and context or nil -- S5: store; nil for unknown/non-string
   -- THE routing (blink list.show: empty→hide / non-empty→store+show).
   if #items == 0 then dbg("[menu.on_results] EMPTY → close"); M.close() else M.open(items) end
 end
@@ -569,6 +639,7 @@ function M.close()
   state.items = {}
   state.selected = 0
   state.open = false
+  state.context = nil                              -- S5 hygiene: no cue on a closed menu
   render(state)                                     -- S34: close the floating window.
 end
 
@@ -658,6 +729,7 @@ function M.reset()
   state.prefix = ""
   state.win = nil                         -- S34: closed by M.close() inside render
   state.menu_buf = nil                    -- S34: scratch buffer fully torn down
+  state.context = nil                     -- S5: clear the shell-context cue (closed already nil'd it; explicit hygiene)
 end
 
 -- ===========================================================================

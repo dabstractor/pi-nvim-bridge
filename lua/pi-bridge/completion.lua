@@ -435,7 +435,7 @@ local function do_shell_fetch(buf)
     local pfx = prefix or ""
     state.last_result = { items = its, prefix = pfx } -- fast-safe (Lua table write)
     if type(M.on_results) == "function" then
-      vim.schedule(function() pcall(M.on_results, buf, its, pfx) end) -- fast → nvim main loop (menu hop)
+      vim.schedule(function() pcall(M.on_results, buf, its, pfx, "shell") end) -- fast → nvim main loop (menu hop); S5: thread the shell context
     end
   end)
 end
@@ -528,7 +528,7 @@ do_refresh = function(buf)
   end
   if not ctx then
     dbg(string.format("[do_refresh] ctx=nil (plain) line1=%q col=%s — close, no request", tostring((lines or {})[1] or ""), tostring(byte_col)))
-    if type(M.on_results) == "function" then pcall(M.on_results, buf, {}, "") end
+    if type(M.on_results) == "function" then pcall(M.on_results, buf, {}, "", nil) end -- S5: explicit nil context (plain typing)
     return
   end
   -- READ BRIDGE FRESH (only the slash/path path needs it; handshake resolves async +
@@ -578,7 +578,7 @@ do_refresh = function(buf)
         #items, tostring(prefix), tostring(first), tostring(type(M.on_results) == "function")))
     -- S31 seam (api-safe; nil today → no-op). Fires ONLY for the latest non-stale success.
     if type(M.on_results) == "function" then
-      pcall(M.on_results, buf, items, prefix)
+      pcall(M.on_results, buf, items, prefix, ctx) -- S5: thread the completion context ("slash"|"path"; shell routes to do_shell_fetch above)
     end
   end)
   if ok and type(id) == "string" then state.inflight_id = id end
@@ -659,7 +659,9 @@ local function _route_or_accept(buf, allow_auto)
     end
     -- else route to the menu via the SAME seam S30 uses (registered by menu.attach onto
     -- completion.on_results; drives empty→menu.close / non-empty→menu.open). api-safe.
-    if type(M.on_results) == "function" then pcall(M.on_results, buf, items, prefix) end
+    -- S5: shell Tab routes to do_shell_fetch before reaching here, so this path is NEVER
+    -- shell → pass an explicit nil context (slash/file only).
+    if type(M.on_results) == "function" then pcall(M.on_results, buf, items, prefix, nil) end
   end
 end
 -- Public API

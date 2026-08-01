@@ -273,7 +273,7 @@
               "type": "Task",
               "id": "P2.M2.T3",
               "title": "completion.lua routing + shell.complete_current + notices",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Add a 'shell' return value to completion_context() before the existing slash/path checks. Add shell branches to do_refresh and force_fetch. Implement shell.complete_current(buf, cb). Wire up the three notice types (mismatch, first-run hint, degrade).",
               "subtasks": [
                 {
@@ -345,7 +345,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T3.S5",
                   "title": "Menu visual_cue for shell context (gutter $ prefix)",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M2.T3.S1"

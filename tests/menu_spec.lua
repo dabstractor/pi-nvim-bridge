@@ -739,4 +739,153 @@ describe("pi-bridge.menu", function()
       end)
     end)
   end)
+
+  -- ══ S5: shell-context visual cue (PRD §17.9) ═══════════════════════════════════
+  -- The completion context ("shell"|"slash"|"path"|nil) is threaded via the 4th
+  -- on_results arg; "shell" activates the cue. config.shell.visual_cue selects
+  -- "gutter" (default) / "border" / "off". Drives the menu via menu.on_results(buf,
+  -- items, prefix, context) directly (the established unit-test seam — no daemon).
+  describe("shell visual_cue", function()
+    local function reset_ctx()
+      -- clear any shell config a case set + reset menu state (no bridge). Never throws.
+      if pi.config and pi.config.shell then pi.config.shell.visual_cue = nil end
+      pcall(menu.reset)
+    end
+    before_each(reset_ctx)
+    after_each(reset_ctx)
+
+    -- (39) gutter DEFAULT: shell-context items render a `$ ` prefix on every line +
+    --      the win width grows by 2 + PiBridgeShellGutter is present on each row.
+    it("shell context renders a $ gutter prefix + width grows by 2 + PiBridgeShellGutter", function()
+      with_cursor_window(function()
+        local buf = menu.get_buf() or vim.api.nvim_get_current_buf()
+        local items = {
+          { value = "checkout", label = "checkout" },
+          { value = "cherry-pick", label = "cherry-pick" },
+        }
+        -- first, the NON-shell width (baseline): same items, context "slash"
+        menu.on_results(buf, items, "ch", "slash")
+        assert.is_true(menu.is_open())
+        local cfg_slash = vim.api.nvim_win_get_config(menu._state.win)
+        local width_no_gutter = cfg_slash.width
+
+        -- now the SHELL context (default cue "gutter"): every line gains `$ `
+        menu.on_results(buf, items, "ch", "shell")
+        assert.is_true(menu.is_open())
+        assert.are.equals("shell", menu._state.context, "state.context == 'shell'")
+        local mbuf = menu._state.menu_buf
+        local lines = vim.api.nvim_buf_get_lines(mbuf, 0, -1, false)
+        assert.are.equals(2, #lines, "two shell items → two lines")
+        assert.are.equals("$ ", lines[1]:sub(1, 2), "row 1 starts with the `$ ` gutter")
+        assert.are.equals("$ ", lines[2]:sub(1, 2), "row 2 starts with the `$ ` gutter")
+        -- the label follows the gutter
+        assert.is_true(lines[1]:find("checkout", 3, true) ~= nil, "row 1 has the label after the gutter")
+        -- width grew by exactly GUTTER_W (2)
+        local cfg_shell = vim.api.nvim_win_get_config(menu._state.win)
+        assert.are.equals(width_no_gutter + 2, cfg_shell.width,
+          "shell width == non-shell width + 2 (the gutter)")
+        -- PiBridgeShellGutter decoration present on each row
+        local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
+        local g0 = hl_groups_on_row(mbuf, ns, 0)
+        local g1 = hl_groups_on_row(mbuf, ns, 1)
+        assert.is_true(g0.PiBridgeShellGutter == true, "PiBridgeShellGutter on row 0")
+        assert.is_true(g1.PiBridgeShellGutter == true, "PiBridgeShellGutter on row 1")
+      end)
+    end)
+
+    -- (40) NON-shell context (slash/nil): NO `$ ` prefix; width == baseline.
+    it("slash/nil context renders NO gutter (identical to pre-change)", function()
+      with_cursor_window(function()
+        local buf = menu.get_buf() or vim.api.nvim_get_current_buf()
+        local items = { { value = "model", label = "model" } }
+        -- context "slash"
+        menu.on_results(buf, items, "mo", "slash")
+        local lines = vim.api.nvim_buf_get_lines(menu._state.menu_buf, 0, -1, false)
+        assert.are_not.equals("$ ", lines[1]:sub(1, 2), "slash context: NO `$ ` prefix")
+        assert.are.equals("model", lines[1]:match("^%s*(.-)%s*$"), "slash context shows the label")
+        -- context nil (omitted 4th arg → back-compatible)
+        menu.on_results(buf, items, "mo")
+        lines = vim.api.nvim_buf_get_lines(menu._state.menu_buf, 0, -1, false)
+        assert.are_not_equals("$ ", lines[1]:sub(1, 2), "nil context: NO `$ ` prefix")
+        assert.is_nil(menu._state.context, "state.context is nil for an omitted 4th arg")
+      end)
+    end)
+
+    -- (41) visual_cue = "off": NO gutter even for shell context.
+    it("visual_cue='off' suppresses the gutter for shell context", function()
+      with_cursor_window(function()
+        -- stub config.shell.visual_cue = "off" (defensive: T6.S1 hasn't formalized the block)
+        if pi.config == nil then pi.setup({}) end
+        pi.config.shell = pi.config.shell or {}
+        pi.config.shell.visual_cue = "off"
+
+        local buf = menu.get_buf() or vim.api.nvim_get_current_buf()
+        local items = { { value = "checkout", label = "checkout" } }
+        menu.on_results(buf, items, "ch", "shell")
+        assert.are.equals("shell", menu._state.context, "context is still shell")
+        local lines = vim.api.nvim_buf_get_lines(menu._state.menu_buf, 0, -1, false)
+        assert.are_not_equals("$ ", lines[1]:sub(1, 2), "visual_cue='off' → NO `$ ` prefix")
+        assert.are.equals("checkout", lines[1]:match("^%s*(.-)%s*$"), "the label renders without a gutter")
+        -- PiBridgeShellGutter NOT applied
+        local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
+        local g0 = hl_groups_on_row(menu._state.menu_buf, ns, 0)
+        assert.is_nil(g0.PiBridgeShellGutter, "visual_cue='off' → no PiBridgeShellGutter decoration")
+      end)
+    end)
+
+    -- (42) visual_cue = "border": shell context sets winhighlight FloatBorder:PiBridgeShellBorder; NO gutter.
+    it("visual_cue='border' sets FloatBorder:PiBridgeShellBorder + no gutter", function()
+      with_cursor_window(function()
+        if pi.config == nil then pi.setup({}) end
+        pi.config.shell = pi.config.shell or {}
+        pi.config.shell.visual_cue = "border"
+
+        local buf = menu.get_buf() or vim.api.nvim_get_current_buf()
+        local items = { { value = "checkout", label = "checkout" } }
+        menu.on_results(buf, items, "ch", "shell")
+        assert.is_true(menu.is_open())
+        local mwin = menu._state.win
+        assert.is_true(vim.api.nvim_win_is_valid(mwin))
+        -- the window's winhighlight maps FloatBorder → PiBridgeShellBorder
+        local wh = vim.wo[mwin].winhighlight
+        assert.is_true(type(wh) == "string" and wh:find("FloatBorder:PiBridgeShellBorder", 1, true) ~= nil,
+          "winhighlight maps FloatBorder:PiBridgeShellBorder (got: " .. tostring(wh) .. ")")
+        -- NO gutter in border mode
+        local lines = vim.api.nvim_buf_get_lines(menu._state.menu_buf, 0, -1, false)
+        assert.are_not_equals("$ ", lines[1]:sub(1, 2), "border mode → NO `$ ` gutter")
+        local ns = vim.api.nvim_create_namespace("pi-bridge-menu")
+        local g0 = hl_groups_on_row(menu._state.menu_buf, ns, 0)
+        assert.is_nil(g0.PiBridgeShellGutter, "border mode → no PiBridgeShellGutter decoration")
+      end)
+    end)
+
+    -- (43) PURE HELPER: M._compute_width(items, ui_cols, bh, 2) == …(…,0) + 2.
+    it("_compute_width(items, cols, bh, 2) == _compute_width(items, cols, bh, 0) + 2", function()
+      local items = { { value = "checkout", label = "checkout" } }
+      local cols, bh = 80, 2
+      local w0 = menu._compute_width(items, cols, bh, 0)
+      local w2 = menu._compute_width(items, cols, bh, 2)
+      assert.are.equals(w0 + 2, w2, "gutter_w=2 grows the width by exactly 2 vs gutter_w=0")
+      -- back-compat: the 3-arg form defaults gutter_w to 0
+      local w3 = menu._compute_width(items, cols, bh)
+      assert.are.equals(w0, w3, "3-arg form (no gutter_w) == 0-gutter width (back-compatible)")
+    end)
+
+    -- (44) cue state is COUPLED to the payload: a shell→slash switch via on_results flips the cue.
+    it("cue state couples to the payload (shell→slash on_results removes the gutter)", function()
+      with_cursor_window(function()
+        local buf = menu.get_buf() or vim.api.nvim_get_current_buf()
+        local items = { { value = "checkout", label = "checkout" } }
+        menu.on_results(buf, items, "ch", "shell")
+        assert.are.equals("shell", menu._state.context)
+        local lines_shell = vim.api.nvim_buf_get_lines(menu._state.menu_buf, 0, -1, false)
+        assert.are.equals("$ ", lines_shell[1]:sub(1, 2), "shell first → gutter")
+        -- switch to slash: the gutter must vanish (coupled to the latest payload)
+        menu.on_results(buf, items, "mo", "slash")
+        assert.are.equals("slash", menu._state.context)
+        local lines_slash = vim.api.nvim_buf_get_lines(menu._state.menu_buf, 0, -1, false)
+        assert.are_not_equals("$ ", lines_slash[1]:sub(1, 2), "slash switch → no gutter (coupled)")
+      end)
+    end)
+  end)
 end)
