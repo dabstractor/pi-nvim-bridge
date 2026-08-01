@@ -46,10 +46,12 @@
 --      - single-object response, NOT per-line NDJSON (shell.lua `_feed` decodes the whole
 --        body as ONE object; NDJSON throws → parse_failure).
 --      - SIMPLE `"([^"]*)"` regex, NOT the fancy `(?:[^"\\]|\\.)*` (fish compile-error).
---    KNOWN LIMITATION: a command line containing a literal `"` breaks `.line` extraction
---    → cmd resolves empty → `complete -C ""` returns all commands (graceful degrade, not
---    a crash; the gen-guard + empty-menu consumer handle it). A true JSON-string regex is
---    infeasible in fish without a JSON parser; v1 accepts this edge.
+--    GRACEFUL DEGRADE (Issue 6): a command line containing a literal `"` (or an empty
+--    line) breaks the simple `.line` regex. `__pi_handle` now GUARDS the extracted `cmd`
+--    BEFORE `complete -C`: an empty `cmd` (→ flood) or one ending in an ODD run of
+--    backslashes (→ fish `complete.rs` PANIC + daemon death) emits a clean EMPTY
+--    `{"items":[],"prefix":""}` instead. A true JSON-string regex is infeasible in fish
+--    without a JSON parser; the guard converts the edge into a graceful no-results.
 --
 --  * NEVER-THROWS / FAST-CONTEXT-SAFE: every uv call is pcall'd; on_exit / timer /
 --    stderr-read callbacks do NO `vim.api.*` (they run in libuv FAST context — E5560);
@@ -101,6 +103,25 @@ function __pi_json_str
     printf '"%s"' "$s"
 end
 
+# Count the trailing run of backslashes in $argv (regex-free; robust to fish quoting —
+# a naive `string match -r '\\+$' -- $cmd` word-splits an UNquoted $cmd and silently
+# returns nothing, so the guard never fires and the panic still hits. Chop the last char
+# in a loop instead). Used by the Issue 6 graceful-degrade guard.
+function __pi_trailing_bs
+    set -l c "$argv"
+    set -l n 0
+    while test (string length -- "$c") -gt 0
+        set -l last (string sub --start=-1 -- "$c")
+        if test "$last" = "\\"
+            set n (math $n + 1)
+            set c (string sub --length=(math (string length -- "$c") - 1) -- "$c")
+        else
+            break
+        end
+    end
+    echo $n
+end
+
 # Handle ONE __PIREQ__ line (argv[1]). Extracts .line via the SIMPLE regex (the fancy
 # (?:...) PCRE variant FAILS in fish — LIVE-VERIFIED), runs `complete -C`, builds the
 # items array, emits START / single-object-JSON / END.
@@ -121,6 +142,32 @@ function __pi_handle
     set -l m (string match -r '"line":"([^"]*)"' -- $payload)
     if test (count $m) -ge 2
         set cmd $m[2]
+    end
+
+    # === GRACEFUL-DEGRADE GUARD (Issue 6 / PRD §17.6.x KNOWN LIMITATION) ===
+    # The simple `"line":"([^"]*)"` regex cannot parse JSON-escaped `\"`, so a line containing
+    # a literal `"` leaves a DANGLING backslash at the end of `cmd` (e.g. `git "feature` →
+    # `git \`). Two catastrophic outcomes if we pass such a `cmd` to `complete -C`:
+    #   * `complete -C ""`         → returns EVERY command on the system (5000+ item FLOOD).
+    #   * `complete -C "git \"`     → PANICS fish (src/builtins/complete.rs:547
+    #     "Unescaping commandline to complete failed") and KILLS the persistent daemon (exit 101).
+    # Instead emit a clean EMPTY result (graceful degrade — the menu shows nothing) when `cmd`
+    # is EMPTY (the flood trigger) OR ends with an ODD run of backslashes (the panic trigger —
+    # an unescaped dangling `\`; an EVEN run like `echo \\` is a valid escaped backslash, kept).
+    set -l malformed 0
+    if test -z "$cmd"
+        set malformed 1
+    else
+        set -l n (__pi_trailing_bs "$cmd")
+        if test (math $n % 2) -eq 1
+            set malformed 1
+        end
+    end
+    if test $malformed -eq 1
+        echo __PIRESP_START__
+        printf '{"items":[],"prefix":""}\n'
+        echo __PIRESP_END__
+        return
     end
 
     # Run fish's completion engine (the Tier-1 API). Build the items JSON array.

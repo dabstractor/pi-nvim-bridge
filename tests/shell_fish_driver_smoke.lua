@@ -153,6 +153,38 @@ request("git ", 4, "", function(items) post_cd = true end)
 vim.wait(5000, function() return post_cd end, 20)
 check(post_cd, "post-cd request never resolved — cd broke the daemon?")
 
+-- (4.5) GRACEFUL-DEGRADE GUARD (Issue 6): empty line + quote-line must yield EMPTY items,
+--       AND the daemon must SURVIVE them (a follow-up `git ch` → checkout proves no panic).
+--       Frames are built via vim.json.encode (byte-identical to shell.lua M.request).
+local r_empty, r_quote, r_survive = nil, nil, nil
+request("", 0, "", function(items)
+	r_empty = items
+	-- `git "feature` extracts to a TRAILING-BACKSLASH cmd → guard emits empty (no panic).
+	request('git "feature', 11, "", function(items2)
+		r_quote = items2
+		-- SURVIVAL: same daemon, follow-up `git ch` → checkout (proves no panic/death).
+		request("git ch", 6, "", function(items3)
+			r_survive = items3
+		end)
+	end)
+end)
+vim.wait(10000, function() return r_survive ~= nil end, 20)
+
+check(r_empty ~= nil, "empty-line request never resolved")
+if r_empty then
+	check(#r_empty == 0, "empty line should yield 0 items, got " .. #r_empty .. " (FLOOD not suppressed)")
+end
+check(r_quote ~= nil, "quote-line request never resolved — DAEMON PANICKED+DIED (guard did not fire)")
+if r_quote then
+	check(#r_quote == 0, "quote-line should yield 0 items, got " .. #r_quote .. " (flood/panic not suppressed)")
+end
+check(r_survive ~= nil, "survival follow-up `git ch` never resolved — daemon died on a malformed input")
+if r_survive then
+	local found_s = {}
+	for _, it in ipairs(r_survive) do found_s[it.value] = true end
+	check(found_s["checkout"] ~= nil, "survival follow-up missing `checkout` (daemon did NOT survive)")
+end
+
 -- (5) never-throws on bad args (the contract).
 check(pcall(function() fish.cd(nil) end), "fish.cd(nil) threw")
 check(pcall(function() fish.cd(123) end), "fish.cd(123) threw")
@@ -173,4 +205,4 @@ if fails > 0 then
 	io.stderr:write(fails .. " check(s) failed — fish driver smoke GATE FAILED\n")
 	vim.cmd("cquit 1")
 end
-io.stdout:write("SMOKE_PASS: fish driver spawned, 3 sequential requests decoded, cd no-throw\n")
+io.stdout:write("SMOKE_PASS: fish driver spawned, sequential + graceful-degrade + cd requests decoded\n")
