@@ -83,15 +83,16 @@ shell that COMPLETES a command should be the SAME shell that will EXECUTE it, or
 the completions can lie (a zsh-only alias would be suggested, then fail under
 bash; a bash-only option would be omitted, then be available at run time). So
 by default this plugin completes using pi's execution shell — bash — which is
-always consistent with execution, but offers fewer completions than a native
-zsh/fish setup.
+intended to be consistent with execution (see the gap below), but offers fewer
+completions than a native zsh/fish setup.
 
 THE DEFAULT-CASE CONSISTENCY GAP (non-bash $SHELL) ~
 The paragraph above says the plugin completes "using pi's execution shell — bash — which is
-always consistent with execution." That holds ONLY when the bridge can read pi's execution
-shell. It cannot today: there is no public API on the bridge `ExtensionContext` to read pi's
-`shellPath`/`getShellConfig` (PRD §17.10.2). So under the DEFAULT config — `prefer = "pi"`,
-`$SHELL` is zsh or fish, and `PI_NVIM_SHELL` is NOT exported — the bridge falls back to
+intended to be consistent with execution." That intent holds ONLY when the bridge can read
+pi's execution shell. It cannot today: there is no public API on the bridge
+`ExtensionContext` to read pi's `shellPath`/`getShellConfig` (PRD §17.10.2). So under the
+DEFAULT config — `prefer = "pi"`, `$SHELL` is zsh or fish, and `PI_NVIM_SHELL` is NOT
+exported — the bridge falls back to
 advertising `$SHELL` as the completion shell. Completion then uses zsh/fish while pi still
 EXECUTES `!`/`!!` in bash. They MAY NOT be consistent: a zsh-only alias (e.g. `g=git`) can be
 offered as a completion, then fail as `g: command not found` when pi runs the line in bash.
@@ -136,11 +137,14 @@ The cleanest fix for a zsh/fish user is usually the FIRST of these two:
   • Or set `setup({ shell = { prefer = "shell" } })`. This completes with
     `$SHELL`; rich, but only consistent if pi also executes in `$SHELL`.
 
-THE ONE-TIME NOTICE ~
+THE SHELL-MISMATCH NOTICE ~
 The very first time the daemon is spawned and `prefer` (the default `"pi"`)
 resolves to bash while `$SHELL` is zsh or fish AND that shell is on your
 `$PATH`, the plugin emits ONE `vim.notify` (deduplicated to once per session)
 explaining the mismatch and pointing here. It is not an error — it is a hint.
+A second, distinct notice (`shell-consistency`) covers the non-bash-`$SHELL`
+fallback case — see "THE DEFAULT-CASE CONSISTENCY GAP" above +
+|pi-bridge-shell-health|.
 See |pi-bridge-shell-troubleshooting| for the full FAQ.
 
 ==============================================================================
@@ -154,9 +158,10 @@ TIER 1 — fish (default)
   Quality: yields each candidate WITH its description (e.g. `git cherry-pick
            — Apply changes from existing commits`). The richest, cleanest
            result.
-  Notes:    the daemon is `fish -i`; it loads your fish config. A known edge
-            case is that a command line containing a literal `"` can return an
-            empty candidate set (graceful — the menu just stays closed).
+  Notes:    the daemon is `fish -i`; it loads your fish config. A literal `"` on
+            the line, or an empty command (bare `!`), returns an empty candidate
+            set on purpose (graceful degrade — prevents a full command listing
+            flood; the menu just stays closed).
 
 TIER 1 — zsh
   Mechanism: a capture-completion widget. An outer `zsh -f` drives an inner
@@ -170,6 +175,9 @@ TIER 1 — zsh
             completion definitions (`_git`, etc.) but does NOT source your
             `~/.zshrc` — a zsh-only alias is intentionally not suggested,
             because pi would execute it in bash and it would fail.
+            A literal `"` on the line, or an empty command (bare `!`), returns
+            an empty candidate set on purpose (graceful degrade — prevents a
+            full command listing flood; the menu just stays closed).
 
 TIER 2 — bash
   Mechanism: `compgen`/`complete` dispatch + best-effort `bash-completion`
@@ -178,6 +186,9 @@ TIER 2 — bash
            The candidate words themselves are correct, but you will not see the
            trailing help text fish/zsh show.
   Notes:    sources your `~/.bashrc` and any found `bash-completion` scripts.
+            A literal `"` on the line, or an empty command (bare `!`), returns
+            an empty candidate set on purpose (graceful degrade — prevents a
+            full command listing flood; the menu just stays closed).
   Opt-out:  if you would rather have NO completion than bash-quality, disable
             the driver: >
                 require("pi-bridge").setup({
@@ -197,6 +208,14 @@ line behaves like an ordinary buffer line and no menu appears. One `vim.notify`
 
 The driver tier actually in use for your session is reported by
 |pi-bridge-shell-health|.
+
+CWD TRACKING ~
+The daemon starts in pi's session cwd (the descriptor `cwd` / `server_info.cwd`)
+and re-`cd`s mid-session if pi's cwd changed since spawn, so relative-path
+completions track pi's working directory. bash and fish honor the re-`cd`; zsh
+is a known v1 limitation — its `zpty` capture outer discards the `cd` frame, so
+a zsh daemon's cwd stays fixed at spawn (reopen the editor after a `cd` to
+refresh it).
 
 ==============================================================================
 5. Configuration                             *pi-bridge-shell-config*
@@ -226,8 +245,10 @@ DEFAULTS (mirror `lua/pi-bridge/init.lua` `M.defaults.shell`) ~
                                          |pi-bridge-shell-prefer|). "pi" |
                                          "shell" | "bash" | "/abs/path".
                                          Default "pi" = pi's resolved
-                                         execution shell (always consistent
-                                         with what will actually run).
+                                         execution shell (intended to match
+                                         what `!` will run; see §3 for the
+                                         one non-bash-`$SHELL` gap +
+                                         `PI_NVIM_SHELL`).
     shell.drivers            { fish = true,   Per-shell enable/disable. A
                                           zsh = true,   `false` driver → no
                                           bash = true } completion for that
@@ -311,8 +332,9 @@ It reports, read-only:
     disabled — see |pi-bridge-shell-degrade|), with the consecutive parse-
     failure count if non-zero;
   • the effective config (enabled, prefer, warm_on_enter);
-  • whether any of the three shell notices (shell-mismatch / shell-degrade /
-    shell-active) fired earlier this session — run `:messages` to read them.
+  • whether any of the four shell notices (shell-mismatch / shell-consistency /
+    shell-degrade / shell-active) fired earlier this session — run `:messages`
+    to read them.
 
 For the parent report (version / environment / connection / `fd`) see
 |pi-bridge-checkhealth|.
@@ -363,7 +385,9 @@ PER-REQUEST TIMEOUT ~
 A single completion request overruns `timeout_ms` (default 1500). The request
 is aborted and an empty result returned; the menu stays as-is or closes. The
 daemon itself is NOT killed — the next request proceeds normally. (Only ONE
-request is in flight at a time; a newer keystroke supersedes a pending one.)
+shell request is in flight at a time; a newer `!`-line keystroke supersedes a
+pending one. Note: deleting the leading `!` mid-flight is a known gap — the
+in-flight shell result is not yet cancelled there.)
 
 CONSECUTIVE PARSE FAILURES ~
 If the daemon emits `max_parse_failures` (default 5) malformed responses in a
@@ -399,6 +423,13 @@ A: The shell mismatch (see |pi-bridge-shell-prefer|). With the default
         in it too. Completion and execution are then both rich AND consistent.
      2. Or `setup({ shell = { prefer = "shell" } })` to complete with `$SHELL`.
    Reopen the editor after changing either.
+
+Q: "I see zsh/fish completions on `!` lines, but the command then fails under
+   bash (e.g. a zsh-only alias)." ~
+A: The resolver fell back to `$SHELL` (the bridge could not read pi's execution
+   shell — §3 "DEFAULT-CASE CONSISTENCY GAP"). Export
+   `PI_NVIM_SHELL=<that shell>` (or set pi's `shellPath`) so completion matches
+   execution.
 
 Q: "Completion worked earlier but stopped mid-session." ~
 A: The daemon crashed (EOF) or hit the consecutive parse-failure threshold

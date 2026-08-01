@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Shell Completion Correctness Patch",
-      "status": "Planned",
+      "status": "Complete",
       "description": "Fix 6 bugs found during E2E validation of the §17 shell-completion feature (!/!! bash-mode lines): 2 Major (notice scoping under prefer=\"bash\"; prefer=\"pi\" consistency guarantee not honored by default) and 4 Minor (supersession race on ! deletion; dead cwd re-tracking code; inaccurate health source label; literal-quote command flood). All fixes target the Lua plugin (lua/pi-bridge/) and embedded driver scripts; the TS extension's resolveShell constraint (§17.10.2) is acknowledged as an upstream limitation mitigated by detection + documentation.",
       "milestones": [
         {
@@ -91,7 +91,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Completion Robustness & Driver Polish",
-          "status": "Planned",
+          "status": "Complete",
           "description": "Fix the 4 Minor issues: supersession race on `!` deletion (Issue 3), dead cwd re-tracking code (Issue 4), and quoted-command flood (Issue 6). These are independent of M1 and of each other (different files: completion.lua, shell.lua+drivers, drivers). Includes a final changeset-level documentation sweep (Mode B).",
           "tasks": [
             {
@@ -181,14 +181,14 @@
               "type": "Task",
               "id": "P1.M2.T7",
               "title": "Sync changeset-level documentation",
-              "status": "Planned",
+              "status": "Complete",
               "description": "Mode B final documentation sweep. Per-feature docs (doc/pi-bridge-shell.txt §prefer, driver doc-comments, resolve_shell doc-comment) were updated Mode A in their implementing subtasks. This task sweeps the OVERVIEW docs (README.md, extension/README.md, doc/pi-bridge.txt) that span the whole changeset, ensuring they accurately reflect the post-fix behavior. Depends on ALL implementing subtasks.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T7.S1",
                   "title": "Sweep README.md, extension/README.md, and doc/pi-bridge.txt for changeset consistency",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",

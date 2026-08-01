@@ -318,7 +318,7 @@ function M.check()
       -- Last notice (sync surrogate for "last error" — notify.did_notify is a table read;
       -- the actual last-error string is NOT stored, the category conveys it).
       if notify_mod and type(notify_mod.did_notify) == "function" then
-        for _, cat in ipairs({ "shell-degrade", "shell-mismatch", "shell-active" }) do
+        for _, cat in ipairs({ "shell-degrade", "shell-mismatch", "shell-consistency", "shell-active" }) do
           local fired = false
           pcall(function() fired = notify_mod.did_notify(cat) == true end)
           if fired then
