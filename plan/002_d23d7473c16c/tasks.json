@@ -600,7 +600,7 @@
                   "type": "Subtask",
                   "id": "P2.M4.T7.S1",
                   "title": "README.md — shell-completion feature blurb + config pointer + architecture diagram update",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2",

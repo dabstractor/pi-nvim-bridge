@@ -36,6 +36,14 @@ The idea is simple: write your prompt in a real editor without giving up any of
 pi's autocomplete. You get a comfortable editing surface and the full set of
 completions pi already offers.
 
+There is a **second completion engine** for `!`/`!!` "bash mode" lines: your
+real shell's own completion engine (fish/zsh/bash) completes shell commands,
+rendered in the same floating menu with a `$ ` gutter marker. It defaults to
+the shell pi *executes* commands in (`prefer = "pi"` — bash unless you set pi's
+`shellPath`), so completions and execution always agree rather than a zsh-only
+alias being suggested then failing under bash. See `:help pi-bridge-shell`
+([`doc/pi-bridge-shell.txt`](./doc/pi-bridge-shell.txt)) for the full guide.
+
 > **Note:** the companion `pi-bridge.nvim` plugin is **complete** (its runtime
 > files live at the repo root: `lua/pi-bridge/`, `plugin/pi-bridge.lua`,
 > `ftplugin/`, `doc/`). The bridge and plugin work together to deliver
@@ -134,6 +142,29 @@ Then in pi, press <kbd>Ctrl+G</kbd> (the `app.editor.external` keybinding) to
 open the external editor. The bridge advertises `PI_NVIM_BRIDGE` to the Neovim
 process pi spawns, which the companion plugin keys on.
 
+### Shell completion
+
+`!`/`!!` bash-mode lines are completed by your real shell's completion engine
+(fish/zsh/bash), rendered in the same floating menu as pi's completions. It
+defaults to the shell pi *executes* commands in (`prefer = "pi"` — bash unless
+you set pi's `shellPath`), so a completion and the command that runs always
+agree. See `:help pi-bridge-shell`
+([`doc/pi-bridge-shell.txt`](./doc/pi-bridge-shell.txt)) for the full table.
+
+```lua
+require("pi-bridge").setup({
+  shell = {
+    enabled            = true,              -- master switch
+    prefer             = "pi",              -- "pi" | "shell" | "bash" | "/abs/path"
+    drivers            = { fish = true, zsh = true, bash = true },
+    warm_on_enter      = false,             -- spawn the daemon at VimEnter
+    visual_cue         = "gutter",          -- "$ " prefix on shell items
+    -- timeout_ms, startup_timeout_ms, debounce_ms, max_parse_failures also exist;
+    -- see :help pi-bridge-shell-config for the full table.
+  },
+})
+```
+
 ### Optional startup optimization
 
 A heavy daily-driver Neovim config (LSP servers, lazy-loaded plugins, plugin-
@@ -194,6 +225,33 @@ a prior value because pi never owned the var).
    and `getCommands`. Completion acceptance calls back into pi's own
    `applyCompletion`, guaranteeing identical insertion semantics.
 
+```text
+┌─────────────────────── pi process ───────────────────────┐
+│  bridge extension   live AutocompleteProvider (captured) │
+│  PI_NVIM_BRIDGE = { transport, path, token, … }          │
+│  Unix socket  (/tmp/pi-nvim-bridge-<pid>.sock, 0600)     │
+└────────────────────────────┬─────────────────────────────┘
+                  JSON-RPC over socket │ getSuggestions / applyCompletion
+                                       ▼
+┌─────────────────────── Neovim (pi-bridge.nvim) ──────────┐
+│  pi-mode completion client ── connects to the socket ──┐ │
+│  ┌─────────────────────────────────────────────────────┐ │
+│  │ shell daemon manager (spawns ONE persistent child)  │ │
+│  └────────────────┬────────────────────────────────────┘ │
+└───────────────────┼──────────────────────────────────────┘
+        local stdio pipes only (stdin/stdout/stderr)
+                    ▼
+┌─────────────────────── shell subshell ───────────────────┐
+│  fish / zsh / bash driver · sources rc / completion libs │
+│  completes `!`/`!!` lines → candidates back up the pipe  │
+└──────────────────────────────────────────────────────────┘
+```
+
+The shell daemon is a **child of the Neovim process** over **local pipes
+only**; it never touches the pi-nvim-bridge socket and never sees
+`PI_NVIM_BRIDGE` or its `token` (see [Security](#security), and
+`:help pi-bridge-shell` §8 for the rc-sourcing trust model).
+
 ## The `PI_NVIM_BRIDGE` environment variable
 
 The descriptor is a single-line JSON object:
@@ -242,6 +300,12 @@ The descriptor is a single-line JSON object:
 - **"Nothing happens in non-interactive mode (`pi -p`)."**
   Correct: `openExternalEditor` is TUI-only, so the bridge no-ops when
   `ctx.mode !== "tui"`.
+- **"`!`/`!!` completions are bash-quality / missing."**
+  With the default `prefer = "pi"`, completion uses pi's execution shell —
+  bash unless you set pi's `shellPath`. To get native fish/zsh completions,
+  set pi's `shellPath` to your shell (recommended) or
+  `setup({ shell = { prefer = "shell" } })`. Run `:checkhealth pi-bridge`
+  (the "pi-bridge shell completion" section) and see `:help pi-bridge-shell`.
 
 ## Security
 
