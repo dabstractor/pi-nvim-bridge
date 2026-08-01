@@ -508,7 +508,7 @@
                   "type": "Subtask",
                   "id": "P2.M3.T6.S1",
                   "title": "init.lua shell = {} config block + warm_on_enter logic",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S2"

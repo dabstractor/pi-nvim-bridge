@@ -98,4 +98,73 @@ describe("pi-bridge.setup", function()
     assert.is_false(completion.is_attachment_context("/mod"))  -- slash → 0 ms (immediate)
     assert.is_false(completion.is_attachment_context("hello")) -- typing → 0 ms (immediate)
   end)
+
+  -- === P2.M3.T6.S1 — the §17.11 shell-config block (defaults + deep-merge + no-mutation) ===
+  local shell_defaults = {
+    enabled            = true,
+    prefer             = "pi",
+    drivers            = { fish = true, zsh = true, bash = true },
+    warm_on_enter      = false,
+    timeout_ms         = 1500,
+    startup_timeout_ms = 5000,
+    visual_cue         = "gutter",
+    debounce_ms        = 0,
+    max_parse_failures = 5,
+  }
+
+  it("ships the §17.11 shell defaults in M.defaults", function()
+    assert.are.same(shell_defaults, pi.defaults.shell)
+  end)
+
+  it("setup({}) stores the §17.11 shell defaults verbatim in config.shell", function()
+    pi.setup({})
+    assert.are.same(shell_defaults, pi.config.shell)
+  end)
+
+  it("nested shell deep-merges: override timeout_ms, keep prefer (sibling preserved)", function()
+    pi.setup({ shell = { timeout_ms = 3000 } })
+    assert.are.equals(3000, pi.config.shell.timeout_ms)
+    assert.are.equals("pi", pi.config.shell.prefer)         -- default sibling preserved
+  end)
+
+  it("nested shell.drivers deep-merges: disable bash, keep fish/zsh", function()
+    pi.setup({ shell = { drivers = { bash = false } } })
+    assert.is_false(pi.config.shell.drivers.bash)
+    assert.is_true(pi.config.shell.drivers.fish)             -- default sibling preserved
+    assert.is_true(pi.config.shell.drivers.zsh)              -- default sibling preserved
+  end)
+
+  it("warm_on_enter defaults to false (lazy on first `!`)", function()
+    pi.setup({})
+    assert.is_false(pi.config.shell.warm_on_enter)
+  end)
+
+  it("warm_on_enter override wins", function()
+    pi.setup({ shell = { warm_on_enter = true } })
+    assert.is_true(pi.config.shell.warm_on_enter)
+  end)
+
+  it("does NOT mutate M.defaults.shell after a setup with overrides", function()
+    pi.setup({ shell = { timeout_ms = 1 } })
+    assert.are.equals(1500, pi.defaults.shell.timeout_ms)    -- pristine
+    assert.is_false(pi.defaults.shell.warm_on_enter)         -- pristine
+  end)
+
+  it("setup(nil) / setup({}) leaves shell at the §17.11 defaults", function()
+    pi.setup(nil)
+    assert.are.same(shell_defaults, pi.config.shell)
+    pi.setup({})
+    assert.are.same(shell_defaults, pi.config.shell)
+  end)
+
+  it("setup({ shell = false }) does not throw (deep-merge coercion; downstream `or {}` keeps it safe)", function()
+    -- vim.tbl_deep_extend("force", {shell={...}}, {shell=false}) → config.shell == false (boolean).
+    -- setup() NEVER throws (the S1 invariant). Downstream shell.lua/completion.lua read
+    -- `(pi.config and pi.config.shell) or {}` → `false or {}` → `{}` → safe defaults.
+    -- No guard is added (mirrors the menu pattern; only a THROW would warrant one).
+    assert.has_no.errors(function() pi.setup({ shell = false }) end)
+    assert.is_false(pi.config.shell)                         -- the documented actual behavior
+    -- M.defaults.shell stays pristine (deep-merge does not mutate the source)
+    assert.are.same(shell_defaults, pi.defaults.shell)
+  end)
 end)

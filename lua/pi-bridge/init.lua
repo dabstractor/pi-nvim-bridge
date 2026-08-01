@@ -15,12 +15,27 @@
 ---@field max_height integer Maximum visible rows in the floating completion popup.
 ---@field border ("none"|"single"|"double"|"rounded"|"solid"|"shadow"|string[]) Border style (nvim_open_win 'border').
 
+--- §17.11 shell-completion configuration. Every key has a safe default; consumers
+--- (shell.lua, completion.lua, health.lua) read defensively (`cfg.X or DEFAULT`) so a
+--- user who never sets `shell` still gets correct behavior via M.defaults.
+---@class pi-bridge.ShellConfig
+---@field enabled boolean Master switch (§17.11). false → `!`/`!!` lines get no completion (warm-side gate enforced in activate(); lazy-side gate in completion.lua is a forward-contract).
+---@field prefer ("pi"|"shell"|"bash"|string) §17.4 resolution contract. "pi" (default) = pi's resolved execution shell (always consistent w/ execution); "shell" = $SHELL; "bash" = /bin/bash; "/abs/path" = that path.
+---@field drivers { fish: boolean, zsh: boolean, bash: boolean } Per-shell enable/disable (§17.4.2). A `false` driver → no completion for that shell (degrade, NOT a different shell).
+---@field warm_on_enter boolean Spawn the daemon at VimEnter (§17.5/§17.11). Trades memory (one persistent subprocess) for first-`!` latency (100ms–1s+ rc load). Default false (lazy on first `!`).
+---@field timeout_ms integer Per-request budget for shell completion (§17.11). Default 1500. MUST differ from startup_timeout_ms.
+---@field startup_timeout_ms integer Daemon cold-start budget (rc + completion-library load; §17.11). Default 5000.
+---@field visual_cue ("gutter"|"border"|"off") §17.9 bash-mode visual cue. Default "gutter" ($ prefix on each item).
+---@field debounce_ms integer §17.7 shell-context debounce. Default 0 (immediate; daemon warm after first use).
+---@field max_parse_failures integer §17.12 consecutive-parse-failure threshold before the daemon is marked unhealthy. Default 5 (forward-compatible; read by shell.lua's max_parse_failures() helper).
+
 ---@class pi-bridge.Config
 ---@field menu pi-bridge.MenuConfig Floating-menu appearance (PRD §7.5).
 ---@field debounce_ms integer The file/attachment-context debounce window (default 20 = pi's ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS, editor.ts:236). Slash commands and plain typing use 0 ms (immediate), matching pi's TUI `getAutocompleteDebounceMs` (editor.ts:2214); NOT separately configurable (pi hardcodes 0). S40.
 ---@field rpc_timeout_ms integer Ms before a pending RPC is considered stale (supersession). MUST exceed the server fd-abort GET_SUGGESTIONS_TIMEOUT_MS (1500, extension/pi-nvim-bridge.ts:289) so the server's own abort wins (timeouts cascade outward); default 2000. See bridge.lua header. S40.
 ---@field autosave_on_exit boolean Write the pi temp file on VimLeavePre if modified (PRD §7.6, §11).
 ---@field engine ("builtin"|"blink"|"cmp") Which completion UI engine to drive.
+---@field shell pi-bridge.ShellConfig Shell-completion config (PRD §17.11). P2.M3.T6.S1.
 ---@field env_var? string Override the bridge-descriptor env var (default "PI_NVIM_BRIDGE"; PRD §7.1).
 
 local M = {}
@@ -37,6 +52,17 @@ M.defaults = {
   rpc_timeout_ms = 2000,   -- MUST exceed the server fd-abort GET_SUGGESTIONS_TIMEOUT_MS (1500). S40.
   autosave_on_exit = true,
   engine = "builtin",
+  shell = {                            -- §17.11 shell-completion config (P2.M3.T6.S1)
+    enabled            = true,         -- §17.11 master switch
+    prefer             = "pi",         -- §17.4 resolution (pi's execution shell; always consistent w/ execution)
+    drivers            = { fish = true, zsh = true, bash = true }, -- §17.4.2 per-shell enable
+    warm_on_enter      = false,        -- §17.5/§17.11 spawn at VimEnter (off; trades memory for first-`!` latency)
+    timeout_ms         = 1500,         -- §17.11 per-request budget (NOT startup_timeout_ms)
+    startup_timeout_ms = 5000,         -- §17.11 daemon cold-start budget (rc load)
+    visual_cue         = "gutter",     -- §17.9 bash-mode cue ($ prefix on items)
+    debounce_ms        = 0,            -- §17.7 shell-context debounce (immediate; daemon warm after first use)
+    max_parse_failures = 5,            -- §17.12 parse-failure threshold (shell.lua max_parse_failures() helper)
+  },
 }
 
 --- Resolved configuration. `nil` until |setup()|; a `pi-bridge.Config` afterwards.
@@ -113,6 +139,30 @@ end
 --- and before the first successful activation. Read by downstream modules (see class doc).
 ---@type pi-bridge.BridgeDescriptor|nil
 M.descriptor = nil
+
+--- §17.11/§17.5 warm_on_enter: eagerly spawn the shell-completion daemon at VimEnter so
+--- the first `!`/`!!`<Tab> is instant (avoids the 100ms–1s+ rc-load cold-start). OFF by
+--- default (trades one persistent subprocess for first-`!` latency). Gated on
+--- `config.shell.enabled` (the master switch, §17.11) AND `config.shell.warm_on_enter`.
+--- Fire-and-forget: the ensure() cb is a no-op; a spawn failure is reported by shell.lua's
+--- OWN §17.12 "shell-degrade" notice (S4, COMPLETE) — activate() adds NO new notify.
+--- Runs AFTER M.descriptor is set (shell.lua's resolve_shell reads descriptor.shell for
+--- the prefer:"pi" resolution). NEVER throws (pcall require + pcall ensure + type-guarded
+--- reads). S1 (P2.M3.T6.S1).
+local function warm_shell_daemon()
+  pcall(function()
+    local cfg = M.config and M.config.shell
+    if type(cfg) ~= "table" then return end
+    if cfg.enabled == false then return end       -- §17.11 master switch
+    if cfg.warm_on_enter ~= true then return end  -- default false (lazy on first `!`)
+    local ok, shell = pcall(require, "pi-bridge.shell")
+    if not ok or type(shell.ensure) ~= "function" then return end
+    -- fire-and-forget: the cb is a no-op. shell.lua's ensure() handles spawn + state + the
+    -- §17.12 degrade notice (S4) on failure. DO NOT touch vim.api.* in the cb (ensure's spawn
+    -- cb runs in libuv fast context — E5560; shell.lua owns any api work via vim.schedule).
+    pcall(shell.ensure, function(_err) end)
+  end)
+end
 
 --- Activate pi-bridge for this session — the VimEnter entry point.
 ---
@@ -198,6 +248,10 @@ function M.activate()
     local ok, menu = pcall(require, "pi-bridge.menu")
     if ok and type(menu.attach) == "function" then menu.attach() end
   end)
+  -- S1 (P2.M3.T6.S1): §17.11 warm_on_enter — eagerly spawn the shell daemon at VimEnter.
+  -- Runs LAST (after descriptor set + bridge handshake + menu attach). pcall'd (never-
+  -- throws); fire-and-forget (failure → shell.lua S4 "shell-degrade" notice, not a new one).
+  warm_shell_daemon()
   return desc                                             -- (g)/(h) are S22/S24's job (see doc)
 end
 

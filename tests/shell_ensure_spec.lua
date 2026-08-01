@@ -65,7 +65,7 @@ describe("pi-bridge.shell ensure (P2.M1.T2.S3)", function()
 		orig_shell = vim.env.SHELL
 		orig_bridge = pi.bridge
 		orig_desc = pi.descriptor
-		orig_shell_cfg = (pi.config and pi.config.shell) or nil
+		orig_shell_cfg = vim.deepcopy((pi.config and pi.config.shell) or nil)
 		pi.bridge = nil
 		pi.descriptor = nil
 		vim.env.SHELL = nil
@@ -79,7 +79,7 @@ describe("pi-bridge.shell ensure (P2.M1.T2.S3)", function()
 		pi.descriptor = orig_desc
 		package.loaded["pi-bridge.shell.fish"] = nil
 		package.loaded["pi-bridge.shell.unknownshell"] = nil
-		if pi.config then pi.config.shell = orig_shell_cfg end
+		if pi.config then pi.config.shell = vim.deepcopy(orig_shell_cfg) end
 		shell.reset()
 	end)
 
