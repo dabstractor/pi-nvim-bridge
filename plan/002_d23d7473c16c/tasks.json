@@ -624,7 +624,7 @@
                   "type": "Subtask",
                   "id": "P2.M4.T7.S2",
                   "title": "doc/pi-bridge.txt — cross-link to pi-bridge-shell.txt + !/!! completion behavior",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P2.M3.T6.S4"

@@ -211,7 +211,23 @@ TUI gets:
   • `<Tab>` to force file completion, matching pi's
     `shouldTriggerFileCompletion`.
 
-For shell completion of `!`/`!!` bash-mode commands, see |pi-bridge-shell|.
+SHELL COMPLETION (`!`/`!!` BASH MODE) ~
+A first line beginning with `!` or `!!` (pi's bash mode) routes to a SECOND,
+separate completion engine — the shell daemon — NOT pi's provider above. The
+leading bangs are stripped before the shell is queried, so `!git ch<Tab>`
+asks the shell to complete `git ch`. See |pi-bridge-shell-activation|.
+
+Because shell candidates are plain WORDS (not pi AutocompleteItems),
+acceptance does NOT use pi's `applyCompletion` — the plugin replaces just the
+shell word under the cursor (`nvim_buf_set_text`) and quotes it for the
+resolved shell (bash/zsh single-quote; fish double-quotes only on a space).
+See |pi-bridge-shell-accept|. A `$ ` gutter marks shell items in the menu
+(`shell.visual_cue`, default "gutter"; |pi-bridge-shell-config|).
+
+By default the daemon completes using pi's execution shell (commonly
+/bin/bash) so completions match what `!` will actually run — see
+|pi-bridge-shell-prefer| for why + how to change it. Full subsystem docs:
+|pi-bridge-shell|.
 
 DEBOUNCE ~
 Pi does not apply a flat debounce. The window is computed per request: slash
@@ -351,6 +367,15 @@ A: Install `fd` (Debian: `fdfind`). Without it `@file` is empty, but path
    completion (directory listing) still works. The bridge may still have `fd`
    in pi's bin dir even if it is not on your `$PATH` — see
    |pi-bridge-checkhealth|.
+
+Q: "Why does `!git ch<Tab>` complete with bash, not my zsh aliases?" ~
+A: pi runs `!`/`!!` commands in /bin/bash by default, and completions must
+   match execution — otherwise a suggested command could fail when run. So
+   the daemon completes with pi's execution shell. To use your native shell,
+   either set pi's `shellPath` to it (so pi EXECUTES `!` in it too) or set
+   `shell.prefer` (see |pi-bridge-shell-prefer|). If NO completion appears on
+   a `!` line at all, the daemon may be disabled or the shell unsupported —
+   see |pi-bridge-shell-troubleshooting| + |pi-bridge-shell-health|.
 
 Q: "I typed, then `:q`, and lost my prompt." ~
 A: pi reads the temp file only after the editor exits with status 0. The plugin
