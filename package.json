@@ -1,9 +1,15 @@
 {
   "name": "pi-nvim-bridge",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "Bridge pi's autocomplete engine to an external $EDITOR (Neovim) over a local Unix socket.",
   "type": "module",
-  "keywords": ["pi-package", "pi-extension", "pi", "neovim", "completion"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi",
+    "neovim",
+    "completion"
+  ],
   "license": "MIT",
   "author": "Dustin Schultz",
   "homepage": "https://github.com/dabstractor/pi-nvim-bridge#readme",
@@ -27,7 +33,9 @@
     "provenance": true
   },
   "pi": {
-    "extensions": ["./extension/pi-nvim-bridge.ts"]
+    "extensions": [
+      "./extension/pi-nvim-bridge.ts"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
