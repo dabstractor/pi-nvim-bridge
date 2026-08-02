@@ -168,6 +168,28 @@ __pi_complete() {
         # cword>0: look for the command's registered compspec (research §5). `complete -p`
         # prints the registration line; parse the -F function. If found, call it (it
         # populates COMPREPLY).
+        #
+        # LAZY-LOADING (NEW-1 fix): modern bash-completion (2.11+, the default on current
+        # Ubuntu/Debian/Fedora/Arch) registers per-command completions LAZILY via a
+        # default handler `complete -D -F _completion_loader` that sources
+        # completions/<cmd> on first use. The per-command `complete -F _git git` is
+        # therefore NOT registered until that default handler fires — so a bare
+        # `complete -p "$cmd"` returns empty for every lazy command and we silently fall
+        # through to the file/dir fallback (argument completion broken). To match a real
+        # interactive bash (which invokes the -D handler on Tab), explicitly invoke the
+        # default loader for the command to force-load its compspec, THEN re-check
+        # `complete -p "$cmd"`. Best-effort + silent (no bash-completion → no -D handler →
+        # spec stays empty → file/dir fallback, unchanged behavior).
+        local _def_loader
+        _def_loader=$(complete -p -D 2>/dev/null | sed -n 's/.*-F[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p')
+        if [ -n "$_def_loader" ] && ! complete -p "$cmd" >/dev/null 2>&1; then
+            # the -D handler expects COMP_LINE/COMP_POINT/COMP_WORDS/COMP_CWORD set (it
+            # may dispatch on $1==$cmd). Invoke it IN THIS SHELL (NOT a subshell) so its
+            # side effect — registering `complete -F <fn> <cmd>` — PERSISTS for the
+            # `complete -p "$cmd"` re-check below. (A subshell would discard the reg.)
+            # The loader itself does no completion (it only registers); errors are ignored.
+            "$_def_loader" "$cmd" "$cur" "${COMP_WORDS[COMP_CWORD-1]}" 2>/dev/null || true
+        fi
         local spec
         spec=$(complete -p "$cmd" 2>/dev/null) || spec=""
         if [[ "$spec" == *-F\ * ]]; then

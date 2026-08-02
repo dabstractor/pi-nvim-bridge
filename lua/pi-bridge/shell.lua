@@ -74,15 +74,6 @@ local uv = vim.uv -- forward-contract: S3's ensure() spawns via uv (unused in S2
 -- `teardown` close over the SAME upvalue and see the real function at call time.
 local close_handles
 
--- [TEMP DEBUG] trace shell-daemon flow to /tmp/pi-bridge-shell-debug.log
--- (forward-contract stub for S3/S4 tracing; no-op today — S2 calls neither uv nor notify).
-local function dbg(msg)
-	pcall(function()
-		local f = io.open("/tmp/pi-bridge-shell-debug.log", "a")
-		if f then f:write(tostring(msg) .. "\n"); f:close() end
-	end)
-end
-
 --- The basename of a shell path ("/bin/zsh" → "zsh"). Module-local so the §17 notice messages +
 --- the existing pick_driver inline idiom share ONE definition. nil/non-string → "?"
 --- (a defensive sentinel so a toast never reads "active (`nil`)"). NEVER throws.
@@ -894,7 +885,6 @@ function M.request(line, cursor, after, cb)
 		local tok = pcall(function()
 			req_timer = uv.new_timer()
 			req_timer:start(timeout_ms, 0, function()
-				dbg("[shell.request] timeout (gen=" .. tostring(gen) .. ")") -- trace marker only (GOTCHA #5)
 				if state.pending_cb then state.pending_cb({}, "") end
 			end)
 		end)

@@ -837,6 +837,42 @@ describe("pi-bridge.completion", function()
       vim.api.nvim_buf_delete(buf, { force = true })
     end)
 
+    -- (3b) PRD-3 REGRESSION: shell→plain-typing transition. A `!git c` shell request is
+    --     in flight; the user deletes the `!` → the buffer is now `git c` (plain typing,
+    --     ctx==nil) → do_refresh closes the menu. A LATE shell response must NOT re-open
+    --     the menu (it must be dropped at the gen-guard). Before the fix the ctx==nil
+    --     close path did NOT bump state.gen, so the stale shell cb passed the gen-guard
+    --     and re-opened the shell menu.
+    it("PRD-3: deleting '!' while a shell request is in flight does NOT let the stale shell response re-open the menu", function()
+      local sh = fake_shell()
+      shell_mod.complete_current = sh.complete_current
+      local fake = fake_bridge()
+      pi.bridge = fake
+      local buf = shell_buf({ "!git c" }, 1, 6)
+      local fires = 0
+      completion.on_results = function(_, items, _prefix, context)
+        fires = fires + 1
+        -- the only legitimate fire is the ctx==nil close (empty items, nil context).
+        -- A stale shell re-open would arrive with context=="shell" + non-empty items.
+        assert.is_true(context == nil or context ~= "shell",
+          "a stale shell response must NOT re-open the shell menu (got context=" .. tostring(context) .. ")")
+        assert.are.equals(0, #items, "the only fire must be the plain-typing close (empty items)")
+      end
+      completion.refresh(buf)            -- shell fetch (gen N); cb deferred (in flight)
+      wait_for(150, function() return #sh.calls >= 1 end)
+      local stale_shell_cb = sh.calls[1].cb
+      -- user deletes the leading `!` → buffer is now `git c` (plain typing, ctx==nil)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "git c" })
+      completion.refresh(buf)            -- ctx==nil → close + (FIX) bump gen
+      wait_for(120, function() return fires >= 1 end) -- the close fires once (empty)
+      -- NOW the deferred shell response lands with stale items → must be DROPPED (gen-guard)
+      vim.schedule_wrap(stale_shell_cb)(nil, { { value = "checkout", label = "checkout" } }, "c")
+      wait_for(150, function() return false end) -- let the scheduled stale cb settle (a no-op)
+      assert.are.equals(1, fires, "the stale shell response must NOT re-open the menu (still 1 fire)")
+      assert.is_nil(completion.current(), "last_result must be untouched by the stale shell response")
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
     -- (4) slash→shell switch: `/mod` refresh (bridge inflight) → change buf to `!git` → refresh
     --     → fake_bridge.cancels contains the bridge inflight id (layer 1) + complete_current called.
     it("slash→shell switch cancels the in-flight BRIDGE request + calls complete_current", function()

@@ -231,14 +231,6 @@
 
 local M = {}
 
--- [TEMP DEBUG] trace completion flow to /tmp/pi-bridge-menu-debug.log (always-on; remove after diagnosing).
-local function dbg(msg)
-  pcall(function()
-    local f = io.open("/tmp/pi-bridge-menu-debug.log", "a")
-    if f then f:write(tostring(msg) .. "\n"); f:close() end
-  end)
-end
-
 --- A pi completion item (mirror of the extension's AutocompleteItem; the bridge delivers
 --- these as the `result.items` array of a successful `getSuggestions`). Opaque to S30 —
 --- S30 only stores + forwards the array; S31 renders it, S32 applies it. Fields typed
@@ -422,7 +414,6 @@ local function do_shell_fetch(buf)
   -- (S2→S3 intermediate state; mirrors S1's posture).
   local shell = require("pi-bridge.shell")
   if type(shell.complete_current) ~= "function" then
-    dbg("[do_shell_fetch] shell.complete_current NOT defined (S3) — silent degrade")
     return
   end
   pcall(shell.complete_current, buf, function(err, items, prefix)
@@ -430,7 +421,7 @@ local function do_shell_fetch(buf)
     -- fast-safe (Lua table r/w); M.on_results drives the menu → vim.schedule it (E5560).
     if gen ~= state.gen then return end -- STALE (superseded) — drop, touch nothing
     state.inflight_id = nil
-    if err then dbg("[do_shell_fetch.cb] ERR=" .. tostring(err)); return end -- silent degrade (S4 notifies)
+    if err then return end -- silent degrade (S4 notifies)
     local its = items  or {}
     local pfx = prefix or ""
     state.last_result = { items = its, prefix = pfx } -- fast-safe (Lua table write)
@@ -540,7 +531,14 @@ do_refresh = function(buf)
     return
   end
   if not ctx then
-    dbg(string.format("[do_refresh] ctx=nil (plain) line1=%q col=%s — close, no request", tostring((lines or {})[1] or ""), tostring(byte_col)))
+    -- SUPERSEDE layer 2 (gen-guard — the CORRECTNESS boundary): bump state.gen so a
+    -- LATE shell/bridge response (whose cb captured an OLDER gen) is dropped at the
+    -- gen-guard instead of re-opening the menu for a buffer that no longer triggers
+    -- completion. PRD-3 fix: the shell→plain-typing transition (delete the leading `!`
+    -- while a shell request is in flight) was a supersession gap — the stale shell cb
+    -- passed `gen ~= state.gen` (gen unchanged here) and re-opened the shell menu.
+    -- Mirrors the slash/path/supersession discipline (every other close path bumps gen).
+    state.gen = state.gen + 1
     if type(M.on_results) == "function" then pcall(M.on_results, buf, {}, "", nil) end -- S5: explicit nil context (plain typing)
     return
   end
@@ -551,7 +549,6 @@ do_refresh = function(buf)
   if not bridge
      or type(bridge.is_connected) ~= "function"
      or not bridge.is_connected() then
-    dbg("[do_refresh] NOT CONNECTED — bail")
     return -- silent degrade (S39's job to notify once); never throw
   end
   -- CONVERT (S29 — THE centralized seam; the ONLY ±1 is the row). `pi.lines` is the SAME
@@ -563,8 +560,6 @@ do_refresh = function(buf)
   end
   state.inflight_id = nil
   -- SUPERSEDE layer 2 (gen-guard — the CORRECTNESS boundary; captured in the cb closure).
-  dbg(string.format("[do_refresh] newgen=%s cursorLine=%s cursorCol=%s line1=%q inflight=%s",
-      state.gen + 1, tostring(pi.cursorLine), tostring(pi.cursorCol), tostring(pi.lines[1] or ""), tostring(state.inflight_id)))
   state.gen = state.gen + 1
   local gen = state.gen
   -- force=true for PATH context makes pi SKIP its own slash-command branch (which
@@ -578,17 +573,13 @@ do_refresh = function(buf)
   local id
   ok, id = pcall(bridge.request, "getSuggestions", params, function(err, result)
     if gen ~= state.gen then
-      dbg(string.format("[do_refresh.cb] STALE drop (cb gen=%s != state.gen=%s)", tostring(gen), tostring(state.gen)))
       return end                 -- STALE (superseded) — drop, touch nothing
     state.inflight_id = nil
-    if err then dbg("[do_refresh.cb] ERR=" .. tostring(err)); return end                              -- cancelled/timeout/error → touch nothing
+    if err then return end                              -- cancelled/timeout/error → touch nothing
     -- NORMALIZE: null result (cb(nil,nil)) = SUCCESS with empty items, NOT an error.
     local items  = (result and type(result.items)  == "table")  and result.items  or {}
     local prefix = (result and type(result.prefix) == "string") and result.prefix or ""
     state.last_result = { items = items, prefix = prefix }
-    local first = (items[1] and (items[1].label or items[1].value)) or "<none>"
-    dbg(string.format("[do_refresh.cb] OK items=%d prefix=%q first=%q on_results=%s",
-        #items, tostring(prefix), tostring(first), tostring(type(M.on_results) == "function")))
     -- S31 seam (api-safe; nil today → no-op). Fires ONLY for the latest non-stale success.
     if type(M.on_results) == "function" then
       pcall(M.on_results, buf, items, prefix, ctx) -- S5: thread the completion context ("slash"|"path"; shell routes to do_shell_fetch above)
@@ -713,7 +704,6 @@ function M.refresh(buf)
     ms = compute_debounce(lines, row - 1, byte_col) -- row 1-based → pi 0-based; byte_col is 0-based byte
   end)
   -- SCHEDULE (the cb is api-safe — main loop; research §5; NO vim.schedule needed).
-  dbg(string.format("[completion.refresh] buf=%s ms=%s", tostring(buf), tostring(ms)))
   state.debounce_timer = vim.defer_fn(function() do_refresh(buf) end, ms)
 end
 

@@ -482,6 +482,71 @@ describe("pi-bridge.shell.bash driver (P2.M3.T5.S2)", function()
 			end)
 		end)
 
+		it("NEW-1: 'git ch' (cword>0) — lazy-load code path is non-regressing (responds + stays responsive)", function()
+			if not have_bash then
+				pending("bash not on PATH — LIVE case skipped (defensive)", function() end)
+				return
+			end
+			local start_err, proc, stdin, stdout = spawn_daemon()
+			assert.is_nil(start_err, "LIVE start on_ready err=" .. tostring(start_err))
+			assert.is_truthy(proc, "LIVE proc handle missing")
+
+			-- rx_buf persists across the two frames; resolvers fire in send order.
+			local rx_buf = ""
+			local r_git, r_followup = nil, nil
+			pcall(function()
+				stdout:read_start(function(rerr, data)
+					if rerr or not data then
+						return
+					end
+					rx_buf = rx_buf .. data
+					-- decode EVERY complete frame in rx_buf (handles both responses landing in one read)
+					local pos = 1
+					while pos do
+						local s = rx_buf:find("__PIRESP_START__\n", pos, true)
+						local e = s and rx_buf:find("__PIRESP_END__\n", s + 1, true)
+						if s and e then
+							local payload = rx_buf:sub(s + #"__PIRESP_START__\n", e - 1)
+							local ok, d = pcall(vim.json.decode, payload)
+							if ok and type(d) == "table" then
+								if not r_git then
+									r_git = d
+								else
+									r_followup = d
+								end
+							end
+							pos = e + 1
+						else
+							pos = nil
+						end
+					end
+				end)
+			end)
+			-- 'git ch' (cword>0, cur='ch') — exercises the NEW-1 lazy-load code path (the
+			-- `complete -p -D` lookup + loader invocation + `complete -p "$cmd"` re-check).
+			-- On a box WITH bash-completion (lazy): returns git subcommands (checkout, etc.).
+			-- On a box WITHOUT (e.g. CI): falls through to file/dir fallback (may be empty).
+			-- Either way the daemon MUST respond valid JSON + stay responsive (the lazy-load
+			-- block runs in the daemon shell, NOT a subshell that could crash it).
+			pcall(function()
+				stdin:write(make_frame("git ch", 6, ""))
+			end)
+			vim.wait(5000, function()
+				return r_git ~= nil
+			end, 20)
+			assert.is_truthy(r_git, "LIVE 'git ch' response never decoded (lazy-load path crashed the daemon?)")
+			-- the daemon MUST still respond to a follow-up request (lazy-load did not wedge it)
+			pcall(function()
+				stdin:write(make_frame("gi", 2, ""))
+			end)
+			vim.wait(5000, function()
+				return r_followup ~= nil
+			end, 20)
+			assert.is_truthy(r_followup, "LIVE daemon wedged after the lazy-load path (follow-up 'gi' never decoded)")
+
+			teardown_daemon(proc, stdin, stdout)
+		end)
+
 		it("empty line → empty items (no all-commands flood)", function()
 			if not have_bash then
 				pending("bash not on PATH — LIVE case skipped (defensive)", function() end)
