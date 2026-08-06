@@ -1218,7 +1218,7 @@ function isInteractiveSession(ctx: ExtensionContext): boolean {
 }
 
 export default function (pi: ExtensionAPI): void {
-	pi.on("session_start", (event: SessionStartEvent, ctx: ExtensionContext) => {
+	pi.on("session_start", (_event: SessionStartEvent, ctx: ExtensionContext) => {
 		/**
 		 * TUI-only activation gate for the entire bridge.
 		 *
@@ -1245,9 +1245,6 @@ export default function (pi: ExtensionAPI): void {
 		 */
 		if (!isInteractiveSession(ctx)) return;
 
-		console.log(
-			`pi-nvim-bridge: session_start (reason=${event.reason}, mode=${ctx.mode})`,
-		);
 		captureProvider(ctx);
 		startBridge(ctx);
 		cwd = ctx.cwd; // HelloResult.cwd (S9) + the S16 descriptor.
