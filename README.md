@@ -243,7 +243,7 @@ a prior value because pi never owned the var).
 ┌─────────────────────── pi process ───────────────────────┐
 │  bridge extension   live AutocompleteProvider (captured) │
 │  PI_NVIM_BRIDGE = { transport, path, token, … }          │
-│  Unix socket  (/tmp/pi-nvim-bridge-<pid>.sock, 0600)     │
+│  Unix socket  (/tmp/pi-nvim-bridge-<id>.sock, 0600)      │
 └────────────────────────────┬─────────────────────────────┘
                   JSON-RPC over socket │ getSuggestions / applyCompletion
                                        ▼
@@ -273,7 +273,7 @@ The descriptor is a single-line JSON object:
 ```jsonc
 {
   "transport": "unix",
-  "path": "/tmp/pi-nvim-bridge-<pid>.sock",
+  "path": "/tmp/pi-nvim-bridge-<id>.sock",
   "token": "<32-byte hex>",
   "pid": 12345,
   "cwd": "/your/project",
@@ -329,7 +329,11 @@ The descriptor is a single-line JSON object:
 
 ## Security
 
-- The Unix socket lives in `os.tmpdir()` with **`0600`** permissions.
+- The Unix socket lives in `os.tmpdir()` with **`0600`** permissions. Its name is
+  `pi-nvim-bridge-<16 hex>.sock` — short enough to stay under the 104-byte
+  `sockaddr_un.sun_path` limit (overflow makes `bind()` fail with `listen EINVAL`).
+  The 64 bits of entropy in the name keep it unguessable in a shared directory,
+  but the path is never the auth boundary, the token is.
 - A **32-byte random token** prevents another local process from impersonating
   the editor. It is delivered via `process.env` (process-local, never on disk)
   and validated in the `hello` handshake.
