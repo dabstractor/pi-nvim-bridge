@@ -246,6 +246,31 @@ export const __deps: {
 	broadcastNotification,
 };
 
+/**
+ * Byte budget for the bound Unix-domain socket path.
+ *
+ * A Unix socket address is a `struct sockaddr_un` whose `sun_path` is a FIXED-SIZE
+ * char array: 104 bytes on macOS/BSD, 108 on Linux (NUL terminator included). Exceed
+ * it and `bind()` fails; Node/libuv surfaces that as `listen EINVAL: invalid argument`
+ * (observed on Node 26 / macOS; older libuv silently truncated instead, which is why
+ * the overflow only reproduced on newer Node). We budget against the SMALLER (macOS)
+ * limit so one code path is correct everywhere, and keep a few bytes of headroom.
+ */
+export const SOCKET_PATH_MAX_BYTES = 100;
+
+/**
+ * Build a fresh, unique socket path under `os.tmpdir()`. The file name is
+ * `pi-nvim-bridge-<16 hex>.sock` (36 bytes): identifiable in a shared tmpdir, and
+ * short enough that it no longer pushes macOS's ~49-byte sandbox tmpdir past the
+ * 104-byte `sun_path` limit (the old full-UUID name was 56 bytes). 16 hex chars =
+ * 64 bits of entropy. (Secrecy of the path is NOT the auth boundary; the token is.
+ * See PRD §12.)
+ */
+export function resolveSocketPath(): string {
+	const fileName = `pi-nvim-bridge-${randomUUID().replace(/-/g, "").slice(0, 16)}.sock`;
+	return join(tmpdir(), fileName);
+}
+
 /** The live bridge socket server, or `undefined` when stopped. Module singleton. */
 let server: Server | undefined;
 /** The bound Unix-domain socket file path, or `undefined` when stopped. */
@@ -571,7 +596,8 @@ export function stopBridge(): void {
 
 /**
  * Start the bridge socket server: generate a fresh token, bind a unique Unix-domain
- * socket under `os.tmpdir()`, and set restrictive `0o600` perms. IDEMPOTENT — calls
+ * socket under `os.tmpdir()` (see {@link resolveSocketPath} for the length-safety
+ * rules), and set restrictive `0o600` perms. IDEMPOTENT — calls
  * {@link stopBridge} first so repeated `session_start` events (reload/new/resume/fork,
  * PRD §6.2) never leak a server or orphan a socket file.
  *
@@ -588,13 +614,13 @@ export function stopBridge(): void {
  *
  * @param ctx its `.cwd` is read for the S16 `PI_NVIM_BRIDGE` descriptor (the module
  *   `cwd` is set in `session_start` AFTER this returns — GOTCHA #3 — so `ctx.cwd` is the
- *   source of truth here). The socket path itself comes from `os.tmpdir()`.
+ *   source of truth here). The socket path itself comes from {@link resolveSocketPath}.
  */
 export function startBridge(ctx: ExtensionContext): void {
 	stopBridge(); // idempotent teardown of any prior server (reload/new/resume/fork re-entry)
 
 	token = randomUUID().replace(/-/g, "").slice(0, 32); // 32 lowercase hex chars (PRD §12)
-	socketPath = join(tmpdir(), `pi-nvim-bridge-${randomUUID()}.sock`);
+	socketPath = resolveSocketPath(); // length-safe: AF_UNIX sun_path is 104 bytes on macOS
 	server = __deps.createServer((sock) => onConnection(sock));
 	// Defensive: an unhandled 'error' event (e.g. EADDRINUSE, EACCES binding tmpdir, EMFILE)
 	// on a net.Server THROWS and would crash the process (Node EventEmitter contract —

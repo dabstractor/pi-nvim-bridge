@@ -125,7 +125,7 @@ end
 --- (absent on older clients ⇒ `shell.lua` falls back to `$SHELL`).
 ---@class pi-bridge.BridgeDescriptor
 ---@field transport "unix" Transport type (v1 literal "unix"; PRD §5.1 names a future "tcp").
----@field path string Unix domain socket path (${tmpdir}/pi-nvim-bridge-<uuid>.sock).
+---@field path string Unix domain socket path (${tmpdir}/pi-nvim-bridge-<16 hex>.sock).
 ---@field token string Random 32-byte hex secret — the REAL auth boundary (PRD §5.3, §12).
 ---@field pid integer pi's process id.
 ---@field cwd string pi session working directory (ctx.cwd).

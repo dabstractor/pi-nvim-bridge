@@ -86,7 +86,7 @@ back to `$SHELL`, then `/bin/bash`).
 | Field | Type | Required? | Source / meaning |
 | --- | --- | --- | --- |
 | `transport` | `"unix"` | yes | literal v1 marker (a future TCP variant is named in PRD §5.1). |
-| `path` | string | yes | socket path — `/tmp/pi-nvim-bridge-<uuid>.sock`, mode `0600`. |
+| `path` | string | yes | socket path — `/tmp/pi-nvim-bridge-<id>.sock`, mode `0600`. |
 | `token` | string | yes | 32-byte hex secret; the **real** auth boundary (validated in `hello`). Never log it. |
 | `pid` | number | yes | `process.pid` of the pi process running the bridge. |
 | `cwd` | string | yes | `ctx.cwd` — the session working directory. |
@@ -102,7 +102,7 @@ A typical machine (no `PI_NVIM_SHELL`, `$SHELL=/bin/zsh`) emits — note
 ```jsonc
 {
   "transport": "unix",
-  "path": "/tmp/pi-nvim-bridge-<uuid>.sock",
+  "path": "/tmp/pi-nvim-bridge-<id>.sock",
   "token": "<32-byte hex>",
   "pid": 12345,
   "cwd": "/your/project",
